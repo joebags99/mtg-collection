@@ -247,6 +247,63 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
     return result
 
 
+scryfall_type_cache = {}
+
+
+def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
+    """Fetch card types from Scryfall collection endpoint for cards we can't classify locally."""
+    result = {}
+    uncached = [n for n in card_names if n not in scryfall_type_cache]
+    # Return cached results first
+    for n in card_names:
+        if n in scryfall_type_cache:
+            result[n] = scryfall_type_cache[n]
+
+    # Batch fetch uncached cards from Scryfall
+    for i in range(0, len(uncached), 75):
+        batch = uncached[i:i+75]
+        identifiers = [{"name": n} for n in batch]
+        try:
+            resp = requests.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": identifiers},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                for card in resp.json().get("data", []):
+                    name = card.get("name", "")
+                    type_line = card.get("type_line", "")
+                    card_type = _parse_type_line(type_line)
+                    scryfall_type_cache[name] = card_type
+                    result[name] = card_type
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Scryfall type fetch error: {e}")
+
+    return result
+
+
+def _parse_type_line(type_line: str) -> str:
+    """Parse a Scryfall type_line into our categories."""
+    # Use the front face only for DFCs
+    front = type_line.split("//")[0].strip().lower()
+    if "creature" in front:
+        return "Creature"
+    if "planeswalker" in front:
+        return "Planeswalker"
+    if "instant" in front:
+        return "Instant"
+    if "sorcery" in front:
+        return "Sorcery"
+    if "enchantment" in front:
+        return "Enchantment"
+    if "artifact" in front:
+        return "Artifact"
+    if "land" in front:
+        return "Land"
+    return "Other"
+
+
 def classify_card_type(card_name: str, type_data: dict) -> str:
     """Determine card type from the type-specific lists."""
     normalized = normalize_card_name(card_name)
@@ -447,19 +504,31 @@ async def get_commander_detail(
     # Build a set of all cards in the avg deck
     avg_deck_names = set(c["name_normalized"] for c in data.get("decklist", []))
 
-    # Compare with collection and categorize
+    # First pass: classify what we can from EDHREC type data
+    all_cards = []
+    unclassified_names = []
+    for card in data.get("decklist", []):
+        card_type = card.get("category", "") or classify_card_type(card["name"], type_data)
+        all_cards.append({**card, "card_type": card_type})
+        if not card_type:
+            unclassified_names.append(card["name"])
+
+    # Fallback: fetch types from Scryfall for unclassified cards
+    if unclassified_names:
+        scryfall_types = fetch_card_types_bulk(unclassified_names)
+        for card in all_cards:
+            if not card["card_type"] and card["name"] in scryfall_types:
+                card["card_type"] = scryfall_types[card["name"]]
+
+    # Split into owned/missing
     owned = []
     missing = []
     missing_names = []
-    for card in data.get("decklist", []):
-        # Try to classify by card type
-        card_type = card.get("category", "") or classify_card_type(card["name"], type_data)
-        enriched = {**card, "card_type": card_type}
-
+    for card in all_cards:
         if card["name_normalized"] in collection:
-            owned.append({**enriched, "owned": True})
+            owned.append({**card, "owned": True})
         else:
-            missing.append({**enriched, "owned": False})
+            missing.append({**card, "owned": False})
             missing_names.append(card["name"])
 
     # Fetch prices for missing cards
@@ -472,15 +541,13 @@ async def get_commander_detail(
             if price:
                 total_missing_price += price
 
-    # Build recommendations: high synergy + new cards that you OWN but aren't in avg deck
+    # Build recommendations: synergy/new/top cards not in avg deck (both owned and not)
     recommendations = []
     seen_recs = set()
     for key in ["high_synergy", "new_cards"]:
         for card in type_data.get(key, []):
             normalized = card["name_normalized"]
-            if (normalized in collection
-                    and normalized not in avg_deck_names
-                    and normalized not in seen_recs):
+            if normalized not in avg_deck_names and normalized not in seen_recs:
                 seen_recs.add(normalized)
                 recommendations.append({
                     "name": card["name"],
@@ -488,17 +555,16 @@ async def get_commander_detail(
                     "synergy": card.get("synergy", 0),
                     "inclusion": card.get("inclusion", 0),
                     "source": "High Synergy" if key == "high_synergy" else "New Card",
+                    "owned": normalized in collection,
                 })
 
-    # Also check all type-specific top cards for owned cards not in avg deck
+    # Also check all type-specific top cards
     for key in ["top_creatures", "top_instants", "top_sorceries", "top_enchantments",
                 "top_artifacts", "top_lands", "top_planeswalkers", "top_utility_lands",
                 "top_mana_artifacts"]:
         for card in type_data.get(key, []):
             normalized = card["name_normalized"]
-            if (normalized in collection
-                    and normalized not in avg_deck_names
-                    and normalized not in seen_recs):
+            if normalized not in avg_deck_names and normalized not in seen_recs:
                 seen_recs.add(normalized)
                 type_label = key.replace("top_", "").replace("_", " ").title()
                 recommendations.append({
@@ -507,6 +573,7 @@ async def get_commander_detail(
                     "synergy": card.get("synergy", 0),
                     "inclusion": card.get("inclusion", 0),
                     "source": f"Top {type_label}",
+                    "owned": normalized in collection,
                 })
 
     # Sort recommendations by synergy descending

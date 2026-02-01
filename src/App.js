@@ -667,6 +667,8 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
   const [showOwned, setShowOwned] = useState(true);
   const [showMissing, setShowMissing] = useState(true);
   const [exportText, setExportText] = useState('');
+  const [recSort, setRecSort] = useState('synergy_desc');
+  const [recFilter, setRecFilter] = useState('all');
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -856,36 +858,80 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
       />
 
       {/* Possible Recommendations */}
-      {data.recommendations && data.recommendations.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-purple-400">
-            Possible Recommendations ({data.recommendations.length})
-          </h3>
-          <p className="text-xs text-gray-400">
-            Cards you own with high synergy for this commander that aren't in the average deck.
-          </p>
-          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
-            {data.recommendations.map(card => (
-              <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                <CardName name={card.name} className="text-sm" />
-                <div className="flex items-center gap-3 text-xs">
-                  {card.synergy_score != null && (
-                    <span className={`font-medium ${card.synergy_score > 0 ? 'text-green-400' : 'text-gray-400'}`}>
-                      {card.synergy_score > 0 ? '+' : ''}{card.synergy_score}% synergy
-                    </span>
-                  )}
-                  {card.inclusion_rate != null && (
-                    <span className="text-gray-500">{card.inclusion_rate}% inclusion</span>
-                  )}
-                  {card.source && (
-                    <span className="text-purple-400/70">{card.source}</span>
-                  )}
-                </div>
+      {data.recommendations && data.recommendations.length > 0 && (() => {
+        let recs = [...data.recommendations];
+        if (recFilter === 'owned') recs = recs.filter(c => c.owned);
+        else if (recFilter === 'not_owned') recs = recs.filter(c => !c.owned);
+        if (recSort === 'synergy_desc') recs.sort((a, b) => (b.synergy || 0) - (a.synergy || 0));
+        else if (recSort === 'synergy_asc') recs.sort((a, b) => (a.synergy || 0) - (b.synergy || 0));
+        else if (recSort === 'inclusion_desc') recs.sort((a, b) => (b.inclusion || 0) - (a.inclusion || 0));
+        return (
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold text-purple-400">
+              Possible Recommendations ({recs.length})
+            </h3>
+            <p className="text-xs text-gray-400">
+              Cards with high synergy for this commander that aren't in the average deck.
+            </p>
+            <div className="flex flex-wrap gap-3 items-center">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400">Sort:</label>
+                <select
+                  value={recSort}
+                  onChange={e => setRecSort(e.target.value)}
+                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                >
+                  <option value="synergy_desc">Highest Synergy</option>
+                  <option value="synergy_asc">Lowest Synergy</option>
+                  <option value="inclusion_desc">Most Included</option>
+                </select>
               </div>
-            ))}
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400">Show:</label>
+                <select
+                  value={recFilter}
+                  onChange={e => setRecFilter(e.target.value)}
+                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                >
+                  <option value="all">All</option>
+                  <option value="owned">In Collection</option>
+                  <option value="not_owned">Not In Collection</option>
+                </select>
+              </div>
+            </div>
+            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              {recs.map(card => (
+                <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    {card.owned ? (
+                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="In collection" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="Not in collection" />
+                    )}
+                    <CardName name={card.name} className="text-sm" />
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    {card.synergy != null && (
+                      <span className={`font-medium ${card.synergy > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                        {card.synergy > 0 ? '+' : ''}{card.synergy}% synergy
+                      </span>
+                    )}
+                    {card.inclusion != null && (
+                      <span className="text-gray-500">{card.inclusion}% inclusion</span>
+                    )}
+                    {card.source && (
+                      <span className="text-purple-400/70">{card.source}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {recs.length === 0 && (
+                <p className="px-3 py-4 text-gray-500 text-sm">No recommendations match the current filter.</p>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
