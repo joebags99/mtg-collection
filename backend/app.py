@@ -29,6 +29,11 @@ collection: set[str] = set()
 commander_cache: dict[str, dict] = {}
 CACHE_TTL = 3600  # 1 hour
 
+# Price cache: normalized card name -> price in USD
+price_cache: dict[str, float] = {}
+PRICE_CACHE_TTL = 86400  # 24 hours
+_price_cache_time: float = 0
+
 
 def normalize_card_name(name: str) -> str:
     """Normalize card name for comparison: lowercase, strip whitespace."""
@@ -127,6 +132,75 @@ def get_cached_commanders() -> list[dict]:
     return _all_commanders
 
 
+def fetch_card_price(card_name: str) -> Optional[float]:
+    """Fetch card price from Scryfall. Returns USD price or None."""
+    global _price_cache_time
+    normalized = normalize_card_name(card_name)
+
+    # Check cache
+    if normalized in price_cache and (time.time() - _price_cache_time < PRICE_CACHE_TTL):
+        return price_cache[normalized]
+
+    try:
+        resp = requests.get(
+            "https://api.scryfall.com/cards/named",
+            params={"exact": card_name},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            prices = data.get("prices", {})
+            price = prices.get("usd") or prices.get("usd_foil")
+            if price:
+                price = float(price)
+                price_cache[normalized] = price
+                return price
+    except Exception:
+        pass
+    return None
+
+
+def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
+    """Fetch prices for multiple cards using Scryfall collection endpoint."""
+    global _price_cache_time
+    prices = {}
+    uncached = []
+
+    for name in card_names:
+        normalized = normalize_card_name(name)
+        if normalized in price_cache and (time.time() - _price_cache_time < PRICE_CACHE_TTL):
+            prices[normalized] = price_cache[normalized]
+        else:
+            uncached.append(name)
+
+    # Scryfall collection endpoint accepts up to 75 cards at a time
+    for i in range(0, len(uncached), 75):
+        batch = uncached[i:i+75]
+        identifiers = [{"name": name} for name in batch]
+        try:
+            resp = requests.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": identifiers},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for card in data.get("data", []):
+                    card_prices = card.get("prices", {})
+                    usd = card_prices.get("usd") or card_prices.get("usd_foil")
+                    if usd:
+                        normalized = normalize_card_name(card["name"])
+                        price_val = float(usd)
+                        price_cache[normalized] = price_val
+                        prices[normalized] = price_val
+                _price_cache_time = time.time()
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Error fetching bulk prices: {e}")
+
+    return prices
+
+
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
     """Get average deck for a commander from EDHREC, with caching."""
     cache_key = f"{commander_name}|{budget or ''}|{theme or ''}"
@@ -142,12 +216,6 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
 
         # Get average deck
         avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
-        logger.info(f"avg_deck for {formatted}: type={type(avg_deck)}, keys={list(avg_deck.keys()) if isinstance(avg_deck, dict) else 'N/A'}")
-        if isinstance(avg_deck, dict):
-            dl = avg_deck.get("decklist")
-            logger.info(f"  decklist type={type(dl)}, len={len(dl) if dl else 0}")
-            if dl:
-                logger.info(f"  first item: type={type(dl[0])}, value={repr(str(dl[0])[:200])}")
 
         # Get commander data for themes/metadata
         cmd_data = edhrec.get_commander_data(formatted)
@@ -269,6 +337,20 @@ async def get_collection():
     return {"count": len(collection), "cards": sorted(collection)}
 
 
+@app.post("/api/collection/restore")
+async def restore_collection(body: dict):
+    """Restore collection from a list of card names (from localStorage)."""
+    cards = body.get("cards", [])
+    if not cards:
+        raise HTTPException(status_code=400, detail="No cards provided")
+
+    collection.clear()
+    for card in cards:
+        collection.add(normalize_card_name(card))
+
+    return {"count": len(collection), "cards": sorted(collection)}
+
+
 @app.get("/api/commanders")
 async def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
     """List all legal commanders, optionally filtered by color identity and name search."""
@@ -287,19 +369,44 @@ async def list_commanders(color: Optional[str] = None, search: Optional[str] = N
     return {"count": len(results), "commanders": results[:200]}
 
 
+@app.get("/api/commanders/popular")
+async def popular_commanders():
+    """Get top 50 most popular commanders by EDHREC rank."""
+    commanders = get_cached_commanders()
+    top = sorted(commanders, key=lambda c: c["edhrec_rank"])[:50]
+    return {"commanders": top}
+
+
 @app.get("/api/commander/{commander_name}")
-async def get_commander_detail(commander_name: str, budget: Optional[str] = None, theme: Optional[str] = None):
+async def get_commander_detail(
+    commander_name: str,
+    budget: Optional[str] = None,
+    theme: Optional[str] = None,
+    include_prices: bool = True,
+):
     """Get commander average deck from EDHREC and compare with collection."""
     data = get_commander_avg_deck(commander_name, budget=budget, theme=theme)
 
     # Compare with collection
     owned = []
     missing = []
+    missing_names = []
     for card in data.get("decklist", []):
         if card["name_normalized"] in collection:
             owned.append({**card, "owned": True})
         else:
             missing.append({**card, "owned": False})
+            missing_names.append(card["name"])
+
+    # Fetch prices for missing cards
+    total_missing_price = 0
+    if include_prices and missing_names:
+        prices = fetch_prices_bulk(missing_names)
+        for card in missing:
+            price = prices.get(card["name_normalized"])
+            card["price"] = price
+            if price:
+                total_missing_price += price
 
     return {
         "commander": data["commander"],
@@ -309,6 +416,7 @@ async def get_commander_detail(commander_name: str, budget: Optional[str] = None
         "owned_count": len(owned),
         "missing_count": len(missing),
         "match_percentage": round(len(owned) / max(len(data.get("decklist", [])), 1) * 100, 1),
+        "total_missing_price": round(total_missing_price, 2),
         "owned_cards": owned,
         "missing_cards": missing,
         "error": data.get("error"),
@@ -325,7 +433,6 @@ async def get_recommendations(
     """
     Get commander recommendations based on collection.
     Fetches avg decks for top commanders and ranks by owned card count.
-    This is expensive - fetches EDHREC data for each commander checked.
     """
     if not collection:
         raise HTTPException(status_code=400, detail="No collection uploaded. Upload your collection first.")
@@ -344,27 +451,24 @@ async def get_recommendations(
     # Only check top commanders by EDHREC rank (to avoid thousands of requests)
     commanders = sorted(commanders, key=lambda c: c["edhrec_rank"])[:200]
 
-    logger.info(f"Collection sample (first 10): {sorted(collection)[:10]}")
-    logger.info(f"Collection size: {len(collection)}")
-
     results = []
-    checked = 0
     for cmd in commanders:
         data = get_commander_avg_deck(cmd["name"])
         deck_cards = set(data.get("deck_card_names", []))
-        if checked < 3:
-            logger.info(f"Commander {cmd['name']}: deck_cards={len(deck_cards)}, sample={list(deck_cards)[:5]}")
-            if deck_cards:
-                overlap = deck_cards & collection
-                logger.info(f"  overlap={len(overlap)}, sample={list(overlap)[:5]}")
-        checked += 1
         if not deck_cards:
             continue
 
         owned_count = len(deck_cards & collection)
+        missing_count = len(deck_cards) - owned_count
         total = len(deck_cards)
 
         if owned_count >= min_owned:
+            # Get missing card names for price estimation
+            missing_names = [
+                card["name"] for card in data.get("decklist", [])
+                if card["name_normalized"] not in collection
+            ]
+
             results.append({
                 "name": cmd["name"],
                 "color_identity": cmd["color_identity"],
@@ -373,10 +477,30 @@ async def get_recommendations(
                 "num_decks": data.get("num_decks", 0),
                 "total_cards": total,
                 "owned_count": owned_count,
+                "missing_count": missing_count,
                 "match_percentage": round(owned_count / max(total, 1) * 100, 1),
+                "_missing_names": missing_names,
             })
 
         time.sleep(0.1)  # Rate limiting
+
+    # Fetch prices for all missing cards across all results
+    all_missing = set()
+    for r in results:
+        all_missing.update(r.get("_missing_names", []))
+    if all_missing:
+        prices = fetch_prices_bulk(list(all_missing))
+        for r in results:
+            total_price = 0
+            for name in r.pop("_missing_names", []):
+                p = prices.get(normalize_card_name(name))
+                if p:
+                    total_price += p
+            r["missing_price"] = round(total_price, 2)
+    else:
+        for r in results:
+            r.pop("_missing_names", None)
+            r["missing_price"] = 0
 
     results.sort(key=lambda r: r["match_percentage"], reverse=True)
     return {"results": results[:limit]}

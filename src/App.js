@@ -42,7 +42,6 @@ function CardName({ name, className = '' }) {
     const rect = e.currentTarget.getBoundingClientRect();
     const viewportW = window.innerWidth;
     const viewportH = window.innerHeight;
-    // Position to the right by default, flip left if near edge
     let x = rect.right + 8;
     let y = rect.top;
     if (x + 250 > viewportW) x = rect.left - 258;
@@ -74,6 +73,44 @@ function CardName({ name, className = '' }) {
       )}
     </span>
   );
+}
+
+function MatchBar({ percentage, size = 'sm' }) {
+  const color =
+    percentage >= 60 ? 'bg-green-500' :
+    percentage >= 40 ? 'bg-yellow-500' :
+    percentage >= 20 ? 'bg-orange-500' :
+    'bg-red-500';
+  const h = size === 'sm' ? 'h-1.5' : 'h-2.5';
+  return (
+    <div className={`w-full bg-gray-700 rounded-full ${h}`}>
+      <div
+        className={`${color} ${h} rounded-full transition-all duration-500`}
+        style={{ width: `${Math.min(percentage, 100)}%` }}
+      />
+    </div>
+  );
+}
+
+// --- localStorage helpers ---
+const STORAGE_KEY = 'mtg_collection';
+
+function saveCollection(cards) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+  } catch (e) {
+    console.error('Failed to save collection to localStorage:', e);
+  }
+}
+
+function loadCollection() {
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load collection from localStorage:', e);
+  }
+  return null;
 }
 
 // --- API helpers ---
@@ -116,7 +153,7 @@ async function apiUpload(path, file) {
 
 // --- Components ---
 
-function CollectionUpload({ onUploaded }) {
+function CollectionUpload({ onUploaded, collectionCount }) {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -130,6 +167,7 @@ function CollectionUpload({ onUploaded }) {
     try {
       const data = await apiUpload('/api/collection/upload', file);
       setResult(data);
+      saveCollection(data.cards);
       onUploaded(data);
     } catch (err) {
       setError(err.message);
@@ -144,6 +182,7 @@ function CollectionUpload({ onUploaded }) {
     try {
       const data = await apiPost('/api/collection/text', { text });
       setResult(data);
+      saveCollection(data.cards);
       onUploaded(data);
     } catch (err) {
       setError(err.message);
@@ -151,13 +190,34 @@ function CollectionUpload({ onUploaded }) {
     setLoading(false);
   };
 
+  const handleClear = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setResult(null);
+    onUploaded({ count: 0, cards: [] });
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <h2 className="text-2xl font-bold">Upload Collection</h2>
       <p className="text-gray-400">
         Upload a CSV export from <strong>Archidekt</strong> or <strong>Moxfield</strong>,
-        or paste a card list.
+        or paste a card list. Your collection is saved locally in your browser.
       </p>
+
+      {collectionCount > 0 && (
+        <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 flex items-center justify-between">
+          <p className="text-blue-300">
+            Collection loaded: <strong>{collectionCount}</strong> unique cards
+            {loadCollection() && <span className="text-blue-400/70 text-sm ml-2">(saved in browser)</span>}
+          </p>
+          <button
+            onClick={handleClear}
+            className="text-red-400 hover:text-red-300 text-sm"
+          >
+            Clear Collection
+          </button>
+        </div>
+      )}
 
       {/* CSV Upload */}
       <div className="bg-gray-800 rounded-lg p-6 space-y-3">
@@ -203,44 +263,75 @@ function CollectionUpload({ onUploaded }) {
 }
 
 function CommanderCard({ commander, onClick }) {
+  const hasMatch = commander.match_percentage !== undefined;
   return (
     <div
       onClick={() => onClick?.(commander)}
       className="bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
     >
       {commander.image_uri && (
-        <img
-          src={commander.image_uri}
-          alt={commander.name}
-          className="w-full aspect-[5/7] object-cover"
-          loading="lazy"
-        />
+        <div className="relative">
+          <img
+            src={commander.image_uri}
+            alt={commander.name}
+            className="w-full aspect-[5/7] object-cover"
+            loading="lazy"
+          />
+          {hasMatch && (
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-2 pt-6">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-300">
+                  {commander.owned_count}/{commander.total_cards}
+                </span>
+                <span className={`text-sm font-bold ${
+                  commander.match_percentage >= 60 ? 'text-green-400' :
+                  commander.match_percentage >= 40 ? 'text-yellow-400' :
+                  'text-gray-400'
+                }`}>
+                  {commander.match_percentage}%
+                </span>
+              </div>
+              <MatchBar percentage={commander.match_percentage} />
+            </div>
+          )}
+        </div>
       )}
-      <div className="p-3 space-y-2">
+      <div className="p-3 space-y-1.5">
         <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
         <div className="flex items-center justify-between">
           <ColorBadge colors={commander.color_identity} />
-          {commander.match_percentage !== undefined && (
-            <span className={`text-sm font-bold ${
-              commander.match_percentage >= 60 ? 'text-green-400' :
-              commander.match_percentage >= 40 ? 'text-yellow-400' :
-              'text-gray-400'
-            }`}>
-              {commander.match_percentage}%
-            </span>
+          {commander.missing_price > 0 && (
+            <span className="text-xs text-yellow-400">${commander.missing_price.toFixed(0)}</span>
           )}
         </div>
-        {commander.owned_count !== undefined && (
-          <p className="text-xs text-gray-400">
-            {commander.owned_count}/{commander.total_cards} cards owned
-          </p>
-        )}
         {commander.num_decks > 0 && (
           <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
         )}
       </div>
     </div>
   );
+}
+
+const SORT_OPTIONS = [
+  { value: 'match_desc', label: 'Most Complete' },
+  { value: 'match_asc', label: 'Least Complete' },
+  { value: 'price_asc', label: 'Cheapest to Complete' },
+  { value: 'price_desc', label: 'Most Expensive to Complete' },
+  { value: 'edhrec', label: 'EDHREC Popularity' },
+  { value: 'owned_desc', label: 'Most Cards Owned' },
+];
+
+function sortResults(results, sortBy) {
+  const sorted = [...results];
+  switch (sortBy) {
+    case 'match_desc': return sorted.sort((a, b) => b.match_percentage - a.match_percentage);
+    case 'match_asc': return sorted.sort((a, b) => a.match_percentage - b.match_percentage);
+    case 'price_asc': return sorted.sort((a, b) => (a.missing_price || 9999) - (b.missing_price || 9999));
+    case 'price_desc': return sorted.sort((a, b) => (b.missing_price || 0) - (a.missing_price || 0));
+    case 'edhrec': return sorted.sort((a, b) => (a.edhrec_rank || 9999) - (b.edhrec_rank || 9999));
+    case 'owned_desc': return sorted.sort((a, b) => b.owned_count - a.owned_count);
+    default: return sorted;
+  }
 }
 
 function Recommendations({ collectionCount, onSelectCommander }) {
@@ -251,6 +342,7 @@ function Recommendations({ collectionCount, onSelectCommander }) {
   const [colorFilter, setColorFilter] = useState([]);
   const [minOwned, setMinOwned] = useState(20);
   const [fetched, setFetched] = useState(false);
+  const [sortBy, setSortBy] = useState('match_desc');
 
   const fetchRecommendations = useCallback(async () => {
     if (collectionCount === 0) {
@@ -278,6 +370,8 @@ function Recommendations({ collectionCount, onSelectCommander }) {
       prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
     );
   };
+
+  const sortedResults = sortResults(results, sortBy);
 
   return (
     <div className="space-y-6">
@@ -340,9 +434,28 @@ function Recommendations({ collectionCount, onSelectCommander }) {
             disabled={loading}
             className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-5 py-1.5 rounded font-medium"
           >
-            {loading ? 'Loading... (this may take a while)' : fetched ? 'Refresh' : 'Get Recommendations'}
+            {loading ? 'Loading...' : fetched ? 'Refresh' : 'Get Recommendations'}
           </button>
         </div>
+
+        {/* Sort */}
+        {fetched && results.length > 0 && (
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-700">
+            <label className="text-xs text-gray-400">Sort by:</label>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+            >
+              {SORT_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500 ml-auto">
+              {results.length} commanders found
+            </span>
+          </div>
+        )}
       </div>
 
       {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
@@ -351,13 +464,13 @@ function Recommendations({ collectionCount, onSelectCommander }) {
         <div className="text-center py-12 text-gray-400">
           <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
           <p>Fetching average decklists from EDHREC and comparing with your collection...</p>
-          <p className="text-sm mt-1">This checks up to 200 commanders. It may take a few minutes.</p>
+          <p className="text-sm mt-1">This checks up to 200 commanders and fetches prices. May take a few minutes.</p>
         </div>
       )}
 
-      {!loading && results.length > 0 && (
+      {!loading && sortedResults.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {results.map(cmd => (
+          {sortedResults.map(cmd => (
             <CommanderCard key={cmd.name} commander={cmd} onClick={onSelectCommander} />
           ))}
         </div>
@@ -372,9 +485,21 @@ function Recommendations({ collectionCount, onSelectCommander }) {
 
 function CommanderSearch({ collectionCount, onSelectCommander }) {
   const [commanders, setCommanders] = useState([]);
+  const [popular, setPopular] = useState([]);
   const [search, setSearch] = useState('');
   const [colorFilter, setColorFilter] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadedPopular, setLoadedPopular] = useState(false);
+
+  // Load popular on mount
+  useEffect(() => {
+    if (!loadedPopular) {
+      apiGet('/api/commanders/popular').then(data => {
+        setPopular(data.commanders || []);
+        setLoadedPopular(true);
+      }).catch(() => {});
+    }
+  }, [loadedPopular]);
 
   const doSearch = useCallback(async () => {
     setLoading(true);
@@ -400,6 +525,9 @@ function CommanderSearch({ collectionCount, onSelectCommander }) {
       prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
     );
   };
+
+  const showPopular = search.length < 2 && colorFilter.length === 0;
+  const displayList = showPopular ? popular : commanders;
 
   return (
     <div className="space-y-6">
@@ -441,8 +569,12 @@ function CommanderSearch({ collectionCount, onSelectCommander }) {
 
       {loading && <div className="text-center py-4 text-gray-400">Searching...</div>}
 
+      {showPopular && popular.length > 0 && (
+        <h3 className="text-sm font-medium text-gray-400">Popular Commanders</h3>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-        {commanders.map(cmd => (
+        {displayList.map(cmd => (
           <CommanderCard key={cmd.name} commander={cmd} onClick={onSelectCommander} />
         ))}
       </div>
@@ -458,6 +590,7 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
   const [theme, setTheme] = useState('');
   const [showOwned, setShowOwned] = useState(true);
   const [showMissing, setShowMissing] = useState(true);
+  const [exportText, setExportText] = useState('');
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -475,6 +608,19 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
   }, [commander.name, budget, theme]);
 
   useEffect(() => { fetchDetail(); }, [fetchDetail]);
+
+  const handleExport = (type) => {
+    if (!data) return;
+    const allCards = [...data.owned_cards, ...data.missing_cards];
+    let text;
+    if (type === 'full') {
+      text = allCards.map(c => `1 ${c.name}`).join('\n');
+    } else {
+      text = data.missing_cards.map(c => `1 ${c.name}`).join('\n');
+    }
+    setExportText(text);
+    navigator.clipboard.writeText(text).catch(() => {});
+  };
 
   if (loading) {
     return (
@@ -506,9 +652,9 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
       {/* Header */}
       <div className="flex gap-6 items-start">
         {commander.image_uri && (
-          <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg" />
+          <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
         )}
-        <div className="space-y-3">
+        <div className="space-y-3 flex-1">
           <h2 className="text-3xl font-bold">{commander.name}</h2>
           <ColorBadge colors={commander.color_identity} />
           <div className="flex items-baseline gap-4">
@@ -517,13 +663,21 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
               {data.owned_count}/{data.total_cards} cards owned
             </span>
           </div>
-          {data.num_decks > 0 && (
-            <p className="text-sm text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</p>
-          )}
+          <MatchBar percentage={data.match_percentage} size="lg" />
+          <div className="flex gap-4 text-sm">
+            {data.num_decks > 0 && (
+              <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
+            )}
+            {data.total_missing_price > 0 && (
+              <span className="text-yellow-400">
+                ~${data.total_missing_price.toFixed(2)} to complete
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters + Export */}
       <div className="bg-gray-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
         <div>
           <label className="block text-xs text-gray-400 mb-1">Budget</label>
@@ -565,7 +719,38 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
             </select>
           </div>
         )}
+
+        <div className="ml-auto flex gap-2">
+          <button
+            onClick={() => handleExport('full')}
+            className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm"
+          >
+            Export Full Deck
+          </button>
+          <button
+            onClick={() => handleExport('missing')}
+            className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1.5 rounded text-sm"
+          >
+            Export Missing Cards
+          </button>
+        </div>
       </div>
+
+      {exportText && (
+        <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-green-400">Copied to clipboard! You can also copy from below:</p>
+            <button onClick={() => setExportText('')} className="text-xs text-gray-400 hover:text-white">Close</button>
+          </div>
+          <textarea
+            readOnly
+            value={exportText}
+            rows={6}
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
+            onFocus={e => e.target.select()}
+          />
+        </div>
+      )}
 
       {data.error && (
         <div className="bg-yellow-900/50 border border-yellow-700 rounded p-3 text-yellow-300 text-sm">
@@ -610,12 +795,19 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
           <div>
             <h3 className="text-lg font-semibold text-red-400 mb-3">
               Missing Cards ({data.missing_count})
+              {data.total_missing_price > 0 && (
+                <span className="text-sm font-normal text-yellow-400 ml-2">
+                  ~${data.total_missing_price.toFixed(2)}
+                </span>
+              )}
             </h3>
             <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
               {data.missing_cards.map(card => (
                 <div key={card.name} className="px-3 py-2 flex justify-between items-center">
                   <CardName name={card.name} className="text-sm" />
-                  <span className="text-xs text-gray-500">{card.category}</span>
+                  <span className="text-xs text-yellow-400/70">
+                    {card.price ? `$${card.price.toFixed(2)}` : ''}
+                  </span>
                 </div>
               ))}
               {data.missing_cards.length === 0 && (
@@ -636,15 +828,29 @@ function App() {
   const [collectionCount, setCollectionCount] = useState(0);
   const [selectedCommander, setSelectedCommander] = useState(null);
 
-  // Check if collection already loaded
+  // Restore collection from localStorage on startup
   useEffect(() => {
-    apiGet('/api/collection').then(data => {
-      setCollectionCount(data.count || 0);
-    }).catch(() => {});
+    const saved = loadCollection();
+    if (saved && saved.length > 0) {
+      apiPost('/api/collection/restore', { cards: saved }).then(data => {
+        setCollectionCount(data.count || 0);
+        if (data.count > 0) setTab('recommend');
+      }).catch(() => {
+        // Fallback: check if backend already has a collection
+        apiGet('/api/collection').then(data => {
+          setCollectionCount(data.count || 0);
+        }).catch(() => {});
+      });
+    } else {
+      apiGet('/api/collection').then(data => {
+        setCollectionCount(data.count || 0);
+      }).catch(() => {});
+    }
   }, []);
 
   const handleUploaded = (data) => {
     setCollectionCount(data.count);
+    if (data.cards) saveCollection(data.cards);
   };
 
   const handleSelectCommander = (cmd) => {
@@ -694,7 +900,7 @@ function App() {
       {/* Content - tabs stay mounted to preserve state */}
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div style={{ display: tab === 'upload' ? 'block' : 'none' }}>
-          <CollectionUpload onUploaded={handleUploaded} />
+          <CollectionUpload onUploaded={handleUploaded} collectionCount={collectionCount} />
         </div>
 
         <div style={{ display: tab === 'recommend' ? 'block' : 'none' }}>
