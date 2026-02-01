@@ -262,51 +262,63 @@ function CollectionUpload({ onUploaded, collectionCount }) {
   );
 }
 
-function CommanderCard({ commander, onClick }) {
+function CommanderCard({ commander, onClick, selectable, selected, onToggleCompare }) {
   const hasMatch = commander.match_percentage !== undefined;
   return (
     <div
-      onClick={() => onClick?.(commander)}
-      className="bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
+      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
     >
-      {commander.image_uri && (
-        <div className="relative">
-          <img
-            src={commander.image_uri}
-            alt={commander.name}
-            className="w-full aspect-[5/7] object-cover"
-            loading="lazy"
-          />
-          {hasMatch && (
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-2 pt-6">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-300">
-                  {commander.owned_count}/{commander.total_cards}
-                </span>
-                <span className={`text-sm font-bold ${
-                  commander.match_percentage >= 60 ? 'text-green-400' :
-                  commander.match_percentage >= 40 ? 'text-yellow-400' :
-                  'text-gray-400'
-                }`}>
-                  {commander.match_percentage}%
-                </span>
-              </div>
-              <MatchBar percentage={commander.match_percentage} />
-            </div>
-          )}
-        </div>
+      {selectable && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
+          className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all ${
+            selected ? 'bg-purple-500 border-purple-500 text-white' : 'bg-gray-900/70 border-gray-400 text-gray-400 hover:border-purple-400'
+          }`}
+          title={selected ? 'Remove from comparison' : 'Add to comparison'}
+        >
+          {selected ? '✓' : '+'}
+        </button>
       )}
-      <div className="p-3 space-y-1.5">
-        <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
-        <div className="flex items-center justify-between">
-          <ColorBadge colors={commander.color_identity} />
-          {commander.missing_price > 0 && (
-            <span className="text-xs text-yellow-400">${commander.missing_price.toFixed(0)}</span>
+      <div onClick={() => onClick?.(commander)}>
+        {commander.image_uri && (
+          <div className="relative">
+            <img
+              src={commander.image_uri}
+              alt={commander.name}
+              className="w-full aspect-[5/7] object-cover"
+              loading="lazy"
+            />
+            {hasMatch && (
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-2 pt-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-300">
+                    {commander.owned_count}/{commander.total_cards}
+                  </span>
+                  <span className={`text-sm font-bold ${
+                    commander.match_percentage >= 60 ? 'text-green-400' :
+                    commander.match_percentage >= 40 ? 'text-yellow-400' :
+                    'text-gray-400'
+                  }`}>
+                    {commander.match_percentage}%
+                  </span>
+                </div>
+                <MatchBar percentage={commander.match_percentage} />
+              </div>
+            )}
+          </div>
+        )}
+        <div className="p-3 space-y-1.5">
+          <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
+          <div className="flex items-center justify-between">
+            <ColorBadge colors={commander.color_identity} />
+            {commander.missing_price > 0 && (
+              <span className="text-xs text-yellow-400">${commander.missing_price.toFixed(0)}</span>
+            )}
+          </div>
+          {commander.num_decks > 0 && (
+            <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
           )}
         </div>
-        {commander.num_decks > 0 && (
-          <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
-        )}
       </div>
     </div>
   );
@@ -334,7 +346,7 @@ function sortResults(results, sortBy) {
   }
 }
 
-function Recommendations({ collectionCount, onSelectCommander }) {
+function Recommendations({ collectionCount, onSelectCommander, compareList, onToggleCompare }) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -372,6 +384,7 @@ function Recommendations({ collectionCount, onSelectCommander }) {
   };
 
   const sortedResults = sortResults(results, sortBy);
+  const compareNames = new Set(compareList.map(c => c.name));
 
   return (
     <div className="space-y-6">
@@ -471,7 +484,14 @@ function Recommendations({ collectionCount, onSelectCommander }) {
       {!loading && sortedResults.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {sortedResults.map(cmd => (
-            <CommanderCard key={cmd.name} commander={cmd} onClick={onSelectCommander} />
+            <CommanderCard
+              key={cmd.name}
+              commander={cmd}
+              onClick={onSelectCommander}
+              selectable={true}
+              selected={compareNames.has(cmd.name)}
+              onToggleCompare={onToggleCompare}
+            />
           ))}
         </div>
       )}
@@ -483,7 +503,7 @@ function Recommendations({ collectionCount, onSelectCommander }) {
   );
 }
 
-function CommanderSearch({ collectionCount, onSelectCommander }) {
+function CommanderSearch({ collectionCount, onSelectCommander, compareList, onToggleCompare }) {
   const [commanders, setCommanders] = useState([]);
   const [popular, setPopular] = useState([]);
   const [search, setSearch] = useState('');
@@ -528,6 +548,7 @@ function CommanderSearch({ collectionCount, onSelectCommander }) {
 
   const showPopular = search.length < 2 && colorFilter.length === 0;
   const displayList = showPopular ? popular : commanders;
+  const compareNames = new Set(compareList.map(c => c.name));
 
   return (
     <div className="space-y-6">
@@ -575,13 +596,21 @@ function CommanderSearch({ collectionCount, onSelectCommander }) {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
         {displayList.map(cmd => (
-          <CommanderCard key={cmd.name} commander={cmd} onClick={onSelectCommander} />
+          <CommanderCard
+            key={cmd.name}
+            commander={cmd}
+            onClick={onSelectCommander}
+            selectable={true}
+            selected={compareNames.has(cmd.name)}
+            onToggleCompare={onToggleCompare}
+          />
         ))}
       </div>
     </div>
   );
 }
 
+// --- Card Type Grouping ---
 const CARD_TYPE_ORDER = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
 
 function groupByType(cards) {
@@ -658,7 +687,256 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
   );
 }
 
-function CommanderDetail({ commander, collectionCount, onBack }) {
+// --- Deck Builder ---
+function DeckBuilder({ data, commander, onBack }) {
+  const [deck, setDeck] = useState([]);
+  const [exportText, setExportText] = useState('');
+
+  // Initialize with avg deck
+  useEffect(() => {
+    if (data) {
+      const initial = [...data.owned_cards, ...data.missing_cards].map(c => ({
+        ...c,
+        included: true,
+      }));
+      // Add recommendations as not-included
+      const recCards = (data.recommendations || []).map(c => ({
+        name: c.name,
+        card_type: c.card_type || 'Other',
+        owned: c.owned,
+        synergy: c.synergy,
+        included: false,
+        isRecommendation: true,
+      }));
+      setDeck([...initial, ...recCards]);
+    }
+  }, [data]);
+
+  const includedCards = deck.filter(c => c.included);
+  const excludedCards = deck.filter(c => !c.included);
+  const deckSize = includedCards.length;
+
+  const toggle = (name) => {
+    setDeck(prev => prev.map(c =>
+      c.name === name ? { ...c, included: !c.included } : c
+    ));
+  };
+
+  const handleExport = () => {
+    const text = includedCards.map(c => `1 ${c.name}`).join('\n');
+    setExportText(text);
+    navigator.clipboard.writeText(text).catch(() => {});
+  };
+
+  const includedGroups = groupByType(includedCards);
+
+  return (
+    <div className="space-y-6">
+      <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
+          <p className={`text-sm mt-1 ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
+            {deckSize}/100 cards (including commander)
+          </p>
+        </div>
+        <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-medium">
+          Export Deck
+        </button>
+      </div>
+
+      {exportText && (
+        <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-green-400">Copied to clipboard!</p>
+            <button onClick={() => setExportText('')} className="text-xs text-gray-400 hover:text-white">Close</button>
+          </div>
+          <textarea
+            readOnly
+            value={exportText}
+            rows={6}
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
+            onFocus={e => e.target.select()}
+          />
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-3 gap-6">
+        {/* Included cards */}
+        <div className="md:col-span-2 space-y-4">
+          <h3 className="text-lg font-semibold text-green-400">In Deck ({deckSize})</h3>
+          {includedGroups.map(({ type, cards }) => (
+            <div key={type}>
+              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+                {cards.map(card => (
+                  <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+                    <div className="flex items-center gap-2">
+                      {card.owned ? (
+                        <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
+                      ) : (
+                        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
+                      )}
+                      <CardName name={card.name} className="text-sm" />
+                      {card.isRecommendation && <span className="text-xs text-purple-400">rec</span>}
+                    </div>
+                    <button
+                      onClick={() => toggle(card.name)}
+                      className="text-xs text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Excluded / available to add */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-gray-400">Removed / Available ({excludedCards.length})</h3>
+          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
+            {excludedCards.map(card => (
+              <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+                <div className="flex items-center gap-2">
+                  {card.owned ? (
+                    <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+                  )}
+                  <CardName name={card.name} className="text-sm text-gray-400" />
+                </div>
+                <button
+                  onClick={() => toggle(card.name)}
+                  className="text-xs text-green-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  Add
+                </button>
+              </div>
+            ))}
+            {excludedCards.length === 0 && (
+              <p className="px-3 py-4 text-gray-500 text-sm">No removed cards</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Multi-Commander Comparison ---
+function CompareView({ commanders, onBack, onSelectCommander }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    apiPost('/api/compare', { commanders: commanders.map(c => c.name) })
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [commanders]);
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+        <p className="text-gray-400">Comparing commanders...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
+        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+      <h2 className="text-2xl font-bold">Commander Comparison</h2>
+
+      {/* Summary cards */}
+      <div className={`grid gap-4 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+        {data.commanders.map((cmd, i) => {
+          const matchColor = cmd.match_percentage >= 60 ? 'text-green-400' :
+            cmd.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
+          const orig = commanders[i];
+          return (
+            <div key={cmd.name} className="bg-gray-800 rounded-lg p-4 space-y-3">
+              {orig?.image_uri && (
+                <img src={orig.image_uri} alt={cmd.name} className="w-32 rounded-lg mx-auto" />
+              )}
+              <h3
+                className="font-bold text-center cursor-pointer hover:text-blue-400"
+                onClick={() => onSelectCommander(orig || { name: cmd.name })}
+              >
+                {cmd.name}
+              </h3>
+              <div className="text-center">
+                <span className={`text-3xl font-bold ${matchColor}`}>{cmd.match_percentage}%</span>
+                <p className="text-xs text-gray-400 mt-1">{cmd.owned_count}/{cmd.total_cards} owned</p>
+              </div>
+              <MatchBar percentage={cmd.match_percentage} size="lg" />
+              <div className="text-center text-sm">
+                {cmd.missing_price > 0 && (
+                  <span className="text-yellow-400">~${cmd.missing_price.toFixed(2)} to complete</span>
+                )}
+              </div>
+              <div className="text-center text-xs text-gray-500 space-y-1">
+                <p>{cmd.unique_cards.length} unique cards</p>
+                {cmd.num_decks > 0 && <p>{cmd.num_decks.toLocaleString()} decks</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Shared cards */}
+      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+        <h3 className="font-semibold text-blue-400">
+          Shared Across All ({data.shared_count} cards)
+        </h3>
+        <p className="text-xs text-gray-400">Cards that appear in every commander's average deck.</p>
+        <div className="flex flex-wrap gap-2">
+          {(data.commanders[0]?.shared_cards || []).map(name => (
+            <span key={name} className="text-xs bg-gray-700 px-2 py-1 rounded">
+              <CardName name={name} />
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Unique cards per commander */}
+      <div className={`grid gap-4 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+        {data.commanders.map(cmd => (
+          <div key={cmd.name} className="bg-gray-800 rounded-lg p-4 space-y-2">
+            <h4 className="font-semibold text-sm text-purple-400">
+              Only in {cmd.name} ({cmd.unique_cards.length})
+            </h4>
+            <div className="divide-y divide-gray-700 max-h-72 overflow-y-auto">
+              {cmd.unique_cards.map(name => (
+                <div key={name} className="py-1 text-sm">
+                  <CardName name={name} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Commander Detail with progressive loading ---
+function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -669,6 +947,7 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
   const [exportText, setExportText] = useState('');
   const [recSort, setRecSort] = useState('synergy_desc');
   const [recFilter, setRecFilter] = useState('all');
+  const [recTypeFilter, setRecTypeFilter] = useState('all');
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -702,9 +981,26 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
 
   if (loading) {
     return (
-      <div className="text-center py-12">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-        <p className="text-gray-400">Fetching average deck from EDHREC...</p>
+      <div className="space-y-6">
+        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+        {/* Show header immediately with commander card info */}
+        <div className="flex gap-6 items-start">
+          {commander.image_uri && (
+            <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
+          )}
+          <div className="space-y-3 flex-1">
+            <h2 className="text-3xl font-bold">{commander.name}</h2>
+            <ColorBadge colors={commander.color_identity} />
+            <div className="space-y-3 mt-4">
+              <div className="animate-pulse space-y-3">
+                <div className="h-10 bg-gray-700 rounded w-32" />
+                <div className="h-2.5 bg-gray-700 rounded w-full" />
+                <div className="h-4 bg-gray-700 rounded w-48" />
+              </div>
+              <p className="text-gray-400 text-sm mt-4">Fetching average deck from EDHREC, classifying cards, and loading prices...</p>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -722,6 +1018,19 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
 
   const matchColor = data.match_percentage >= 60 ? 'text-green-400' :
     data.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
+
+  // Compute available card types in recommendations for the type filter
+  const allRecs = data.recommendations || [];
+  const recTypes = [...new Set(allRecs.map(r => r.card_type || 'Other'))].sort();
+
+  // Apply filters
+  let filteredRecs = [...allRecs];
+  if (recFilter === 'owned') filteredRecs = filteredRecs.filter(c => c.owned);
+  else if (recFilter === 'not_owned') filteredRecs = filteredRecs.filter(c => !c.owned);
+  if (recTypeFilter !== 'all') filteredRecs = filteredRecs.filter(c => (c.card_type || 'Other') === recTypeFilter);
+  if (recSort === 'synergy_desc') filteredRecs.sort((a, b) => (b.synergy || 0) - (a.synergy || 0));
+  else if (recSort === 'synergy_asc') filteredRecs.sort((a, b) => (a.synergy || 0) - (b.synergy || 0));
+  else if (recSort === 'inclusion_desc') filteredRecs.sort((a, b) => (b.inclusion || 0) - (a.inclusion || 0));
 
   return (
     <div className="space-y-6">
@@ -755,7 +1064,7 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
         </div>
       </div>
 
-      {/* Filters + Export */}
+      {/* Filters + Export + Deck Builder */}
       <div className="bg-gray-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
         <div>
           <label className="block text-xs text-gray-400 mb-1">Budget</label>
@@ -799,6 +1108,12 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
         )}
 
         <div className="ml-auto flex gap-2">
+          <button
+            onClick={() => onOpenDeckBuilder(data)}
+            className="bg-purple-700 hover:bg-purple-600 px-3 py-1.5 rounded text-sm font-medium"
+          >
+            Deck Builder
+          </button>
           <button
             onClick={() => handleExport('full')}
             className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm"
@@ -858,80 +1173,88 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
       />
 
       {/* Possible Recommendations */}
-      {data.recommendations && data.recommendations.length > 0 && (() => {
-        let recs = [...data.recommendations];
-        if (recFilter === 'owned') recs = recs.filter(c => c.owned);
-        else if (recFilter === 'not_owned') recs = recs.filter(c => !c.owned);
-        if (recSort === 'synergy_desc') recs.sort((a, b) => (b.synergy || 0) - (a.synergy || 0));
-        else if (recSort === 'synergy_asc') recs.sort((a, b) => (a.synergy || 0) - (b.synergy || 0));
-        else if (recSort === 'inclusion_desc') recs.sort((a, b) => (b.inclusion || 0) - (a.inclusion || 0));
-        return (
-          <div className="space-y-3">
-            <h3 className="text-lg font-semibold text-purple-400">
-              Possible Recommendations ({recs.length})
-            </h3>
-            <p className="text-xs text-gray-400">
-              Cards with high synergy for this commander that aren't in the average deck.
-            </p>
-            <div className="flex flex-wrap gap-3 items-center">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400">Sort:</label>
-                <select
-                  value={recSort}
-                  onChange={e => setRecSort(e.target.value)}
-                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
-                >
-                  <option value="synergy_desc">Highest Synergy</option>
-                  <option value="synergy_asc">Lowest Synergy</option>
-                  <option value="inclusion_desc">Most Included</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400">Show:</label>
-                <select
-                  value={recFilter}
-                  onChange={e => setRecFilter(e.target.value)}
-                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
-                >
-                  <option value="all">All</option>
-                  <option value="owned">In Collection</option>
-                  <option value="not_owned">Not In Collection</option>
-                </select>
-              </div>
+      {allRecs.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-purple-400">
+            Possible Recommendations ({filteredRecs.length})
+          </h3>
+          <p className="text-xs text-gray-400">
+            Cards with high synergy for this commander that aren't in the average deck.
+          </p>
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Sort:</label>
+              <select
+                value={recSort}
+                onChange={e => setRecSort(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+              >
+                <option value="synergy_desc">Highest Synergy</option>
+                <option value="synergy_asc">Lowest Synergy</option>
+                <option value="inclusion_desc">Most Included</option>
+              </select>
             </div>
-            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
-              {recs.map(card => (
-                <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    {card.owned ? (
-                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="In collection" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="Not in collection" />
-                    )}
-                    <CardName name={card.name} className="text-sm" />
-                  </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    {card.synergy != null && (
-                      <span className={`font-medium ${card.synergy > 0 ? 'text-green-400' : 'text-gray-400'}`}>
-                        {card.synergy > 0 ? '+' : ''}{card.synergy}% synergy
-                      </span>
-                    )}
-                    {card.inclusion != null && (
-                      <span className="text-gray-500">{card.inclusion}% inclusion</span>
-                    )}
-                    {card.source && (
-                      <span className="text-purple-400/70">{card.source}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {recs.length === 0 && (
-                <p className="px-3 py-4 text-gray-500 text-sm">No recommendations match the current filter.</p>
-              )}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Show:</label>
+              <select
+                value={recFilter}
+                onChange={e => setRecFilter(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+              >
+                <option value="all">All</option>
+                <option value="owned">In Collection</option>
+                <option value="not_owned">Not In Collection</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Type:</label>
+              <select
+                value={recTypeFilter}
+                onChange={e => setRecTypeFilter(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+              >
+                <option value="all">All Types</option>
+                {recTypes.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
             </div>
           </div>
-        );
-      })()}
+          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+            {filteredRecs.map(card => (
+              <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  {card.owned ? (
+                    <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="In collection" />
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="Not in collection" />
+                  )}
+                  <CardName name={card.name} className="text-sm" />
+                  {card.card_type && (
+                    <span className="text-xs text-gray-600">{card.card_type}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  {card.synergy != null && (
+                    <span className={`font-medium ${card.synergy > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                      {card.synergy > 0 ? '+' : ''}{card.synergy}% synergy
+                    </span>
+                  )}
+                  {card.inclusion != null && (
+                    <span className="text-gray-500">{card.inclusion}% inclusion</span>
+                  )}
+                  {card.source && (
+                    <span className="text-purple-400/70">{card.source}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {filteredRecs.length === 0 && (
+              <p className="px-3 py-4 text-gray-500 text-sm">No recommendations match the current filters.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -942,6 +1265,8 @@ function App() {
   const [tab, setTab] = useState('upload');
   const [collectionCount, setCollectionCount] = useState(0);
   const [selectedCommander, setSelectedCommander] = useState(null);
+  const [compareList, setCompareList] = useState([]);
+  const [deckBuilderData, setDeckBuilderData] = useState(null);
 
   // Restore collection from localStorage on startup
   useEffect(() => {
@@ -951,7 +1276,6 @@ function App() {
         setCollectionCount(data.count || 0);
         if (data.count > 0) setTab('recommend');
       }).catch(() => {
-        // Fallback: check if backend already has a collection
         apiGet('/api/collection').then(data => {
           setCollectionCount(data.count || 0);
         }).catch(() => {});
@@ -971,6 +1295,20 @@ function App() {
   const handleSelectCommander = (cmd) => {
     setSelectedCommander(cmd);
     setTab('detail');
+  };
+
+  const handleToggleCompare = (cmd) => {
+    setCompareList(prev => {
+      const exists = prev.find(c => c.name === cmd.name);
+      if (exists) return prev.filter(c => c.name !== cmd.name);
+      if (prev.length >= 3) return prev; // Max 3
+      return [...prev, cmd];
+    });
+  };
+
+  const handleOpenDeckBuilder = (data) => {
+    setDeckBuilderData(data);
+    setTab('deckbuilder');
   };
 
   const tabs = [
@@ -995,13 +1333,13 @@ function App() {
 
       {/* Nav */}
       <nav className="bg-gray-900/50 border-b border-gray-800 px-6">
-        <div className="max-w-7xl mx-auto flex gap-1">
+        <div className="max-w-7xl mx-auto flex gap-1 items-center">
           {tabs.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                tab === t.id || (tab === 'detail' && t.id === 'recommend')
+                tab === t.id || (tab === 'detail' && t.id === 'recommend') || (tab === 'deckbuilder' && t.id === 'recommend')
                   ? 'border-blue-500 text-blue-400'
                   : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
@@ -1009,6 +1347,31 @@ function App() {
               {t.label}
             </button>
           ))}
+
+          {/* Compare button */}
+          {compareList.length >= 2 && (
+            <button
+              onClick={() => setTab('compare')}
+              className={`ml-4 px-4 py-1.5 rounded text-sm font-medium transition-all ${
+                tab === 'compare'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-purple-700/50 text-purple-300 hover:bg-purple-700'
+              }`}
+            >
+              Compare ({compareList.length})
+            </button>
+          )}
+          {compareList.length > 0 && compareList.length < 2 && (
+            <span className="ml-4 text-xs text-gray-500">Select {2 - compareList.length} more to compare</span>
+          )}
+          {compareList.length > 0 && (
+            <button
+              onClick={() => setCompareList([])}
+              className="ml-2 text-xs text-gray-500 hover:text-red-400"
+            >
+              Clear
+            </button>
+          )}
         </div>
       </nav>
 
@@ -1022,6 +1385,8 @@ function App() {
           <Recommendations
             collectionCount={collectionCount}
             onSelectCommander={handleSelectCommander}
+            compareList={compareList}
+            onToggleCompare={handleToggleCompare}
           />
         </div>
 
@@ -1029,6 +1394,8 @@ function App() {
           <CommanderSearch
             collectionCount={collectionCount}
             onSelectCommander={handleSelectCommander}
+            compareList={compareList}
+            onToggleCompare={handleToggleCompare}
           />
         </div>
 
@@ -1037,6 +1404,23 @@ function App() {
             commander={selectedCommander}
             collectionCount={collectionCount}
             onBack={() => setTab('recommend')}
+            onOpenDeckBuilder={handleOpenDeckBuilder}
+          />
+        )}
+
+        {tab === 'deckbuilder' && selectedCommander && deckBuilderData && (
+          <DeckBuilder
+            data={deckBuilderData}
+            commander={selectedCommander}
+            onBack={() => setTab('detail')}
+          />
+        )}
+
+        {tab === 'compare' && compareList.length >= 2 && (
+          <CompareView
+            commanders={compareList}
+            onBack={() => setTab('recommend')}
+            onSelectCommander={handleSelectCommander}
           />
         )}
       </main>

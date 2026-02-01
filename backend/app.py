@@ -1,25 +1,74 @@
 import csv
 import io
+import json
+import os
 import re
 import time
 import logging
 from typing import Optional
 
 import requests
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pyedhrec import EDHRec
+
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    HAS_SLOWAPI = True
+except ImportError:
+    HAS_SLOWAPI = False
+
+try:
+    import redis as redis_lib
+    HAS_REDIS = True
+except ImportError:
+    HAS_REDIS = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- Environment config ---
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
+REDIS_URL = os.environ.get("REDIS_URL", "")
+RATE_LIMIT = os.environ.get("RATE_LIMIT", "30/minute")
+
+# --- Redis setup (optional) ---
+redis_client = None
+if HAS_REDIS and REDIS_URL:
+    try:
+        redis_client = redis_lib.from_url(REDIS_URL, decode_responses=True)
+        redis_client.ping()
+        logger.info(f"Connected to Redis at {REDIS_URL}")
+    except Exception as e:
+        logger.warning(f"Redis connection failed, using in-memory cache: {e}")
+        redis_client = None
+
 app = FastAPI(title="MTG Commander Recommender")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Rate limiting (optional) ---
+if HAS_SLOWAPI:
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+else:
+    limiter = None
+
+
+def rate_limit(limit_string):
+    """Decorator that applies rate limiting if slowapi is available."""
+    def decorator(func):
+        if limiter:
+            return limiter.limit(limit_string)(func)
+        return func
+    return decorator
 
 edhrec = EDHRec()
 
@@ -485,7 +534,9 @@ async def popular_commanders():
 
 
 @app.get("/api/commander/{commander_name}")
+@rate_limit(RATE_LIMIT)
 async def get_commander_detail(
+    request: Request,
     commander_name: str,
     budget: Optional[str] = None,
     theme: Optional[str] = None,
@@ -542,6 +593,20 @@ async def get_commander_detail(
                 total_missing_price += price
 
     # Build recommendations: synergy/new/top cards not in avg deck (both owned and not)
+    # Map type keys to card_type labels
+    type_key_to_label = {
+        "top_creatures": "Creature", "top_instants": "Instant", "top_sorceries": "Sorcery",
+        "top_enchantments": "Enchantment", "top_artifacts": "Artifact",
+        "top_mana_artifacts": "Artifact", "top_planeswalkers": "Planeswalker",
+        "top_lands": "Land", "top_utility_lands": "Land",
+    }
+
+    # Pre-build a lookup: normalized name -> card_type from type-specific lists
+    rec_type_lookup = {}
+    for key, label in type_key_to_label.items():
+        for card in type_data.get(key, []):
+            rec_type_lookup[card["name_normalized"]] = label
+
     recommendations = []
     seen_recs = set()
     for key in ["high_synergy", "new_cards"]:
@@ -556,25 +621,36 @@ async def get_commander_detail(
                     "inclusion": card.get("inclusion", 0),
                     "source": "High Synergy" if key == "high_synergy" else "New Card",
                     "owned": normalized in collection,
+                    "card_type": rec_type_lookup.get(normalized, ""),
                 })
 
     # Also check all type-specific top cards
     for key in ["top_creatures", "top_instants", "top_sorceries", "top_enchantments",
                 "top_artifacts", "top_lands", "top_planeswalkers", "top_utility_lands",
                 "top_mana_artifacts"]:
+        type_label = type_key_to_label[key]
         for card in type_data.get(key, []):
             normalized = card["name_normalized"]
             if normalized not in avg_deck_names and normalized not in seen_recs:
                 seen_recs.add(normalized)
-                type_label = key.replace("top_", "").replace("_", " ").title()
+                source_label = key.replace("top_", "").replace("_", " ").title()
                 recommendations.append({
                     "name": card["name"],
                     "name_normalized": normalized,
                     "synergy": card.get("synergy", 0),
                     "inclusion": card.get("inclusion", 0),
-                    "source": f"Top {type_label}",
+                    "source": f"Top {source_label}",
                     "owned": normalized in collection,
+                    "card_type": type_label,
                 })
+
+    # Scryfall fallback for recs with no card_type
+    untyped_rec_names = [r["name"] for r in recommendations if not r["card_type"]]
+    if untyped_rec_names:
+        rec_types = fetch_card_types_bulk(untyped_rec_names)
+        for r in recommendations:
+            if not r["card_type"] and r["name"] in rec_types:
+                r["card_type"] = rec_types[r["name"]]
 
     # Sort recommendations by synergy descending
     recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
@@ -596,7 +672,9 @@ async def get_commander_detail(
 
 
 @app.post("/api/recommendations")
+@rate_limit(RATE_LIMIT)
 async def get_recommendations(
+    request: Request,
     color: Optional[str] = None,
     search: Optional[str] = None,
     min_owned: int = 20,
@@ -669,6 +747,60 @@ async def get_recommendations(
 
     results.sort(key=lambda r: r["match_percentage"], reverse=True)
     return {"results": results[:limit]}
+
+
+@app.post("/api/compare")
+@rate_limit(RATE_LIMIT)
+async def compare_commanders(request: Request, body: dict):
+    """Compare 2-3 commanders side by side."""
+    names = body.get("commanders", [])
+    if len(names) < 2 or len(names) > 3:
+        raise HTTPException(status_code=400, detail="Provide 2-3 commander names")
+
+    results = []
+    for name in names:
+        data = get_commander_avg_deck(name)
+        deck_cards = set(data.get("deck_card_names", []))
+        owned_count = len(deck_cards & collection)
+        total = len(deck_cards)
+
+        missing_names = [
+            card["name"] for card in data.get("decklist", [])
+            if card["name_normalized"] not in collection
+        ]
+
+        # Prices
+        total_price = 0
+        if missing_names:
+            prices = fetch_prices_bulk(missing_names)
+            for mn in missing_names:
+                p = prices.get(normalize_card_name(mn))
+                if p:
+                    total_price += p
+
+        results.append({
+            "name": name,
+            "num_decks": data.get("num_decks", 0),
+            "total_cards": total,
+            "owned_count": owned_count,
+            "missing_count": total - owned_count,
+            "match_percentage": round(owned_count / max(total, 1) * 100, 1),
+            "missing_price": round(total_price, 2),
+            "deck_card_names": list(deck_cards),
+            "owned_cards": sorted(deck_cards & collection),
+            "missing_cards": sorted(deck_cards - collection),
+        })
+
+    # Compute overlap/unique
+    all_deck_sets = [set(r["deck_card_names"]) for r in results]
+    shared_across_all = set.intersection(*all_deck_sets) if all_deck_sets else set()
+    for r in results:
+        others = [s for s in all_deck_sets if s is not set(r["deck_card_names"])]
+        r["unique_cards"] = sorted(set(r["deck_card_names"]) - set.union(*others) if others else set(r["deck_card_names"]))
+        r["shared_cards"] = sorted(shared_across_all)
+        del r["deck_card_names"]  # Don't send the full set
+
+    return {"commanders": results, "shared_count": len(shared_across_all)}
 
 
 @app.get("/api/health")
