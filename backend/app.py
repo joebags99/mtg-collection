@@ -139,7 +139,7 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         formatted = edhrec.format_card_name(commander_name)
 
         # Get average deck
-        avg_deck = edhrec.get_commanders_average_deck(formatted, budget=budget)
+        avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
 
         # Get commander data for themes/metadata
         cmd_data = edhrec.get_commander_data(formatted)
