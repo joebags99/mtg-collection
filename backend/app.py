@@ -136,7 +136,9 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         return cached["data"]
 
     try:
-        formatted = edhrec.format_card_name(commander_name)
+        # For double-faced cards, EDHREC only uses the front face name
+        name_for_edhrec = commander_name.split("//")[0].strip()
+        formatted = edhrec.format_card_name(name_for_edhrec)
 
         # Get average deck
         avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
@@ -149,31 +151,38 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         if cmd_data:
             container = cmd_data.get("container", {})
             json_dict = container.get("json_dict", {})
-            # Themes are in the panels or related data
-            tribe_links = json_dict.get("tribe", [])
             theme_links = json_dict.get("themes", [])
             for t in (theme_links or []):
-                themes.append({
-                    "name": t.get("name", ""),
-                    "slug": t.get("slug", ""),
-                    "count": t.get("count", 0),
-                })
+                if isinstance(t, dict):
+                    themes.append({
+                        "name": t.get("name", ""),
+                        "slug": t.get("slug", ""),
+                        "count": t.get("count", 0),
+                    })
 
         # Extract card names from average deck
+        # Decklist items may be strings (card names) or dicts with metadata
         deck_cards = set()
         decklist = []
         if avg_deck and avg_deck.get("decklist"):
             for card in avg_deck["decklist"]:
-                card_name = card.get("name", "")
-                if card_name:
+                if isinstance(card, str):
+                    card_name = card
                     deck_cards.add(normalize_card_name(card_name))
                     decklist.append({
                         "name": card_name,
                         "name_normalized": normalize_card_name(card_name),
-                        "category": card.get("type", card.get("category", "")),
-                        "salt": card.get("salt", 0),
-                        "price": card.get("price", 0),
+                        "category": "",
                     })
+                elif isinstance(card, dict):
+                    card_name = card.get("name", "")
+                    if card_name:
+                        deck_cards.add(normalize_card_name(card_name))
+                        decklist.append({
+                            "name": card_name,
+                            "name_normalized": normalize_card_name(card_name),
+                            "category": card.get("type", card.get("category", "")),
+                        })
 
         num_decks = 0
         if cmd_data:
