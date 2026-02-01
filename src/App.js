@@ -634,7 +634,7 @@ function App() {
           {tabs.map(t => (
             <button
               key={t.id}
-              onClick={() => { setTab(t.id); setSelectedCommander(null); }}
+              onClick={() => setTab(t.id)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 tab === t.id || (tab === 'detail' && t.id === 'recommend')
                   ? 'border-blue-500 text-blue-400'
@@ -647,25 +647,25 @@ function App() {
         </div>
       </nav>
 
-      {/* Content */}
+      {/* Content - tabs stay mounted to preserve state */}
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {tab === 'upload' && (
+        <div style={{ display: tab === 'upload' ? 'block' : 'none' }}>
           <CollectionUpload onUploaded={handleUploaded} />
-        )}
+        </div>
 
-        {tab === 'recommend' && (
+        <div style={{ display: tab === 'recommend' ? 'block' : 'none' }}>
           <Recommendations
             collectionCount={collectionCount}
             onSelectCommander={handleSelectCommander}
           />
-        )}
+        </div>
 
-        {tab === 'search' && (
+        <div style={{ display: tab === 'search' ? 'block' : 'none' }}>
           <CommanderSearch
             collectionCount={collectionCount}
             onSelectCommander={handleSelectCommander}
           />
-        )}
+        </div>
 
         {tab === 'detail' && selectedCommander && (
           <CommanderDetail
