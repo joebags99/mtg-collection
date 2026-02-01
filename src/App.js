@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -28,6 +28,50 @@ function ColorBadge({ colors }) {
           {c}
         </span>
       ))}
+    </span>
+  );
+}
+
+function CardName({ name, className = '' }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+  const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(name)}`;
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    // Position to the right by default, flip left if near edge
+    let x = rect.right + 8;
+    let y = rect.top;
+    if (x + 250 > viewportW) x = rect.left - 258;
+    if (y + 350 > viewportH) y = viewportH - 360;
+    if (y < 8) y = 8;
+    setPos({ x, y });
+    setShow(true);
+  };
+
+  return (
+    <span
+      ref={ref}
+      className={`cursor-pointer hover:text-blue-400 transition-colors ${className}`}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setShow(false)}
+    >
+      {name}
+      {show && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: pos.x, top: pos.y }}
+        >
+          <img
+            src={imgSrc}
+            alt={name}
+            className="w-[250px] rounded-lg shadow-2xl border border-gray-700"
+          />
+        </div>
+      )}
     </span>
   );
 }
@@ -551,7 +595,7 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
             <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
               {data.owned_cards.map(card => (
                 <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                  <span className="text-sm">{card.name}</span>
+                  <CardName name={card.name} className="text-sm" />
                   <span className="text-xs text-gray-500">{card.category}</span>
                 </div>
               ))}
@@ -570,7 +614,7 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
             <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
               {data.missing_cards.map(card => (
                 <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                  <span className="text-sm">{card.name}</span>
+                  <CardName name={card.name} className="text-sm" />
                   <span className="text-xs text-gray-500">{card.category}</span>
                 </div>
               ))}
