@@ -142,6 +142,12 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
 
         # Get average deck
         avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
+        logger.info(f"avg_deck for {formatted}: type={type(avg_deck)}, keys={list(avg_deck.keys()) if isinstance(avg_deck, dict) else 'N/A'}")
+        if isinstance(avg_deck, dict):
+            dl = avg_deck.get("decklist")
+            logger.info(f"  decklist type={type(dl)}, len={len(dl) if dl else 0}")
+            if dl:
+                logger.info(f"  first item: type={type(dl[0])}, value={repr(str(dl[0])[:200])}")
 
         # Get commander data for themes/metadata
         cmd_data = edhrec.get_commander_data(formatted)
@@ -335,10 +341,20 @@ async def get_recommendations(
     # Only check top commanders by EDHREC rank (to avoid thousands of requests)
     commanders = sorted(commanders, key=lambda c: c["edhrec_rank"])[:200]
 
+    logger.info(f"Collection sample (first 10): {sorted(collection)[:10]}")
+    logger.info(f"Collection size: {len(collection)}")
+
     results = []
+    checked = 0
     for cmd in commanders:
         data = get_commander_avg_deck(cmd["name"])
         deck_cards = set(data.get("deck_card_names", []))
+        if checked < 3:
+            logger.info(f"Commander {cmd['name']}: deck_cards={len(deck_cards)}, sample={list(deck_cards)[:5]}")
+            if deck_cards:
+                overlap = deck_cards & collection
+                logger.info(f"  overlap={len(overlap)}, sample={list(overlap)[:5]}")
+        checked += 1
         if not deck_cards:
             continue
 
