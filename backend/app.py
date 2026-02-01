@@ -173,7 +173,10 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         if avg_deck and avg_deck.get("decklist"):
             for card in avg_deck["decklist"]:
                 if isinstance(card, str):
-                    card_name = card
+                    # Strip leading quantity like "1 " or "1x "
+                    card_raw = card.strip()
+                    qty_match = re.match(r"^\d+x?\s+(.+)", card_raw)
+                    card_name = qty_match.group(1) if qty_match else card_raw
                     deck_cards.add(normalize_card_name(card_name))
                     decklist.append({
                         "name": card_name,
