@@ -1,1260 +1,682 @@
-import React, { useState } from 'react';
-import { Upload, Database, TrendingUp, Plus } from 'lucide-react';
-// eslint-disable-next-line no-unused-vars
-import Papa from 'papaparse';
+import React, { useState, useCallback, useEffect } from 'react';
 
-const MTGCollectionManager = () => {
-  const [collection, setCollection] = useState([]);
+const API = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+// --- Color Identity Helpers ---
+const COLOR_MAP = {
+  W: { label: 'White', bg: '#f9faf4', text: '#333', symbol: '☀' },
+  U: { label: 'Blue', bg: '#0e68ab', text: '#fff', symbol: '💧' },
+  B: { label: 'Black', bg: '#2b2b2b', text: '#ccc', symbol: '💀' },
+  R: { label: 'Red', bg: '#d32029', text: '#fff', symbol: '🔥' },
+  G: { label: 'Green', bg: '#00733e', text: '#fff', symbol: '🌲' },
+};
+
+const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
+
+function ColorBadge({ colors }) {
+  if (!colors || colors.length === 0) {
+    return <span className="text-xs bg-gray-600 px-1.5 py-0.5 rounded">C</span>;
+  }
+  return (
+    <span className="inline-flex gap-0.5">
+      {colors.map(c => (
+        <span
+          key={c}
+          className="text-xs px-1.5 py-0.5 rounded font-bold"
+          style={{ backgroundColor: COLOR_MAP[c]?.bg, color: COLOR_MAP[c]?.text }}
+        >
+          {c}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// --- API helpers ---
+async function apiGet(path, params = {}) {
+  const url = new URL(API + path);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== null && v !== undefined && v !== '') url.searchParams.set(k, v);
+  });
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiUpload(path, file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(API + path, { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+// --- Components ---
+
+function CollectionUpload({ onUploaded }) {
+  const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('upload');
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
 
-  const styles = {
-    container: {
-      minHeight: '100vh',
-      backgroundColor: '#f9fafb',
-      fontFamily: 'system-ui, -apple-system, sans-serif'
-    },
-    header: {
-      backgroundColor: 'white',
-      borderBottom: '1px solid #e5e7eb',
-      padding: '24px',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-    },
-    headerTitle: {
-      fontSize: '32px',
-      fontWeight: 'bold',
-      color: '#111827',
-      margin: '0 0 8px 0'
-    },
-    headerSubtitle: {
-      color: '#6b7280',
-      margin: 0
-    },
-    nav: {
-      backgroundColor: 'white',
-      borderBottom: '1px solid #e5e7eb',
-      padding: '0 24px'
-    },
-    navList: {
-      display: 'flex',
-      gap: '32px',
-      listStyle: 'none',
-      margin: 0,
-      padding: 0
-    },
-    navItem: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      padding: '16px 8px',
-      cursor: 'pointer',
-      borderBottom: '2px solid transparent',
-      fontSize: '14px',
-      fontWeight: '500',
-      transition: 'all 0.2s'
-    },
-    navItemActive: {
-      borderBottomColor: '#3b82f6',
-      color: '#3b82f6'
-    },
-    navItemInactive: {
-      color: '#6b7280'
-    },
-    main: {
-      maxWidth: '1200px',
-      margin: '0 auto',
-      padding: '32px 24px'
-    },
-    card: {
-      backgroundColor: 'white',
-      border: '1px solid #e5e7eb',
-      borderRadius: '8px',
-      padding: '24px',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-    },
-    button: {
-      backgroundColor: '#3b82f6',
-      color: 'white',
-      border: 'none',
-      borderRadius: '8px',
-      padding: '12px 24px',
-      cursor: 'pointer',
-      fontSize: '16px',
-      fontWeight: '500',
-      transition: 'background-color 0.2s'
-    },
-    buttonDisabled: {
-      backgroundColor: '#9ca3af',
-      cursor: 'not-allowed'
-    },
-    input: {
-      width: '100%',
-      padding: '12px',
-      border: '1px solid #d1d5db',
-      borderRadius: '8px',
-      fontSize: '16px'
-    },
-    textarea: {
-      width: '100%',
-      height: '256px',
-      padding: '16px',
-      border: '1px solid #d1d5db',
-      borderRadius: '8px',
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      resize: 'vertical'
-    },
-    grid: {
-      display: 'grid',
-      gap: '32px',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-      justifyItems: 'center'
-    },
-    flexRow: {
-      display: 'flex',
-      gap: '16px',
-      alignItems: 'center'
-    },
-    badge: {
-      backgroundColor: '#dbeafe',
-      color: '#1e40af',
-      padding: '4px 8px',
-      borderRadius: '4px',
-      fontSize: '12px',
-      fontWeight: '500'
-    },
-    loadingSpinner: {
-      textAlign: 'center',
-      padding: '32px'
-    },
-    spinner: {
-      display: 'inline-block',
-      width: '32px',
-      height: '32px',
-      border: '3px solid #f3f4f6',
-      borderTop: '3px solid #3b82f6',
-      borderRadius: '50%',
-      animation: 'spin 1s linear infinite'
-    }
-  };
-
-  // Parse collection from text input (one card per line, format: "Quantity Cardname")
-  const parseCollection = (text) => {
-    const lines = text.split('\n').filter(line => line.trim());
-    const cards = [];
-    
-    lines.forEach(line => {
-      const match = line.trim().match(/^(\d+)\s+(.+)$/);
-      if (match) {
-        const [, quantity, name] = match;
-        cards.push({
-          quantity: parseInt(quantity),
-          name: name.trim(),
-          id: Date.now() + Math.random()
-        });
-      }
-    });
-    
-    return cards;
-  };
-
-  // Fetch card data from Scryfall
-  const fetchCardData = async (cardName) => {
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    setError('');
     try {
-      const response = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(cardName)}`);
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (error) {
-      console.error(`Error fetching ${cardName}:`, error);
-    }
-    return null;
-  };
-
-  // Process uploaded collection
-  const handleCollectionUpload = async (text) => {
-    setLoading(true);
-    const parsedCards = parseCollection(text);
-    const enhancedCards = [];
-
-    for (let i = 0; i < parsedCards.length; i++) {
-      const card = parsedCards[i];
-      const cardData = await fetchCardData(card.name);
-      
-      enhancedCards.push({
-        ...card,
-        scryfallData: cardData,
-        colors: cardData?.color_identity || [],
-        cmc: cardData?.cmc || 0,
-        type: cardData?.type_line || '',
-        price: cardData?.prices?.usd || '0'
-      });
-
-      if (i < parsedCards.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-
-    setCollection(enhancedCards);
-    setLoading(false);
-    setActiveTab('collection');
-  };
-
-  // Manual card addition
-  const addSingleCard = async (cardName, quantity = 1) => {
-    setLoading(true);
-    const cardData = await fetchCardData(cardName);
-    
-    if (cardData) {
-      const newCard = {
-        quantity,
-        name: cardData.name,
-        edition: cardData.set_name || '',
-        condition: 'Near Mint',
-        language: 'English',
-        foil: false,
-        collectorNumber: cardData.collector_number || '',
-        alter: false,
-        proxy: false,
-        purchasePrice: 0,
-        tradelistCount: 0,
-        tags: '',
-        lastModified: new Date().toISOString(),
-        id: Date.now(),
-        scryfallData: cardData,
-        colors: cardData.color_identity || [],
-        cmc: cardData.cmc || 0,
-        type: cardData.type_line || '',
-        price: cardData.prices?.usd || '0'
-      };
-      
-      setCollection(prev => [...prev, newCard]);
+      const data = await apiUpload('/api/collection/upload', file);
+      setResult(data);
+      onUploaded(data);
+    } catch (err) {
+      setError(err.message);
     }
     setLoading(false);
   };
 
-  // Simple deck analysis
-  const analyzeDeckPotential = () => {
-    const commanders = collection.filter(card => 
-      card.type.includes('Legendary') && card.type.includes('Creature')
-    );
-    
-    const colorCombinations = {};
-    commanders.forEach(commander => {
-      const colors = commander.colors.sort().join('');
-      if (!colorCombinations[colors]) {
-        colorCombinations[colors] = [];
-      }
-      colorCombinations[colors].push(commander);
-    });
-
-    return colorCombinations;
+  const handleText = async () => {
+    if (!text.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiPost('/api/collection/text', { text });
+      setResult(data);
+      onUploaded(data);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
   };
 
-  // Handle Moxfield URL import
-  const handleMoxfieldImport = async (url) => {
-    if (!url || !url.trim()) {
-      alert('Please enter a Moxfield URL');
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <h2 className="text-2xl font-bold">Upload Collection</h2>
+      <p className="text-gray-400">
+        Upload a CSV export from <strong>Archidekt</strong> or <strong>Moxfield</strong>,
+        or paste a card list.
+      </p>
+
+      {/* CSV Upload */}
+      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
+        <h3 className="font-semibold text-lg">CSV File Upload</h3>
+        <input
+          type="file"
+          accept=".csv,.txt"
+          onChange={handleFile}
+          className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-500"
+        />
+      </div>
+
+      {/* Text Paste */}
+      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
+        <h3 className="font-semibold text-lg">Paste Card List</h3>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          placeholder={"1 Sol Ring\n1 Rhystic Study\n1 Swords to Plowshares\n..."}
+          rows={8}
+          className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+        />
+        <button
+          onClick={handleText}
+          disabled={loading || !text.trim()}
+          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+        >
+          {loading ? 'Processing...' : 'Upload'}
+        </button>
+      </div>
+
+      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+
+      {result && (
+        <div className="bg-green-900/50 border border-green-700 rounded p-4">
+          <p className="text-green-300 font-medium">
+            Loaded {result.count} unique cards into your collection.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommanderCard({ commander, onClick }) {
+  return (
+    <div
+      onClick={() => onClick?.(commander)}
+      className="bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
+    >
+      {commander.image_uri && (
+        <img
+          src={commander.image_uri}
+          alt={commander.name}
+          className="w-full aspect-[5/7] object-cover"
+          loading="lazy"
+        />
+      )}
+      <div className="p-3 space-y-2">
+        <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
+        <div className="flex items-center justify-between">
+          <ColorBadge colors={commander.color_identity} />
+          {commander.match_percentage !== undefined && (
+            <span className={`text-sm font-bold ${
+              commander.match_percentage >= 60 ? 'text-green-400' :
+              commander.match_percentage >= 40 ? 'text-yellow-400' :
+              'text-gray-400'
+            }`}>
+              {commander.match_percentage}%
+            </span>
+          )}
+        </div>
+        {commander.owned_count !== undefined && (
+          <p className="text-xs text-gray-400">
+            {commander.owned_count}/{commander.total_cards} cards owned
+          </p>
+        )}
+        {commander.num_decks > 0 && (
+          <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Recommendations({ collectionCount, onSelectCommander }) {
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [colorFilter, setColorFilter] = useState([]);
+  const [minOwned, setMinOwned] = useState(20);
+  const [fetched, setFetched] = useState(false);
+
+  const fetchRecommendations = useCallback(async () => {
+    if (collectionCount === 0) {
+      setError('Upload your collection first.');
       return;
     }
-
+    setLoading(true);
+    setError('');
     try {
-      setLoading(true);
-      
-      // Extract collection ID from various Moxfield URL formats
-      let collectionId = extractMoxfieldCollectionId(url);
-      
-      if (!collectionId) {
-        alert('Invalid Moxfield URL. Please make sure it\'s a valid collection URL.');
-        return;
-      }
-
-      // Show immediate guidance since direct API access is blocked by CORS
-      const shouldProceed = window.confirm(
-        `Direct import from Moxfield is blocked by browser security policies.\n\n` +
-        `Would you like instructions on how to import your collection instead?\n\n` +
-        `(Click OK for instructions, Cancel to try anyway)`
+      const color = colorFilter.length > 0 ? colorFilter.join('') : null;
+      const data = await apiPost(
+        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${search ? '&search=' + encodeURIComponent(search) : ''}`,
+        {}
       );
-
-      if (shouldProceed) {
-        // Provide step-by-step instructions
-        showMoxfieldImportInstructions(collectionId);
-        return;
-      }
-
-      // If user wants to try anyway, attempt the API call
-      const csvUrl = `https://api.moxfield.com/v2/collections/${collectionId}/export/csv`;
-      console.log('Attempting to fetch from:', csvUrl);
-      
-      const response = await fetch(csvUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'text/csv',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const csvData = await response.text();
-      
-      if (csvData && csvData.length > 0) {
-        await handleCollectionUpload(csvData, true);
-        alert('Successfully imported collection from Moxfield!');
-      } else {
-        throw new Error('No data received from Moxfield');
-      }
-      
-    } catch (error) {
-      console.error('Error importing from Moxfield:', error);
-      
-      // Show instructions instead of just error messages
-      const collectionId = extractMoxfieldCollectionId(url);
-      showMoxfieldImportInstructions(collectionId);
-      
-    } finally {
-      setLoading(false);
+      setResults(data.results || []);
+      setFetched(true);
+    } catch (err) {
+      setError(err.message);
     }
-  };
+    setLoading(false);
+  }, [collectionCount, colorFilter, minOwned, search]);
 
-  // Show detailed instructions for manual Moxfield import
-  const showMoxfieldImportInstructions = (collectionId) => {
-    const instructions = `
-📋 How to Import Your Moxfield Collection:
-
-OPTION 1 - Direct CSV Download (Recommended):
-1. Go to: https://moxfield.com/collections/${collectionId}
-2. Look for the "Export" or "Download" button
-3. Select "CSV" format
-4. Save the file to your computer
-5. Use the "CSV File Upload" option below
-
-OPTION 2 - Manual Export:
-1. Go to your collection on Moxfield
-2. Click the three-dot menu (⋯) 
-3. Select "Export" → "CSV"
-4. Download the file
-5. Upload it using the CSV option below
-
-The CSV method works perfectly and includes all your card data!
-    `.trim();
-
-    alert(instructions);
-  };
-
-  // Extract collection ID from various Moxfield URL formats
-  const extractMoxfieldCollectionId = (url) => {
-    try {
-      // Handle different Moxfield URL formats:
-      // https://www.moxfield.com/collections/COLLECTION_ID
-      // https://moxfield.com/collections/COLLECTION_ID
-      // Just the collection ID itself
-      
-      const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
-      
-      if (urlObj.hostname.includes('moxfield.com')) {
-        const pathParts = urlObj.pathname.split('/');
-        const collectionsIndex = pathParts.indexOf('collections');
-        
-        if (collectionsIndex !== -1 && pathParts[collectionsIndex + 1]) {
-          return pathParts[collectionsIndex + 1];
-        }
-      }
-      
-      // If it's just an ID (alphanumeric string)
-      if (/^[a-zA-Z0-9_-]+$/.test(url.trim())) {
-        return url.trim();
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error parsing Moxfield URL:', error);
-      return null;
-    }
-  };
-
-  const CollectionUpload = () => {
-    const [uploadText, setUploadText] = useState('');
-    const [uploadMethod, setUploadMethod] = useState('moxfield'); // Default to Moxfield
-    const [moxfieldUrl, setMoxfieldUrl] = useState('');
-
-    const handleFileUpload = (event) => {
-      const file = event.target.files[0];
-      if (file) {
-        console.log('File selected:', file.name, file.type, file.size);
-        
-        if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const csvContent = e.target.result;
-            console.log('CSV content loaded, length:', csvContent.length);
-            console.log('First 500 characters:', csvContent.substring(0, 500));
-            handleCollectionUpload(csvContent, true);
-          };
-          reader.onerror = (e) => {
-            console.error('Error reading file:', e);
-            alert('Error reading file. Please try again.');
-          };
-          reader.readAsText(file);
-        } else {
-          alert('Please select a CSV file (.csv)');
-        }
-      }
-    };
-
-    return (
-      <div style={styles.card}>
-        <div style={{textAlign: 'center', marginBottom: '24px'}}>
-          <Upload size={48} style={{color: '#3b82f6', margin: '0 auto 16px'}} />
-          <h2 style={{fontSize: '24px', fontWeight: 'bold', margin: '0 0 8px 0'}}>Import Your Collection</h2>
-          <p style={{color: '#6b7280', margin: 0}}>Choose your import method below</p>
-        </div>
-
-        {/* Upload Method Selection */}
-        <div style={{
-          display: 'flex',
-          gap: '12px',
-          marginBottom: '24px',
-          justifyContent: 'center',
-          flexWrap: 'wrap'
-        }}>
-          <button
-            style={{
-              ...styles.button,
-              backgroundColor: uploadMethod === 'moxfield' ? '#3b82f6' : '#e5e7eb',
-              color: uploadMethod === 'moxfield' ? 'white' : '#6b7280',
-              padding: '8px 16px'
-            }}
-            onClick={() => setUploadMethod('moxfield')}
-          >
-            🔗 Moxfield URL
-          </button>
-          <button
-            style={{
-              ...styles.button,
-              backgroundColor: uploadMethod === 'csv' ? '#3b82f6' : '#e5e7eb',
-              color: uploadMethod === 'csv' ? 'white' : '#6b7280',
-              padding: '8px 16px'
-            }}
-            onClick={() => setUploadMethod('csv')}
-          >
-            📊 CSV File
-          </button>
-          <button
-            style={{
-              ...styles.button,
-              backgroundColor: uploadMethod === 'text' ? '#3b82f6' : '#e5e7eb',
-              color: uploadMethod === 'text' ? 'white' : '#6b7280',
-              padding: '8px 16px'
-            }}
-            onClick={() => setUploadMethod('text')}
-          >
-            📝 Text Input
-          </button>
-        </div>
-
-        {uploadMethod === 'moxfield' ? (
-          <div>
-            <div style={{marginBottom: '16px'}}>
-              <h3 style={{fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}>
-                Moxfield Collection URL
-              </h3>
-              <p style={{fontSize: '14px', color: '#6b7280', margin: '0 0 8px 0'}}>
-                Paste your public Moxfield collection URL or collection ID
-              </p>
-              <p style={{fontSize: '12px', color: '#9ca3af', margin: 0}}>
-                ⚠️ Collection must be set to <strong>public</strong> to import
-              </p>
-            </div>
-            
-            <input
-              type="text"
-              placeholder="https://moxfield.com/collections/your-collection-id or just the ID"
-              style={{
-                ...styles.input,
-                marginBottom: '16px',
-                fontSize: '14px'
-              }}
-              value={moxfieldUrl}
-              onChange={(e) => setMoxfieldUrl(e.target.value)}
-            />
-            
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <button
-                style={{
-                  ...styles.button,
-                  flex: 1,
-                  ...(loading || !moxfieldUrl.trim() ? styles.buttonDisabled : {})
-                }}
-                onClick={() => handleMoxfieldImport(moxfieldUrl)}
-                disabled={loading || !moxfieldUrl.trim()}
-              >
-                {loading ? 'Importing from Moxfield...' : '🚀 Import from Moxfield'}
-              </button>
-              
-              {moxfieldUrl.trim() && (
-                <button
-                  style={{
-                    ...styles.button,
-                    backgroundColor: '#10b981',
-                    color: 'white',
-                    padding: '12px 16px',
-                    fontSize: '14px',
-                    whiteSpace: 'nowrap'
-                  }}
-                  onClick={() => {
-                    const collectionId = extractMoxfieldCollectionId(moxfieldUrl);
-                    if (collectionId) {
-                      window.open(`https://moxfield.com/collections/${collectionId}`, '_blank');
-                    }
-                  }}
-                  title="Open collection on Moxfield to download CSV"
-                >
-                  📊 Get CSV
-                </button>
-              )}
-            </div>
-
-            <div style={{
-              marginTop: '8px',
-              padding: '12px',
-              backgroundColor: '#fef3c7',
-              borderRadius: '6px',
-              border: '1px solid #f59e0b'
-            }}>
-              <h4 style={{fontSize: '14px', fontWeight: '600', color: '#d97706', margin: '0 0 8px 0'}}>
-                💡 How to Import from Moxfield
-              </h4>
-              <div style={{fontSize: '12px', color: '#d97706', lineHeight: '1.4'}}>
-                <strong>Browser security prevents direct import.</strong><br/>
-                1. Click "📊 Get CSV" to open your collection<br/>
-                2. Export as CSV from Moxfield<br/>
-                3. Upload the CSV file using the option below<br/>
-                <em>This method is actually faster and more reliable!</em>
-              </div>
-            </div>
-          </div>
-        ) : uploadMethod === 'csv' ? (
-          <div>
-            <div style={{marginBottom: '16px'}}>
-              <h3 style={{fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}>
-                CSV File Upload (Moxfield Export)
-              </h3>
-              <p style={{fontSize: '14px', color: '#6b7280', margin: 0}}>
-                Upload your exported CSV file from Moxfield
-              </p>
-            </div>
-
-            <div style={{
-              border: '2px dashed #d1d5db',
-              borderRadius: '8px',
-              padding: '32px',
-              textAlign: 'center',
-              backgroundColor: '#f9fafb',
-              cursor: 'pointer',
-              transition: 'all 0.2s'
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.currentTarget.style.backgroundColor = '#eff6ff';
-              e.currentTarget.style.borderColor = '#3b82f6';
-            }}
-            onDragLeave={(e) => {
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#d1d5db';
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#d1d5db';
-              const files = e.dataTransfer.files;
-              if (files.length > 0) {
-                const fileInput = e.currentTarget.querySelector('input[type="file"]');
-                fileInput.files = files;
-                handleFileUpload({ target: { files } });
-              }
-            }}
-            >
-              <div style={{
-                fontSize: '48px',
-                marginBottom: '16px'
-              }}>📊</div>
-              
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: '12px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  backgroundColor: 'white',
-                  marginBottom: '12px'
-                }}
-              />
-              
-              <p style={{
-                fontSize: '16px',
-                fontWeight: '600',
-                color: '#374151',
-                margin: '0 0 8px 0'
-              }}>
-                Choose CSV file or drag & drop
-              </p>
-              
-              <p style={{
-                fontSize: '14px',
-                color: '#6b7280',
-                margin: 0
-              }}>
-                Export from Moxfield: Collection → Export → CSV
-              </p>
-            </div>
-
-            <div style={{
-              marginTop: '16px',
-              padding: '12px',
-              backgroundColor: '#eff6ff',
-              borderRadius: '6px',
-              border: '1px solid #bfdbfe'
-            }}>
-              <h4 style={{fontSize: '14px', fontWeight: '600', color: '#1e40af', margin: '0 0 8px 0'}}>
-                Supported Moxfield CSV columns:
-              </h4>
-              <div style={{fontSize: '12px', color: '#1e40af', lineHeight: '1.4'}}>
-                <strong>Required:</strong> Count, Name<br/>
-                <strong>Optional:</strong> Edition, Condition, Language, Foil, Collector Number, Alter, Proxy, Purchase Price
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div style={{marginBottom: '16px'}}>
-              <h3 style={{fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}>
-                Simple Text Format
-              </h3>
-              <p style={{fontSize: '14px', color: '#6b7280', margin: 0}}>
-                One card per line: "4 Lightning Bolt"
-              </p>
-            </div>
-            
-            <textarea
-              style={styles.textarea}
-              placeholder={`4 Lightning Bolt
-1 Tarmogoyf
-2 Birds of Paradise
-1 Sol Ring
-...`}
-              value={uploadText}
-              onChange={(e) => setUploadText(e.target.value)}
-            />
-            
-            <button
-              style={{
-                ...styles.button,
-                width: '100%',
-                marginTop: '16px',
-                ...(loading || !uploadText.trim() ? styles.buttonDisabled : {})
-              }}
-              onClick={() => handleCollectionUpload(uploadText, false)}
-              disabled={loading || !uploadText.trim()}
-            >
-              {loading ? 'Processing Collection...' : 'Upload Text Collection'}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const CollectionView = () => {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [newCardName, setNewCardName] = useState('');
-    const [cardViewModes, setCardViewModes] = useState({}); // 'text' or 'image'
-    const [cardFaceSides, setCardFaceSides] = useState({}); // 0 or 1 for double-faced cards
-
-    const filteredCollection = collection.filter(card =>
-      card.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const toggleViewMode = (cardId) => {
-      setCardViewModes(prev => ({
-        ...prev,
-        [cardId]: prev[cardId] === 'image' ? 'text' : 'image'
-      }));
-    };
-
-    const toggleCardFace = (cardId) => {
-      setCardFaceSides(prev => ({
-        ...prev,
-        [cardId]: prev[cardId] === 1 ? 0 : 1
-      }));
-    };
-
-    const getCardImageUrl = (card) => {
-      const scryfallData = card.scryfallData;
-      if (!scryfallData) return null;
-
-      // Check if it's a double-faced card
-      if (scryfallData.card_faces && scryfallData.card_faces.length > 1) {
-        const faceIndex = cardFaceSides[card.id] || 0;
-        return scryfallData.card_faces[faceIndex]?.image_uris?.normal;
-      }
-      
-      // Single-faced card
-      return scryfallData.image_uris?.normal;
-    };
-
-    const isDoubleFaced = (card) => {
-      return card.scryfallData?.card_faces && card.scryfallData.card_faces.length > 1;
-    };
-
-    const getCardData = (card) => {
-      const data = card.scryfallData;
-      if (!data) return { name: card.name, error: 'No additional data available' };
-
-      if (data.card_faces && data.card_faces.length > 1) {
-        const faceIndex = cardFaceSides[card.id] || 0;
-        const face = data.card_faces[faceIndex];
-        return {
-          name: face.name,
-          manaCost: face.mana_cost || '',
-          cmc: face.cmc || data.cmc || 0,
-          typeLine: face.type_line,
-          oracleText: face.oracle_text || '',
-          power: face.power,
-          toughness: face.toughness,
-          flavorText: face.flavor_text || data.flavor_text,
-          isDoubleFaced: true,
-          faceName: face.name
-        };
-      }
-
-      return {
-        name: data.name,
-        manaCost: data.mana_cost || '',
-        cmc: data.cmc || 0,
-        typeLine: data.type_line,
-        oracleText: data.oracle_text || '',
-        power: data.power,
-        toughness: data.toughness,
-        flavorText: data.flavor_text,
-        isDoubleFaced: false
-      };
-    };
-
-    const getColorForCard = (card) => {
-      const colors = card.colors || [];
-      if (colors.length === 0) return '#f8fafc';
-      if (colors.length > 1) return 'linear-gradient(135deg, #fef3c7, #f59e0b)';
-      
-      const colorMap = {
-        'W': '#fffef7',
-        'U': '#f0f9ff', 
-        'B': '#f8fafc',
-        'R': '#fef2f2',
-        'G': '#f0fdf4'
-      };
-      
-      return colorMap[colors[0]] || '#f8fafc';
-    };
-
-    const getManaSymbolColor = (symbol) => {
-      const colorMap = {
-        'W': '#fbbf24',
-        'U': '#3b82f6',
-        'B': '#1f2937',
-        'R': '#ef4444',
-        'G': '#22c55e'
-      };
-      return colorMap[symbol] || '#6b7280';
-    };
-
-    const formatManaSymbols = (manaCost) => {
-      if (!manaCost) return null;
-      
-      // Simple regex to find mana symbols like {W}, {U}, {B}, {R}, {G}, {1}, {2}, etc.
-      const symbols = manaCost.match(/\{[^}]+\}/g) || [];
-      
-      return symbols.map((symbol, index) => {
-        const cleanSymbol = symbol.replace(/[{}]/g, '');
-        const isColorSymbol = ['W', 'U', 'B', 'R', 'G'].includes(cleanSymbol);
-        
-        return (
-          <span
-            key={index}
-            style={{
-              display: 'inline-block',
-              width: '24px',
-              height: '24px',
-              borderRadius: '50%',
-              backgroundColor: isColorSymbol ? getManaSymbolColor(cleanSymbol) : '#6b7280',
-              color: ['B'].includes(cleanSymbol) ? 'white' : 'black',
-              fontSize: '12px',
-              fontWeight: 'bold',
-              textAlign: 'center',
-              lineHeight: '24px',
-              margin: '0 2px',
-              border: '2px solid #374151',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-          >
-            {cleanSymbol}
-          </span>
-        );
-      });
-    };
-
-    return (
-      <div>
-        <div style={{...styles.flexRow, marginBottom: '24px'}}>
-          <input
-            type="text"
-            placeholder="Search your collection..."
-            style={{...styles.input, flex: 1}}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <input
-            type="text"
-            placeholder="Add card name..."
-            style={{...styles.input, width: '200px'}}
-            value={newCardName}
-            onChange={(e) => setNewCardName(e.target.value)}
-          />
-          <button
-            style={{
-              ...styles.button,
-              padding: '12px',
-              ...(loading || !newCardName.trim() ? styles.buttonDisabled : {})
-            }}
-            onClick={() => {
-              addSingleCard(newCardName);
-              setNewCardName('');
-            }}
-            disabled={loading || !newCardName.trim()}
-          >
-            <Plus size={20} />
-          </button>
-        </div>
-
-        <div style={styles.grid}>
-          {filteredCollection.map((card) => {
-            const viewMode = cardViewModes[card.id] || 'text';
-            const imageUrl = getCardImageUrl(card);
-            const cardData = getCardData(card);
-            const cardColor = getColorForCard(card);
-            
-            return (
-              <div key={card.id} style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '16px'
-              }}>
-                {/* Card Box with Magic Card Proportions (5:7 ratio) */}
-                <div style={{
-                  width: '280px',
-                  height: '392px', // 280 * 1.4 = 392 (5:7 ratio)
-                  backgroundColor: 'white',
-                  border: '3px solid #374151',
-                  borderRadius: '16px',
-                  boxShadow: '0 6px 20px rgba(0,0,0,0.15)',
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  position: 'relative'
-                }}>
-                  {viewMode === 'text' ? (
-                    <div style={{
-                      padding: '16px',
-                      height: '100%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      background: cardData.isDoubleFaced ? 'linear-gradient(135deg, #f1f5f9, #e2e8f0)' : cardColor,
-                      backgroundImage: typeof cardColor !== 'string' ? cardColor : 'none'
-                    }}>
-                      {/* Header with name and quantity */}
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '12px',
-                        paddingBottom: '8px',
-                        borderBottom: '2px solid #374151'
-                      }}>
-                        <h3 style={{
-                          fontSize: '18px',
-                          fontWeight: 'bold',
-                          margin: 0,
-                          color: '#111827',
-                          lineHeight: '1.2'
-                        }}>
-                          {cardData.name}
-                        </h3>
-                        <span style={{
-                          backgroundColor: card.foil ? '#fbbf24' : '#3b82f6',
-                          color: 'white',
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          fontSize: '14px',
-                          fontWeight: 'bold'
-                        }}>
-                          {card.quantity}x {card.foil ? '✨' : ''}
-                        </span>
-                      </div>
-
-                      {/* Edition and Printing Info */}
-                      {(card.edition || card.condition || card.language !== 'English' || card.alter || card.proxy) && (
-                        <div style={{
-                          marginBottom: '12px',
-                          padding: '8px',
-                          backgroundColor: 'rgba(59,130,246,0.1)',
-                          borderRadius: '6px',
-                          border: '1px solid #bfdbfe'
-                        }}>
-                          <div style={{fontSize: '12px', color: '#1e40af', lineHeight: '1.3'}}>
-                            {card.edition && <div><strong>Set:</strong> {card.edition}</div>}
-                            {card.collectorNumber && <div><strong>#:</strong> {card.collectorNumber}</div>}
-                            {card.condition && <div><strong>Condition:</strong> {card.condition}</div>}
-                            {card.language !== 'English' && <div><strong>Language:</strong> {card.language}</div>}
-                            {card.alter && <div><strong>⚡ Altered</strong></div>}
-                            {card.proxy && <div><strong>🔄 Proxy</strong></div>}
-                            {card.purchasePrice > 0 && <div><strong>Paid:</strong> ${card.purchasePrice.toFixed(2)}</div>}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Mana Cost */}
-                      {cardData.manaCost && (
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          marginBottom: '12px',
-                          gap: '8px'
-                        }}>
-                          <span style={{
-                            fontSize: '14px',
-                            fontWeight: '700',
-                            color: '#1f2937'
-                          }}>
-                            Cost:
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center' }}>
-                            {formatManaSymbols(cardData.manaCost)}
-                            <span style={{
-                              marginLeft: '8px',
-                              fontSize: '12px',
-                              color: '#374151',
-                              fontWeight: '600'
-                            }}>
-                              (CMC: {cardData.cmc})
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Type Line */}
-                      <div style={{
-                        marginBottom: '12px',
-                        padding: '8px',
-                        backgroundColor: 'rgba(255,255,255,0.9)',
-                        borderRadius: '6px',
-                        border: '1px solid #d1d5db'
-                      }}>
-                        <span style={{
-                          fontSize: '14px',
-                          fontWeight: '700',
-                          color: '#1f2937',
-                          fontStyle: 'italic'
-                        }}>
-                          {cardData.typeLine}
-                        </span>
-                      </div>
-
-                      {/* Oracle Text */}
-                      {cardData.oracleText && (
-                        <div style={{
-                          flex: 1,
-                          marginBottom: '12px',
-                          padding: '12px',
-                          backgroundColor: 'rgba(255,255,255,0.95)',
-                          borderRadius: '8px',
-                          border: '1px solid #d1d5db',
-                          overflowY: 'auto'
-                        }}>
-                          <div style={{
-                            fontSize: '13px',
-                            lineHeight: '1.4',
-                            color: '#1f2937',
-                            whiteSpace: 'pre-line'
-                          }}>
-                            {cardData.oracleText}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Bottom section with P/T and Flavor Text */}
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-end',
-                        marginTop: 'auto'
-                      }}>
-                        {/* Flavor Text */}
-                        {cardData.flavorText && (
-                          <div style={{
-                            flex: 1,
-                            padding: '8px',
-                            backgroundColor: 'rgba(107,114,128,0.1)',
-                            borderRadius: '6px',
-                            borderLeft: '3px solid #6b7280',
-                            marginRight: cardData.power && cardData.toughness ? '12px' : '0'
-                          }}>
-                            <em style={{
-                              fontSize: '11px',
-                              color: '#4b5563',
-                              fontStyle: 'italic',
-                              lineHeight: '1.3'
-                            }}>
-                              "{cardData.flavorText}"
-                            </em>
-                          </div>
-                        )}
-
-                        {/* Power/Toughness */}
-                        {cardData.power && cardData.toughness && (
-                          <div style={{
-                            backgroundColor: '#1f2937',
-                            color: 'white',
-                            padding: '6px 12px',
-                            borderRadius: '6px',
-                            fontSize: '16px',
-                            fontWeight: 'bold'
-                          }}>
-                            {cardData.power}/{cardData.toughness}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{
-                      height: '100%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      backgroundColor: '#000',
-                      padding: '8px'
-                    }}>
-                      {imageUrl ? (
-                        <img 
-                          src={imageUrl} 
-                          alt={card.name}
-                          style={{
-                            maxWidth: '100%',
-                            maxHeight: '100%',
-                            objectFit: 'contain',
-                            borderRadius: '8px'
-                          }}
-                        />
-                      ) : (
-                        <div style={{
-                          width: '100%',
-                          height: '100%',
-                          backgroundColor: '#1f2937',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: '#9ca3af',
-                          fontSize: '16px',
-                          borderRadius: '8px'
-                        }}>
-                          No image available
-                        </div>
-                      )}
-
-                      {/* Flip Side button for double-faced cards in image mode */}
-                      {isDoubleFaced(card) && (
-                        <button
-                          style={{
-                            position: 'absolute',
-                            top: '12px',
-                            left: '12px',
-                            backgroundColor: '#8b5cf6',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '8px',
-                            padding: '8px 12px',
-                            fontSize: '12px',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
-                          }}
-                          onClick={() => toggleCardFace(card.id)}
-                        >
-                          Flip Side
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Controls below the card */}
-                <div style={{
-                  display: 'flex',
-                  gap: '12px',
-                  alignItems: 'center'
-                }}>
-                  <button
-                    style={{
-                      backgroundColor: '#f59e0b',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '12px 20px',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
-                      transition: 'all 0.2s'
-                    }}
-                    onClick={() => toggleViewMode(card.id)}
-                    onMouseOver={(e) => {
-                      e.target.style.backgroundColor = '#d97706';
-                      e.target.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseOut={(e) => {
-                      e.target.style.backgroundColor = '#f59e0b';
-                      e.target.style.transform = 'translateY(0)';
-                    }}
-                  >
-                    {viewMode === 'text' ? '🎨 Show Art' : '📝 Show Text'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {filteredCollection.length === 0 && collection.length > 0 && (
-          <div style={{textAlign: 'center', color: '#6b7280', padding: '32px'}}>
-            No cards match your search.
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const DeckAnalysis = () => {
-    const deckPotential = analyzeDeckPotential();
-    
-    return (
-      <div>
-        <div style={{textAlign: 'center', marginBottom: '32px'}}>
-          <TrendingUp size={48} style={{color: '#10b981', margin: '0 auto 16px'}} />
-          <h2 style={{fontSize: '24px', fontWeight: 'bold', margin: '0 0 8px 0'}}>Deck Building Analysis</h2>
-          <p style={{color: '#6b7280', margin: 0}}>Potential Commander decks from your collection</p>
-        </div>
-
-        {Object.keys(deckPotential).length > 0 ? (
-          <div style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
-            {Object.entries(deckPotential).map(([colors, commanders]) => (
-              <div key={colors} style={styles.card}>
-                <h3 style={{fontSize: '20px', fontWeight: '600', marginBottom: '16px'}}>
-                  {colors || 'Colorless'} Identity
-                </h3>
-                <div style={styles.grid}>
-                  {commanders.map((commander) => (
-                    <div key={commander.id} style={{backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px'}}>
-                      <div style={{fontWeight: '500'}}>{commander.name}</div>
-                      <div style={{fontSize: '14px', color: '#6b7280'}}>{commander.type}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{textAlign: 'center', color: '#6b7280', padding: '32px'}}>
-            <p>No legendary creatures found in your collection.</p>
-            <p style={{fontSize: '14px', marginTop: '8px'}}>Add some commanders to see deck building suggestions!</p>
-          </div>
-        )}
-
-        <div style={{
-          ...styles.card, 
-          backgroundColor: '#eff6ff', 
-          borderColor: '#bfdbfe',
-          marginTop: '24px'
-        }}>
-          <h4 style={{fontWeight: '600', color: '#1e40af', marginBottom: '8px'}}>Coming Soon:</h4>
-          <ul style={{color: '#1e40af', fontSize: '14px', margin: 0, paddingLeft: '20px'}}>
-            <li>EDHRec integration for synergy analysis</li>
-            <li>Deck completion percentage</li>
-            <li>Card upgrade recommendations</li>
-            <li>Budget optimization suggestions</li>
-          </ul>
-        </div>
-      </div>
+  const toggleColor = (c) => {
+    setColorFilter(prev =>
+      prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
     );
   };
 
   return (
-    <div style={styles.container}>
-      <style>
-        {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}
-      </style>
-      
-      <header style={styles.header}>
-        <h1 style={styles.headerTitle}>MTG Collection Manager</h1>
-        <p style={styles.headerSubtitle}>Manage your collection and discover optimal deck builds</p>
-      </header>
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Commander Recommendations</h2>
+      <p className="text-gray-400">
+        Based on your collection of {collectionCount} cards, ranked by how many cards
+        you already own in each commander's average EDHREC deck.
+      </p>
 
-      <nav style={styles.nav}>
-        <ul style={styles.navList}>
-          {[
-            { id: 'upload', label: 'Upload', icon: Upload },
-            { id: 'collection', label: `Collection (${collection.length})`, icon: Database },
-            { id: 'analysis', label: 'Deck Analysis', icon: TrendingUp }
-          ].map(({ id, label, icon: Icon }) => (
-            <li
-              key={id}
-              style={{
-                ...styles.navItem,
-                ...(activeTab === id ? styles.navItemActive : styles.navItemInactive)
-              }}
-              onClick={() => setActiveTab(id)}
-            >
-              <Icon size={16} />
-              <span>{label}</span>
-            </li>
+      {/* Filters */}
+      <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Search</label>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Commander name..."
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Min owned cards</label>
+            <input
+              type="number"
+              value={minOwned}
+              onChange={e => setMinOwned(parseInt(e.target.value) || 0)}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Color Identity</label>
+            <div className="flex gap-1">
+              {ALL_COLORS.map(c => (
+                <button
+                  key={c}
+                  onClick={() => toggleColor(c)}
+                  className={`w-8 h-8 rounded font-bold text-sm transition-all ${
+                    colorFilter.includes(c)
+                      ? 'ring-2 ring-white scale-110'
+                      : 'opacity-50 hover:opacity-75'
+                  }`}
+                  style={{ backgroundColor: COLOR_MAP[c].bg, color: COLOR_MAP[c].text }}
+                >
+                  {c}
+                </button>
+              ))}
+              {colorFilter.length > 0 && (
+                <button
+                  onClick={() => setColorFilter([])}
+                  className="text-xs text-gray-400 hover:text-white ml-2"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={fetchRecommendations}
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-5 py-1.5 rounded font-medium"
+          >
+            {loading ? 'Loading... (this may take a while)' : fetched ? 'Refresh' : 'Get Recommendations'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+
+      {loading && (
+        <div className="text-center py-12 text-gray-400">
+          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+          <p>Fetching average decklists from EDHREC and comparing with your collection...</p>
+          <p className="text-sm mt-1">This checks up to 200 commanders. It may take a few minutes.</p>
+        </div>
+      )}
+
+      {!loading && results.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          {results.map(cmd => (
+            <CommanderCard key={cmd.name} commander={cmd} onClick={onSelectCommander} />
           ))}
-        </ul>
-      </nav>
+        </div>
+      )}
 
-      <main style={styles.main}>
-        {loading && (
-          <div style={styles.loadingSpinner}>
-            <div style={styles.spinner}></div>
-            <p style={{marginTop: '8px', color: '#6b7280'}}>Processing cards... This may take a few minutes for large collections.</p>
+      {!loading && fetched && results.length === 0 && (
+        <p className="text-gray-500 text-center py-8">No commanders found with {minOwned}+ owned cards.</p>
+      )}
+    </div>
+  );
+}
+
+function CommanderSearch({ collectionCount, onSelectCommander }) {
+  const [commanders, setCommanders] = useState([]);
+  const [search, setSearch] = useState('');
+  const [colorFilter, setColorFilter] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const doSearch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const color = colorFilter.length > 0 ? colorFilter.join('') : null;
+      const data = await apiGet('/api/commanders', { search, color });
+      setCommanders(data.commanders || []);
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  }, [search, colorFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (search.length >= 2) doSearch();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, colorFilter, doSearch]);
+
+  const toggleColor = (c) => {
+    setColorFilter(prev =>
+      prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Search Commanders</h2>
+      <p className="text-gray-400">
+        Search any commander and see how close you are to their average EDHREC deck.
+      </p>
+
+      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Type a commander name (min 2 characters)..."
+          className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+        />
+        <div className="flex gap-1 items-center">
+          <span className="text-xs text-gray-400 mr-2">Filter:</span>
+          {ALL_COLORS.map(c => (
+            <button
+              key={c}
+              onClick={() => toggleColor(c)}
+              className={`w-7 h-7 rounded font-bold text-xs transition-all ${
+                colorFilter.includes(c)
+                  ? 'ring-2 ring-white scale-110'
+                  : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{ backgroundColor: COLOR_MAP[c].bg, color: COLOR_MAP[c].text }}
+            >
+              {c}
+            </button>
+          ))}
+          {colorFilter.length > 0 && (
+            <button onClick={() => setColorFilter([])} className="text-xs text-gray-400 hover:text-white ml-2">
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading && <div className="text-center py-4 text-gray-400">Searching...</div>}
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        {commanders.map(cmd => (
+          <CommanderCard key={cmd.name} commander={cmd} onClick={onSelectCommander} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CommanderDetail({ commander, collectionCount, onBack }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [budget, setBudget] = useState('');
+  const [theme, setTheme] = useState('');
+  const [showOwned, setShowOwned] = useState(true);
+  const [showMissing, setShowMissing] = useState(true);
+
+  const fetchDetail = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, {
+        budget: budget || null,
+        theme: theme || null,
+      });
+      setData(d);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  }, [commander.name, budget, theme]);
+
+  useEffect(() => { fetchDetail(); }, [fetchDetail]);
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+        <p className="text-gray-400">Fetching average deck from EDHREC...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
+        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const matchColor = data.match_percentage >= 60 ? 'text-green-400' :
+    data.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
+
+  return (
+    <div className="space-y-6">
+      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+
+      {/* Header */}
+      <div className="flex gap-6 items-start">
+        {commander.image_uri && (
+          <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg" />
+        )}
+        <div className="space-y-3">
+          <h2 className="text-3xl font-bold">{commander.name}</h2>
+          <ColorBadge colors={commander.color_identity} />
+          <div className="flex items-baseline gap-4">
+            <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
+            <span className="text-gray-400">
+              {data.owned_count}/{data.total_cards} cards owned
+            </span>
+          </div>
+          {data.num_decks > 0 && (
+            <p className="text-sm text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</p>
+          )}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-gray-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Budget</label>
+          <div className="flex gap-1">
+            {[
+              { value: '', label: 'Any' },
+              { value: 'budget', label: '$' },
+              { value: 'expensive', label: '$$$' },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setBudget(opt.value)}
+                className={`px-3 py-1 rounded text-sm ${
+                  budget === opt.value
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {data.themes && data.themes.length > 0 && (
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Theme</label>
+            <select
+              value={theme}
+              onChange={e => setTheme(e.target.value)}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="">All themes</option>
+              {data.themes.map(t => (
+                <option key={t.slug || t.name} value={t.slug || t.name}>
+                  {t.name} {t.count ? `(${t.count.toLocaleString()})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {data.error && (
+        <div className="bg-yellow-900/50 border border-yellow-700 rounded p-3 text-yellow-300 text-sm">
+          Note: {data.error}
+        </div>
+      )}
+
+      {/* Card List Toggles */}
+      <div className="flex gap-4">
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={showOwned} onChange={e => setShowOwned(e.target.checked)} className="rounded" />
+          <span className="text-green-400">Owned ({data.owned_count})</span>
+        </label>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={showMissing} onChange={e => setShowMissing(e.target.checked)} className="rounded" />
+          <span className="text-red-400">Missing ({data.missing_count})</span>
+        </label>
+      </div>
+
+      {/* Card Lists */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {showOwned && (
+          <div>
+            <h3 className="text-lg font-semibold text-green-400 mb-3">
+              Owned Cards ({data.owned_count})
+            </h3>
+            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              {data.owned_cards.map(card => (
+                <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <span className="text-sm">{card.name}</span>
+                  <span className="text-xs text-gray-500">{card.category}</span>
+                </div>
+              ))}
+              {data.owned_cards.length === 0 && (
+                <p className="px-3 py-4 text-gray-500 text-sm">None</p>
+              )}
+            </div>
           </div>
         )}
 
-        {activeTab === 'upload' && <CollectionUpload />}
-        {activeTab === 'collection' && <CollectionView />}
-        {activeTab === 'analysis' && <DeckAnalysis />}
+        {showMissing && (
+          <div>
+            <h3 className="text-lg font-semibold text-red-400 mb-3">
+              Missing Cards ({data.missing_count})
+            </h3>
+            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              {data.missing_cards.map(card => (
+                <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <span className="text-sm">{card.name}</span>
+                  <span className="text-xs text-gray-500">{card.category}</span>
+                </div>
+              ))}
+              {data.missing_cards.length === 0 && (
+                <p className="px-3 py-4 text-gray-500 text-sm">None</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- Main App ---
+
+function App() {
+  const [tab, setTab] = useState('upload');
+  const [collectionCount, setCollectionCount] = useState(0);
+  const [selectedCommander, setSelectedCommander] = useState(null);
+
+  // Check if collection already loaded
+  useEffect(() => {
+    apiGet('/api/collection').then(data => {
+      setCollectionCount(data.count || 0);
+    }).catch(() => {});
+  }, []);
+
+  const handleUploaded = (data) => {
+    setCollectionCount(data.count);
+  };
+
+  const handleSelectCommander = (cmd) => {
+    setSelectedCommander(cmd);
+    setTab('detail');
+  };
+
+  const tabs = [
+    { id: 'upload', label: 'Upload Collection' },
+    { id: 'recommend', label: 'Recommendations' },
+    { id: 'search', label: 'Search Commanders' },
+  ];
+
+  return (
+    <div className="min-h-screen">
+      {/* Header */}
+      <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
+          {collectionCount > 0 && (
+            <span className="text-sm text-gray-400">
+              Collection: {collectionCount} cards
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* Nav */}
+      <nav className="bg-gray-900/50 border-b border-gray-800 px-6">
+        <div className="max-w-7xl mx-auto flex gap-1">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => { setTab(t.id); setSelectedCommander(null); }}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                tab === t.id || (tab === 'detail' && t.id === 'recommend')
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {/* Content */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        {tab === 'upload' && (
+          <CollectionUpload onUploaded={handleUploaded} />
+        )}
+
+        {tab === 'recommend' && (
+          <Recommendations
+            collectionCount={collectionCount}
+            onSelectCommander={handleSelectCommander}
+          />
+        )}
+
+        {tab === 'search' && (
+          <CommanderSearch
+            collectionCount={collectionCount}
+            onSelectCommander={handleSelectCommander}
+          />
+        )}
+
+        {tab === 'detail' && selectedCommander && (
+          <CommanderDetail
+            commander={selectedCommander}
+            collectionCount={collectionCount}
+            onBack={() => setTab('recommend')}
+          />
+        )}
       </main>
     </div>
   );
-};
+}
 
-export default MTGCollectionManager;
+export default App;
