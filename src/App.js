@@ -582,6 +582,82 @@ function CommanderSearch({ collectionCount, onSelectCommander }) {
   );
 }
 
+const CARD_TYPE_ORDER = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+
+function groupByType(cards) {
+  const groups = {};
+  for (const card of cards) {
+    const type = card.card_type || 'Other';
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(card);
+  }
+  return CARD_TYPE_ORDER.filter(t => groups[t]?.length > 0).map(t => ({ type: t, cards: groups[t] }));
+}
+
+function CardListByType({ ownedCards, missingCards, showOwned, showMissing, totalMissingPrice }) {
+  const ownedGroups = groupByType(ownedCards);
+  const missingGroups = groupByType(missingCards);
+
+  return (
+    <div className="grid md:grid-cols-2 gap-6">
+      {showOwned && (
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-green-400">
+            Owned Cards ({ownedCards.length})
+          </h3>
+          {ownedGroups.length === 0 && (
+            <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
+          )}
+          {ownedGroups.map(({ type, cards }) => (
+            <div key={type}>
+              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+                {cards.map(card => (
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                    <CardName name={card.name} className="text-sm" />
+                    <span className="text-xs text-gray-500">{card.category}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showMissing && (
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-red-400">
+            Missing Cards ({missingCards.length})
+            {totalMissingPrice > 0 && (
+              <span className="text-sm font-normal text-yellow-400 ml-2">
+                ~${totalMissingPrice.toFixed(2)}
+              </span>
+            )}
+          </h3>
+          {missingGroups.length === 0 && (
+            <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
+          )}
+          {missingGroups.map(({ type, cards }) => (
+            <div key={type}>
+              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+                {cards.map(card => (
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                    <CardName name={card.name} className="text-sm" />
+                    <span className="text-xs text-yellow-400/70">
+                      {card.price ? `$${card.price.toFixed(2)}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CommanderDetail({ commander, collectionCount, onBack }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -770,53 +846,46 @@ function CommanderDetail({ commander, collectionCount, onBack }) {
         </label>
       </div>
 
-      {/* Card Lists */}
-      <div className="grid md:grid-cols-2 gap-6">
-        {showOwned && (
-          <div>
-            <h3 className="text-lg font-semibold text-green-400 mb-3">
-              Owned Cards ({data.owned_count})
-            </h3>
-            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
-              {data.owned_cards.map(card => (
-                <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                  <CardName name={card.name} className="text-sm" />
-                  <span className="text-xs text-gray-500">{card.category}</span>
-                </div>
-              ))}
-              {data.owned_cards.length === 0 && (
-                <p className="px-3 py-4 text-gray-500 text-sm">None</p>
-              )}
-            </div>
-          </div>
-        )}
+      {/* Card Lists Grouped by Type */}
+      <CardListByType
+        ownedCards={data.owned_cards}
+        missingCards={data.missing_cards}
+        showOwned={showOwned}
+        showMissing={showMissing}
+        totalMissingPrice={data.total_missing_price}
+      />
 
-        {showMissing && (
-          <div>
-            <h3 className="text-lg font-semibold text-red-400 mb-3">
-              Missing Cards ({data.missing_count})
-              {data.total_missing_price > 0 && (
-                <span className="text-sm font-normal text-yellow-400 ml-2">
-                  ~${data.total_missing_price.toFixed(2)}
-                </span>
-              )}
-            </h3>
-            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
-              {data.missing_cards.map(card => (
-                <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                  <CardName name={card.name} className="text-sm" />
-                  <span className="text-xs text-yellow-400/70">
-                    {card.price ? `$${card.price.toFixed(2)}` : ''}
-                  </span>
+      {/* Possible Recommendations */}
+      {data.recommendations && data.recommendations.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-purple-400">
+            Possible Recommendations ({data.recommendations.length})
+          </h3>
+          <p className="text-xs text-gray-400">
+            Cards you own with high synergy for this commander that aren't in the average deck.
+          </p>
+          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+            {data.recommendations.map(card => (
+              <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                <CardName name={card.name} className="text-sm" />
+                <div className="flex items-center gap-3 text-xs">
+                  {card.synergy_score != null && (
+                    <span className={`font-medium ${card.synergy_score > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                      {card.synergy_score > 0 ? '+' : ''}{card.synergy_score}% synergy
+                    </span>
+                  )}
+                  {card.inclusion_rate != null && (
+                    <span className="text-gray-500">{card.inclusion_rate}% inclusion</span>
+                  )}
+                  {card.source && (
+                    <span className="text-purple-400/70">{card.source}</span>
+                  )}
                 </div>
-              ))}
-              {data.missing_cards.length === 0 && (
-                <p className="px-3 py-4 text-gray-500 text-sm">None</p>
-              )}
-            </div>
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

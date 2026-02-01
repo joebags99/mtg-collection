@@ -34,11 +34,13 @@ price_cache: dict[str, float] = {}
 PRICE_CACHE_TTL = 86400  # 24 hours
 _price_cache_time: float = 0
 
+# Synergy/type card cache
+synergy_cache: dict[str, dict] = {}
+
 
 def normalize_card_name(name: str) -> str:
     """Normalize card name for comparison: lowercase, strip whitespace."""
     name = name.strip().lower()
-    # Handle double-faced cards: "Card A // Card B" -> "card a"
     if "//" in name:
         name = name.split("//")[0].strip()
     return name
@@ -48,8 +50,6 @@ def parse_csv_collection(content: str) -> set[str]:
     """Parse CSV from Archidekt or Moxfield export. Returns set of normalized card names."""
     cards = set()
     reader = csv.DictReader(io.StringIO(content))
-
-    # Try common column names for card name
     name_columns = ["Name", "name", "Card", "card", "Card Name", "card_name"]
 
     for row in reader:
@@ -58,7 +58,6 @@ def parse_csv_collection(content: str) -> set[str]:
                 cards.add(normalize_card_name(row[col]))
                 break
         else:
-            # If no known column, try first column
             first_val = next(iter(row.values()), None)
             if first_val:
                 cards.add(normalize_card_name(first_val))
@@ -73,7 +72,6 @@ def parse_text_collection(content: str) -> set[str]:
         line = line.strip()
         if not line:
             continue
-        # Strip leading quantity like "4 " or "1x "
         match = re.match(r"^\d+x?\s+(.+)", line)
         if match:
             line = match.group(1)
@@ -109,15 +107,14 @@ def get_all_commanders() -> list[dict]:
 
         if data.get("has_more"):
             url = data.get("next_page")
-            params = {}  # next_page is a full URL
-            time.sleep(0.1)  # Scryfall rate limit
+            params = {}
+            time.sleep(0.1)
         else:
             url = None
 
     return commanders
 
 
-# Cache for all commanders list
 _all_commanders: list[dict] = []
 _commanders_fetched_at: float = 0
 
@@ -130,34 +127,6 @@ def get_cached_commanders() -> list[dict]:
         _commanders_fetched_at = time.time()
         logger.info(f"Fetched {len(_all_commanders)} commanders")
     return _all_commanders
-
-
-def fetch_card_price(card_name: str) -> Optional[float]:
-    """Fetch card price from Scryfall. Returns USD price or None."""
-    global _price_cache_time
-    normalized = normalize_card_name(card_name)
-
-    # Check cache
-    if normalized in price_cache and (time.time() - _price_cache_time < PRICE_CACHE_TTL):
-        return price_cache[normalized]
-
-    try:
-        resp = requests.get(
-            "https://api.scryfall.com/cards/named",
-            params={"exact": card_name},
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            prices = data.get("prices", {})
-            price = prices.get("usd") or prices.get("usd_foil")
-            if price:
-                price = float(price)
-                price_cache[normalized] = price
-                return price
-    except Exception:
-        pass
-    return None
 
 
 def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
@@ -173,7 +142,6 @@ def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
         else:
             uncached.append(name)
 
-    # Scryfall collection endpoint accepts up to 75 cards at a time
     for i in range(0, len(uncached), 75):
         batch = uncached[i:i+75]
         identifiers = [{"name": name} for name in batch]
@@ -201,6 +169,105 @@ def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
     return prices
 
 
+def extract_cardview_names(cardviews) -> list[dict]:
+    """Extract card info from EDHREC cardview objects."""
+    results = []
+    if not cardviews:
+        return results
+    for cv in cardviews:
+        if isinstance(cv, dict):
+            name = cv.get("name", "")
+            if name:
+                results.append({
+                    "name": name,
+                    "name_normalized": normalize_card_name(name),
+                    "synergy": cv.get("synergy", 0),
+                    "inclusion": cv.get("inclusion", 0),
+                    "label": cv.get("label", ""),
+                })
+        elif isinstance(cv, str):
+            results.append({
+                "name": cv,
+                "name_normalized": normalize_card_name(cv),
+                "synergy": 0,
+                "inclusion": 0,
+                "label": "",
+            })
+    return results
+
+
+def get_commander_synergy_cards(commander_name: str) -> dict:
+    """Get high synergy cards, new cards, and type-specific top cards from EDHREC."""
+    cache_key = commander_name
+    if cache_key in synergy_cache and (time.time() - synergy_cache[cache_key].get("timestamp", 0) < CACHE_TTL):
+        return synergy_cache[cache_key]["data"]
+
+    name_for_edhrec = commander_name.split("//")[0].strip()
+    formatted = edhrec.format_card_name(name_for_edhrec)
+
+    result = {
+        "high_synergy": [],
+        "new_cards": [],
+        "top_creatures": [],
+        "top_instants": [],
+        "top_sorceries": [],
+        "top_enchantments": [],
+        "top_artifacts": [],
+        "top_lands": [],
+        "top_planeswalkers": [],
+        "top_utility_lands": [],
+        "top_mana_artifacts": [],
+    }
+
+    method_map = {
+        "high_synergy": edhrec.get_high_synergy_cards,
+        "new_cards": edhrec.get_new_cards,
+        "top_creatures": edhrec.get_top_creatures,
+        "top_instants": edhrec.get_top_instants,
+        "top_sorceries": edhrec.get_top_sorceries,
+        "top_enchantments": edhrec.get_top_enchantments,
+        "top_artifacts": edhrec.get_top_artifacts,
+        "top_lands": edhrec.get_top_lands,
+        "top_planeswalkers": edhrec.get_top_planeswalkers,
+        "top_utility_lands": edhrec.get_top_utility_lands,
+        "top_mana_artifacts": edhrec.get_top_mana_artifacts,
+    }
+
+    for key, method in method_map.items():
+        try:
+            raw = method(formatted)
+            # raw is a dict like {"Header": [cardviews...]}
+            if isinstance(raw, dict):
+                for header, cards in raw.items():
+                    result[key] = extract_cardview_names(cards)
+        except Exception as e:
+            logger.error(f"Error fetching {key} for {commander_name}: {e}")
+
+    synergy_cache[cache_key] = {"data": result, "timestamp": time.time()}
+    return result
+
+
+def classify_card_type(card_name: str, type_data: dict) -> str:
+    """Determine card type from the type-specific lists."""
+    normalized = normalize_card_name(card_name)
+    type_map = [
+        ("Creature", "top_creatures"),
+        ("Instant", "top_instants"),
+        ("Sorcery", "top_sorceries"),
+        ("Enchantment", "top_enchantments"),
+        ("Artifact", "top_artifacts"),
+        ("Artifact", "top_mana_artifacts"),
+        ("Planeswalker", "top_planeswalkers"),
+        ("Land", "top_lands"),
+        ("Land", "top_utility_lands"),
+    ]
+    for type_name, key in type_map:
+        for card in type_data.get(key, []):
+            if card.get("name_normalized") == normalized:
+                return type_name
+    return ""
+
+
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
     """Get average deck for a commander from EDHREC, with caching."""
     cache_key = f"{commander_name}|{budget or ''}|{theme or ''}"
@@ -210,17 +277,13 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         return cached["data"]
 
     try:
-        # For double-faced cards, EDHREC only uses the front face name
         name_for_edhrec = commander_name.split("//")[0].strip()
         formatted = edhrec.format_card_name(name_for_edhrec)
 
-        # Get average deck
         avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
-
-        # Get commander data for themes/metadata
         cmd_data = edhrec.get_commander_data(formatted)
 
-        # Extract themes from commander data
+        # Extract themes
         themes = []
         if cmd_data:
             container = cmd_data.get("container", {})
@@ -235,13 +298,11 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
                     })
 
         # Extract card names from average deck
-        # Decklist items may be strings (card names) or dicts with metadata
         deck_cards = set()
         decklist = []
         if avg_deck and avg_deck.get("decklist"):
             for card in avg_deck["decklist"]:
                 if isinstance(card, str):
-                    # Strip leading quantity like "1 " or "1x "
                     card_raw = card.strip()
                     qty_match = re.match(r"^\d+x?\s+(.+)", card_raw)
                     card_name = qty_match.group(1) if qty_match else card_raw
@@ -291,7 +352,6 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
 
 @app.post("/api/collection/upload")
 async def upload_collection(file: UploadFile = File(...)):
-    """Upload a CSV collection file from Archidekt or Moxfield."""
     content = await file.read()
     text = content.decode("utf-8")
 
@@ -305,18 +365,15 @@ async def upload_collection(file: UploadFile = File(...)):
 
     collection.clear()
     collection.update(cards)
-
     return {"count": len(collection), "cards": sorted(collection)}
 
 
 @app.post("/api/collection/text")
 async def upload_text_collection(body: dict):
-    """Upload collection as plain text."""
     text = body.get("text", "")
     if not text.strip():
         raise HTTPException(status_code=400, detail="No text provided")
 
-    # Detect if it's CSV-like
     if "," in text.splitlines()[0] and len(text.splitlines()[0].split(",")) > 2:
         cards = parse_csv_collection(text)
     else:
@@ -327,19 +384,16 @@ async def upload_text_collection(body: dict):
 
     collection.clear()
     collection.update(cards)
-
     return {"count": len(collection), "cards": sorted(collection)}
 
 
 @app.get("/api/collection")
 async def get_collection():
-    """Get current collection."""
     return {"count": len(collection), "cards": sorted(collection)}
 
 
 @app.post("/api/collection/restore")
 async def restore_collection(body: dict):
-    """Restore collection from a list of card names (from localStorage)."""
     cards = body.get("cards", [])
     if not cards:
         raise HTTPException(status_code=400, detail="No cards provided")
@@ -347,15 +401,12 @@ async def restore_collection(body: dict):
     collection.clear()
     for card in cards:
         collection.add(normalize_card_name(card))
-
     return {"count": len(collection), "cards": sorted(collection)}
 
 
 @app.get("/api/commanders")
 async def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
-    """List all legal commanders, optionally filtered by color identity and name search."""
     commanders = get_cached_commanders()
-
     results = commanders
 
     if color:
@@ -371,7 +422,6 @@ async def list_commanders(color: Optional[str] = None, search: Optional[str] = N
 
 @app.get("/api/commanders/popular")
 async def popular_commanders():
-    """Get top 50 most popular commanders by EDHREC rank."""
     commanders = get_cached_commanders()
     top = sorted(commanders, key=lambda c: c["edhrec_rank"])[:50]
     return {"commanders": top}
@@ -384,18 +434,32 @@ async def get_commander_detail(
     theme: Optional[str] = None,
     include_prices: bool = True,
 ):
-    """Get commander average deck from EDHREC and compare with collection."""
+    """Get commander average deck from EDHREC, compare with collection, categorize by type."""
     data = get_commander_avg_deck(commander_name, budget=budget, theme=theme)
 
-    # Compare with collection
+    # Get type-specific data for categorization
+    type_data = {}
+    try:
+        type_data = get_commander_synergy_cards(commander_name)
+    except Exception as e:
+        logger.error(f"Error fetching type data for {commander_name}: {e}")
+
+    # Build a set of all cards in the avg deck
+    avg_deck_names = set(c["name_normalized"] for c in data.get("decklist", []))
+
+    # Compare with collection and categorize
     owned = []
     missing = []
     missing_names = []
     for card in data.get("decklist", []):
+        # Try to classify by card type
+        card_type = card.get("category", "") or classify_card_type(card["name"], type_data)
+        enriched = {**card, "card_type": card_type}
+
         if card["name_normalized"] in collection:
-            owned.append({**card, "owned": True})
+            owned.append({**enriched, "owned": True})
         else:
-            missing.append({**card, "owned": False})
+            missing.append({**enriched, "owned": False})
             missing_names.append(card["name"])
 
     # Fetch prices for missing cards
@@ -408,6 +472,46 @@ async def get_commander_detail(
             if price:
                 total_missing_price += price
 
+    # Build recommendations: high synergy + new cards that you OWN but aren't in avg deck
+    recommendations = []
+    seen_recs = set()
+    for key in ["high_synergy", "new_cards"]:
+        for card in type_data.get(key, []):
+            normalized = card["name_normalized"]
+            if (normalized in collection
+                    and normalized not in avg_deck_names
+                    and normalized not in seen_recs):
+                seen_recs.add(normalized)
+                recommendations.append({
+                    "name": card["name"],
+                    "name_normalized": normalized,
+                    "synergy": card.get("synergy", 0),
+                    "inclusion": card.get("inclusion", 0),
+                    "source": "High Synergy" if key == "high_synergy" else "New Card",
+                })
+
+    # Also check all type-specific top cards for owned cards not in avg deck
+    for key in ["top_creatures", "top_instants", "top_sorceries", "top_enchantments",
+                "top_artifacts", "top_lands", "top_planeswalkers", "top_utility_lands",
+                "top_mana_artifacts"]:
+        for card in type_data.get(key, []):
+            normalized = card["name_normalized"]
+            if (normalized in collection
+                    and normalized not in avg_deck_names
+                    and normalized not in seen_recs):
+                seen_recs.add(normalized)
+                type_label = key.replace("top_", "").replace("_", " ").title()
+                recommendations.append({
+                    "name": card["name"],
+                    "name_normalized": normalized,
+                    "synergy": card.get("synergy", 0),
+                    "inclusion": card.get("inclusion", 0),
+                    "source": f"Top {type_label}",
+                })
+
+    # Sort recommendations by synergy descending
+    recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
+
     return {
         "commander": data["commander"],
         "num_decks": data.get("num_decks", 0),
@@ -419,6 +523,7 @@ async def get_commander_detail(
         "total_missing_price": round(total_missing_price, 2),
         "owned_cards": owned,
         "missing_cards": missing,
+        "recommendations": recommendations,
         "error": data.get("error"),
     }
 
@@ -430,16 +535,11 @@ async def get_recommendations(
     min_owned: int = 20,
     limit: int = 50,
 ):
-    """
-    Get commander recommendations based on collection.
-    Fetches avg decks for top commanders and ranks by owned card count.
-    """
     if not collection:
         raise HTTPException(status_code=400, detail="No collection uploaded. Upload your collection first.")
 
     commanders = get_cached_commanders()
 
-    # Filter
     if color:
         color_set = set(color.upper())
         commanders = [c for c in commanders if set(c["color_identity"]) == color_set]
@@ -448,7 +548,6 @@ async def get_recommendations(
         search_lower = search.lower()
         commanders = [c for c in commanders if search_lower in c["name"].lower()]
 
-    # Only check top commanders by EDHREC rank (to avoid thousands of requests)
     commanders = sorted(commanders, key=lambda c: c["edhrec_rank"])[:200]
 
     results = []
@@ -463,7 +562,6 @@ async def get_recommendations(
         total = len(deck_cards)
 
         if owned_count >= min_owned:
-            # Get missing card names for price estimation
             missing_names = [
                 card["name"] for card in data.get("decklist", [])
                 if card["name_normalized"] not in collection
@@ -482,7 +580,7 @@ async def get_recommendations(
                 "_missing_names": missing_names,
             })
 
-        time.sleep(0.1)  # Rate limiting
+        time.sleep(0.1)
 
     # Fetch prices for all missing cards across all results
     all_missing = set()
