@@ -5,6 +5,7 @@ import os
 import re
 import time
 import logging
+import unicodedata
 from typing import Optional
 
 import requests
@@ -71,6 +72,27 @@ def rate_limit(limit_string):
     return decorator
 
 edhrec = EDHRec()
+
+
+def edhrec_slug(name: str) -> str:
+    """Convert a card name to the EDHREC URL slug format.
+    Strips punctuation, normalizes unicode accents, lowercases, and joins with hyphens.
+    E.g. "Mr. House, President and CEO" -> "mr-house-president-and-ceo"
+         "Altaïr Ibn-La'Ahad" -> "altair-ibn-laahad"
+         "Bartolomé del Presidio" -> "bartolome-del-presidio"
+    """
+    # Normalize unicode: decompose accented chars, then strip combining marks
+    s = unicodedata.normalize("NFD", name)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = s.lower()
+    # Replace hyphens with spaces so they become single hyphens later
+    s = s.replace("-", " ")
+    # Strip all non-alphanumeric, non-space characters (periods, commas, apostrophes, colons, etc.)
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    # Collapse whitespace and join with hyphens
+    s = re.sub(r"\s+", "-", s.strip())
+    return s
+
 
 # In-memory state
 collection: dict[str, int] = {}  # normalized_name -> quantity owned
@@ -297,7 +319,7 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
         return synergy_cache[cache_key]["data"]
 
     name_for_edhrec = commander_name.split("//")[0].strip()
-    formatted = edhrec.format_card_name(name_for_edhrec)
+    formatted = edhrec_slug(name_for_edhrec)
 
     result = {
         "high_synergy": [],
@@ -429,7 +451,7 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
 
     try:
         name_for_edhrec = commander_name.split("//")[0].strip()
-        formatted = edhrec.format_card_name(name_for_edhrec)
+        formatted = edhrec_slug(name_for_edhrec)
 
         avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
         cmd_data = edhrec.get_commander_data(formatted)

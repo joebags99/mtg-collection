@@ -396,6 +396,14 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
     setLoading(false);
   }, [collectionCount, colorFilter, minOwned, search, excludeInDecks]);
 
+  // Auto-refetch when excludeInDecks toggle changes (if already fetched)
+  useEffect(() => {
+    if (fetched) {
+      fetchRecommendations();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excludeInDecks]);
+
   const toggleColor = (c) => {
     setColorFilter(prev =>
       prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
