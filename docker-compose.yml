@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        REACT_APP_API_URL: ""
+    ports:
+      - "8000:8000"
+    environment:
+      - CORS_ORIGINS=*
+      - REDIS_URL=redis://redis:6379/0
+      - RATE_LIMIT=30/minute
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

@@ -1,1260 +1,2264 @@
-import React, { useState } from 'react';
-import { Upload, Database, TrendingUp, Plus } from 'lucide-react';
-// eslint-disable-next-line no-unused-vars
-import Papa from 'papaparse';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 
-const MTGCollectionManager = () => {
-  const [collection, setCollection] = useState([]);
+const API = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+// --- Color Identity Helpers ---
+const COLOR_MAP = {
+  W: { label: 'White', bg: '#f9faf4', text: '#333', symbol: '☀' },
+  U: { label: 'Blue', bg: '#0e68ab', text: '#fff', symbol: '💧' },
+  B: { label: 'Black', bg: '#2b2b2b', text: '#ccc', symbol: '💀' },
+  R: { label: 'Red', bg: '#d32029', text: '#fff', symbol: '🔥' },
+  G: { label: 'Green', bg: '#00733e', text: '#fff', symbol: '🌲' },
+};
+
+const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
+
+function ColorBadge({ colors }) {
+  if (!colors || colors.length === 0) {
+    return <span className="text-xs bg-gray-600 px-1.5 py-0.5 rounded">C</span>;
+  }
+  return (
+    <span className="inline-flex gap-0.5">
+      {colors.map(c => (
+        <span
+          key={c}
+          className="text-xs px-1.5 py-0.5 rounded font-bold"
+          style={{ backgroundColor: COLOR_MAP[c]?.bg, color: COLOR_MAP[c]?.text }}
+        >
+          {c}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function CardName({ name, className = '' }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+  const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(name)}`;
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    let x = rect.right + 8;
+    let y = rect.top;
+    if (x + 250 > viewportW) x = rect.left - 258;
+    if (y + 350 > viewportH) y = viewportH - 360;
+    if (y < 8) y = 8;
+    setPos({ x, y });
+    setShow(true);
+  };
+
+  return (
+    <span
+      ref={ref}
+      className={`cursor-pointer hover:text-blue-400 transition-colors ${className}`}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setShow(false)}
+    >
+      {name}
+      {show && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: pos.x, top: pos.y }}
+        >
+          <img
+            src={imgSrc}
+            alt={name}
+            className="w-[250px] rounded-lg shadow-2xl border border-gray-700"
+          />
+        </div>
+      )}
+    </span>
+  );
+}
+
+function MatchBar({ percentage, size = 'sm' }) {
+  const color =
+    percentage >= 60 ? 'bg-green-500' :
+    percentage >= 40 ? 'bg-yellow-500' :
+    percentage >= 20 ? 'bg-orange-500' :
+    'bg-red-500';
+  const h = size === 'sm' ? 'h-1.5' : 'h-2.5';
+  return (
+    <div className={`w-full bg-gray-700 rounded-full ${h}`}>
+      <div
+        className={`${color} ${h} rounded-full transition-all duration-500`}
+        style={{ width: `${Math.min(percentage, 100)}%` }}
+      />
+    </div>
+  );
+}
+
+// --- localStorage helpers ---
+const STORAGE_KEY = 'mtg_collection';
+const DECKS_STORAGE_KEY = 'mtg_decks';
+
+function saveCollection(cards) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+  } catch (e) {
+    console.error('Failed to save collection to localStorage:', e);
+  }
+}
+
+function loadCollection() {
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load collection from localStorage:', e);
+  }
+  return null;
+}
+
+function saveDecks(decks) {
+  try {
+    localStorage.setItem(DECKS_STORAGE_KEY, JSON.stringify(decks));
+  } catch (e) {
+    console.error('Failed to save decks to localStorage:', e);
+  }
+}
+
+function loadDecks() {
+  try {
+    const data = localStorage.getItem(DECKS_STORAGE_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load decks from localStorage:', e);
+  }
+  return {};
+}
+
+// --- API helpers ---
+async function apiGet(path, params = {}) {
+  const url = new URL(API + path);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== null && v !== undefined && v !== '') url.searchParams.set(k, v);
+  });
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiUpload(path, file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(API + path, { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+// --- Commander Autocomplete ---
+function CommanderAutocomplete({ value, onChange, placeholder, className }) {
+  const [query, setQuery] = useState(value || '');
+  const [results, setResults] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('upload');
+  const containerRef = useRef(null);
+  const debounceRef = useRef(null);
 
-  const styles = {
-    container: {
-      minHeight: '100vh',
-      backgroundColor: '#f9fafb',
-      fontFamily: 'system-ui, -apple-system, sans-serif'
-    },
-    header: {
-      backgroundColor: 'white',
-      borderBottom: '1px solid #e5e7eb',
-      padding: '24px',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-    },
-    headerTitle: {
-      fontSize: '32px',
-      fontWeight: 'bold',
-      color: '#111827',
-      margin: '0 0 8px 0'
-    },
-    headerSubtitle: {
-      color: '#6b7280',
-      margin: 0
-    },
-    nav: {
-      backgroundColor: 'white',
-      borderBottom: '1px solid #e5e7eb',
-      padding: '0 24px'
-    },
-    navList: {
-      display: 'flex',
-      gap: '32px',
-      listStyle: 'none',
-      margin: 0,
-      padding: 0
-    },
-    navItem: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      padding: '16px 8px',
-      cursor: 'pointer',
-      borderBottom: '2px solid transparent',
-      fontSize: '14px',
-      fontWeight: '500',
-      transition: 'all 0.2s'
-    },
-    navItemActive: {
-      borderBottomColor: '#3b82f6',
-      color: '#3b82f6'
-    },
-    navItemInactive: {
-      color: '#6b7280'
-    },
-    main: {
-      maxWidth: '1200px',
-      margin: '0 auto',
-      padding: '32px 24px'
-    },
-    card: {
-      backgroundColor: 'white',
-      border: '1px solid #e5e7eb',
-      borderRadius: '8px',
-      padding: '24px',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-    },
-    button: {
-      backgroundColor: '#3b82f6',
-      color: 'white',
-      border: 'none',
-      borderRadius: '8px',
-      padding: '12px 24px',
-      cursor: 'pointer',
-      fontSize: '16px',
-      fontWeight: '500',
-      transition: 'background-color 0.2s'
-    },
-    buttonDisabled: {
-      backgroundColor: '#9ca3af',
-      cursor: 'not-allowed'
-    },
-    input: {
-      width: '100%',
-      padding: '12px',
-      border: '1px solid #d1d5db',
-      borderRadius: '8px',
-      fontSize: '16px'
-    },
-    textarea: {
-      width: '100%',
-      height: '256px',
-      padding: '16px',
-      border: '1px solid #d1d5db',
-      borderRadius: '8px',
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      resize: 'vertical'
-    },
-    grid: {
-      display: 'grid',
-      gap: '32px',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-      justifyItems: 'center'
-    },
-    flexRow: {
-      display: 'flex',
-      gap: '16px',
-      alignItems: 'center'
-    },
-    badge: {
-      backgroundColor: '#dbeafe',
-      color: '#1e40af',
-      padding: '4px 8px',
-      borderRadius: '4px',
-      fontSize: '12px',
-      fontWeight: '500'
-    },
-    loadingSpinner: {
-      textAlign: 'center',
-      padding: '32px'
-    },
-    spinner: {
-      display: 'inline-block',
-      width: '32px',
-      height: '32px',
-      border: '3px solid #f3f4f6',
-      borderTop: '3px solid #3b82f6',
-      borderRadius: '50%',
-      animation: 'spin 1s linear infinite'
-    }
-  };
+  useEffect(() => { setQuery(value || ''); }, [value]);
 
-  // Parse collection from text input (one card per line, format: "Quantity Cardname")
-  const parseCollection = (text) => {
-    const lines = text.split('\n').filter(line => line.trim());
-    const cards = [];
-    
-    lines.forEach(line => {
-      const match = line.trim().match(/^(\d+)\s+(.+)$/);
-      if (match) {
-        const [, quantity, name] = match;
-        cards.push({
-          quantity: parseInt(quantity),
-          name: name.trim(),
-          id: Date.now() + Math.random()
-        });
-      }
-    });
-    
-    return cards;
-  };
-
-  // Fetch card data from Scryfall
-  const fetchCardData = async (cardName) => {
-    try {
-      const response = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(cardName)}`);
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (error) {
-      console.error(`Error fetching ${cardName}:`, error);
-    }
-    return null;
-  };
-
-  // Process uploaded collection
-  const handleCollectionUpload = async (text) => {
-    setLoading(true);
-    const parsedCards = parseCollection(text);
-    const enhancedCards = [];
-
-    for (let i = 0; i < parsedCards.length; i++) {
-      const card = parsedCards[i];
-      const cardData = await fetchCardData(card.name);
-      
-      enhancedCards.push({
-        ...card,
-        scryfallData: cardData,
-        colors: cardData?.color_identity || [],
-        cmc: cardData?.cmc || 0,
-        type: cardData?.type_line || '',
-        price: cardData?.prices?.usd || '0'
-      });
-
-      if (i < parsedCards.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-
-    setCollection(enhancedCards);
-    setLoading(false);
-    setActiveTab('collection');
-  };
-
-  // Manual card addition
-  const addSingleCard = async (cardName, quantity = 1) => {
-    setLoading(true);
-    const cardData = await fetchCardData(cardName);
-    
-    if (cardData) {
-      const newCard = {
-        quantity,
-        name: cardData.name,
-        edition: cardData.set_name || '',
-        condition: 'Near Mint',
-        language: 'English',
-        foil: false,
-        collectorNumber: cardData.collector_number || '',
-        alter: false,
-        proxy: false,
-        purchasePrice: 0,
-        tradelistCount: 0,
-        tags: '',
-        lastModified: new Date().toISOString(),
-        id: Date.now(),
-        scryfallData: cardData,
-        colors: cardData.color_identity || [],
-        cmc: cardData.cmc || 0,
-        type: cardData.type_line || '',
-        price: cardData.prices?.usd || '0'
-      };
-      
-      setCollection(prev => [...prev, newCard]);
-    }
-    setLoading(false);
-  };
-
-  // Simple deck analysis
-  const analyzeDeckPotential = () => {
-    const commanders = collection.filter(card => 
-      card.type.includes('Legendary') && card.type.includes('Creature')
-    );
-    
-    const colorCombinations = {};
-    commanders.forEach(commander => {
-      const colors = commander.colors.sort().join('');
-      if (!colorCombinations[colors]) {
-        colorCombinations[colors] = [];
-      }
-      colorCombinations[colors].push(commander);
-    });
-
-    return colorCombinations;
-  };
-
-  // Handle Moxfield URL import
-  const handleMoxfieldImport = async (url) => {
-    if (!url || !url.trim()) {
-      alert('Please enter a Moxfield URL');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      
-      // Extract collection ID from various Moxfield URL formats
-      let collectionId = extractMoxfieldCollectionId(url);
-      
-      if (!collectionId) {
-        alert('Invalid Moxfield URL. Please make sure it\'s a valid collection URL.');
-        return;
-      }
-
-      // Show immediate guidance since direct API access is blocked by CORS
-      const shouldProceed = window.confirm(
-        `Direct import from Moxfield is blocked by browser security policies.\n\n` +
-        `Would you like instructions on how to import your collection instead?\n\n` +
-        `(Click OK for instructions, Cancel to try anyway)`
-      );
-
-      if (shouldProceed) {
-        // Provide step-by-step instructions
-        showMoxfieldImportInstructions(collectionId);
-        return;
-      }
-
-      // If user wants to try anyway, attempt the API call
-      const csvUrl = `https://api.moxfield.com/v2/collections/${collectionId}/export/csv`;
-      console.log('Attempting to fetch from:', csvUrl);
-      
-      const response = await fetch(csvUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'text/csv',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const csvData = await response.text();
-      
-      if (csvData && csvData.length > 0) {
-        await handleCollectionUpload(csvData, true);
-        alert('Successfully imported collection from Moxfield!');
-      } else {
-        throw new Error('No data received from Moxfield');
-      }
-      
-    } catch (error) {
-      console.error('Error importing from Moxfield:', error);
-      
-      // Show instructions instead of just error messages
-      const collectionId = extractMoxfieldCollectionId(url);
-      showMoxfieldImportInstructions(collectionId);
-      
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Show detailed instructions for manual Moxfield import
-  const showMoxfieldImportInstructions = (collectionId) => {
-    const instructions = `
-📋 How to Import Your Moxfield Collection:
-
-OPTION 1 - Direct CSV Download (Recommended):
-1. Go to: https://moxfield.com/collections/${collectionId}
-2. Look for the "Export" or "Download" button
-3. Select "CSV" format
-4. Save the file to your computer
-5. Use the "CSV File Upload" option below
-
-OPTION 2 - Manual Export:
-1. Go to your collection on Moxfield
-2. Click the three-dot menu (⋯) 
-3. Select "Export" → "CSV"
-4. Download the file
-5. Upload it using the CSV option below
-
-The CSV method works perfectly and includes all your card data!
-    `.trim();
-
-    alert(instructions);
-  };
-
-  // Extract collection ID from various Moxfield URL formats
-  const extractMoxfieldCollectionId = (url) => {
-    try {
-      // Handle different Moxfield URL formats:
-      // https://www.moxfield.com/collections/COLLECTION_ID
-      // https://moxfield.com/collections/COLLECTION_ID
-      // Just the collection ID itself
-      
-      const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
-      
-      if (urlObj.hostname.includes('moxfield.com')) {
-        const pathParts = urlObj.pathname.split('/');
-        const collectionsIndex = pathParts.indexOf('collections');
-        
-        if (collectionsIndex !== -1 && pathParts[collectionsIndex + 1]) {
-          return pathParts[collectionsIndex + 1];
-        }
-      }
-      
-      // If it's just an ID (alphanumeric string)
-      if (/^[a-zA-Z0-9_-]+$/.test(url.trim())) {
-        return url.trim();
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error parsing Moxfield URL:', error);
-      return null;
-    }
-  };
-
-  const CollectionUpload = () => {
-    const [uploadText, setUploadText] = useState('');
-    const [uploadMethod, setUploadMethod] = useState('moxfield'); // Default to Moxfield
-    const [moxfieldUrl, setMoxfieldUrl] = useState('');
-
-    const handleFileUpload = (event) => {
-      const file = event.target.files[0];
-      if (file) {
-        console.log('File selected:', file.name, file.type, file.size);
-        
-        if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const csvContent = e.target.result;
-            console.log('CSV content loaded, length:', csvContent.length);
-            console.log('First 500 characters:', csvContent.substring(0, 500));
-            handleCollectionUpload(csvContent, true);
-          };
-          reader.onerror = (e) => {
-            console.error('Error reading file:', e);
-            alert('Error reading file. Please try again.');
-          };
-          reader.readAsText(file);
-        } else {
-          alert('Please select a CSV file (.csv)');
-        }
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setShowDropdown(false);
       }
     };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-    return (
-      <div style={styles.card}>
-        <div style={{textAlign: 'center', marginBottom: '24px'}}>
-          <Upload size={48} style={{color: '#3b82f6', margin: '0 auto 16px'}} />
-          <h2 style={{fontSize: '24px', fontWeight: 'bold', margin: '0 0 8px 0'}}>Import Your Collection</h2>
-          <p style={{color: '#6b7280', margin: 0}}>Choose your import method below</p>
+  const handleInput = (val) => {
+    setQuery(val);
+    onChange(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (val.length < 2) { setResults([]); setShowDropdown(false); return; }
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await apiGet('/api/commanders/search_autocomplete', { q: val });
+        setResults(data.results || []);
+        setShowDropdown(true);
+      } catch { setResults([]); }
+      setLoading(false);
+    }, 200);
+  };
+
+  const handleSelect = (cmd) => {
+    setQuery(cmd.name);
+    onChange(cmd.name);
+    setShowDropdown(false);
+    setResults([]);
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        value={query}
+        onChange={e => handleInput(e.target.value)}
+        onFocus={() => { if (results.length > 0) setShowDropdown(true); }}
+        placeholder={placeholder}
+        className={className}
+      />
+      {loading && (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+          <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />
         </div>
-
-        {/* Upload Method Selection */}
-        <div style={{
-          display: 'flex',
-          gap: '12px',
-          marginBottom: '24px',
-          justifyContent: 'center',
-          flexWrap: 'wrap'
-        }}>
-          <button
-            style={{
-              ...styles.button,
-              backgroundColor: uploadMethod === 'moxfield' ? '#3b82f6' : '#e5e7eb',
-              color: uploadMethod === 'moxfield' ? 'white' : '#6b7280',
-              padding: '8px 16px'
-            }}
-            onClick={() => setUploadMethod('moxfield')}
-          >
-            🔗 Moxfield URL
-          </button>
-          <button
-            style={{
-              ...styles.button,
-              backgroundColor: uploadMethod === 'csv' ? '#3b82f6' : '#e5e7eb',
-              color: uploadMethod === 'csv' ? 'white' : '#6b7280',
-              padding: '8px 16px'
-            }}
-            onClick={() => setUploadMethod('csv')}
-          >
-            📊 CSV File
-          </button>
-          <button
-            style={{
-              ...styles.button,
-              backgroundColor: uploadMethod === 'text' ? '#3b82f6' : '#e5e7eb',
-              color: uploadMethod === 'text' ? 'white' : '#6b7280',
-              padding: '8px 16px'
-            }}
-            onClick={() => setUploadMethod('text')}
-          >
-            📝 Text Input
-          </button>
+      )}
+      {showDropdown && results.length > 0 && (
+        <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+          {results.map(cmd => (
+            <button
+              key={cmd.name}
+              onClick={() => handleSelect(cmd)}
+              className="w-full px-3 py-2 text-left text-sm hover:bg-gray-700 flex items-center gap-2 transition-colors"
+            >
+              {cmd.image_uri && (
+                <img src={cmd.image_uri} alt="" className="w-6 h-8 rounded object-cover flex-shrink-0" />
+              )}
+              <span className="flex-1 truncate">{cmd.name}</span>
+              <ColorBadge colors={cmd.color_identity} />
+              {cmd.partner_type && (
+                <span className="text-[10px] text-purple-400 flex-shrink-0">
+                  {cmd.partner_type === 'partner' ? 'Partner' :
+                   cmd.partner_type === 'partner_with' ? 'Partner with' :
+                   cmd.partner_type === 'choose_a_background' ? 'Background' :
+                   cmd.partner_type === 'background' ? 'BG' :
+                   cmd.partner_type === 'friends_forever' ? 'Friends' :
+                   cmd.partner_type === 'doctors_companion' ? 'Companion' :
+                   cmd.partner_type === 'doctor' ? 'Doctor' : ''}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
 
-        {uploadMethod === 'moxfield' ? (
+// --- Partner Picker ---
+function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
+  const [partners, setPartners] = useState([]);
+  const [partnerType, setPartnerType] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (!commanderName) { setPartners([]); setPartnerType(''); return; }
+    setLoading(true);
+    apiGet(`/api/commander/${encodeURIComponent(commanderName)}/partners`)
+      .then(data => {
+        setPartnerType(data.partner_type || '');
+        setPartners(data.partners || []);
+        // If partner_with, auto-select the specific partner
+        if (data.partner_type === 'partner_with' && data.partners?.length === 1) {
+          onSelectPartner(data.partners[0]);
+        }
+      })
+      .catch(() => { setPartners([]); setPartnerType(''); })
+      .finally(() => setLoading(false));
+  }, [commanderName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!partnerType) return null;
+
+  const partnerLabel =
+    partnerType === 'partner' ? 'Partner' :
+    partnerType === 'partner_with' ? 'Partner With' :
+    partnerType === 'choose_a_background' ? 'Choose a Background' :
+    partnerType === 'background' ? 'Background For' :
+    partnerType === 'friends_forever' ? 'Friends Forever' :
+    partnerType === 'doctors_companion' ? "Doctor's Companion For" :
+    partnerType === 'doctor' ? 'Doctor For' : 'Partner';
+
+  const filtered = search.length >= 2
+    ? partners.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    : partners;
+
+  return (
+    <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold text-purple-400">{partnerLabel}</h4>
+        {selectedPartner && (
+          <button
+            onClick={() => onSelectPartner(null)}
+            className="text-xs text-gray-400 hover:text-red-400"
+          >
+            Remove Partner
+          </button>
+        )}
+      </div>
+
+      {selectedPartner ? (
+        <div className="flex items-center gap-3 bg-gray-800 rounded-lg p-2">
+          {selectedPartner.image_uri && (
+            <img src={selectedPartner.image_uri} alt={selectedPartner.name} className="w-12 h-16 rounded object-cover" />
+          )}
           <div>
-            <div style={{marginBottom: '16px'}}>
-              <h3 style={{fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}>
-                Moxfield Collection URL
-              </h3>
-              <p style={{fontSize: '14px', color: '#6b7280', margin: '0 0 8px 0'}}>
-                Paste your public Moxfield collection URL or collection ID
-              </p>
-              <p style={{fontSize: '12px', color: '#9ca3af', margin: 0}}>
-                ⚠️ Collection must be set to <strong>public</strong> to import
-              </p>
-            </div>
-            
-            <input
-              type="text"
-              placeholder="https://moxfield.com/collections/your-collection-id or just the ID"
-              style={{
-                ...styles.input,
-                marginBottom: '16px',
-                fontSize: '14px'
-              }}
-              value={moxfieldUrl}
-              onChange={(e) => setMoxfieldUrl(e.target.value)}
+            <p className="font-medium text-sm">{selectedPartner.name}</p>
+            <ColorBadge colors={selectedPartner.color_identity} />
+          </div>
+        </div>
+      ) : (
+        <>
+          {loading ? (
+            <div className="text-center py-2 text-gray-400 text-sm">Loading partners...</div>
+          ) : (
+            <>
+              {partners.length > 10 && (
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search partners..."
+                  className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500"
+                />
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+                {filtered.slice(0, 40).map(p => (
+                  <button
+                    key={p.name}
+                    onClick={() => onSelectPartner(p)}
+                    className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors"
+                  >
+                    {p.image_uri && (
+                      <img src={p.image_uri} alt={p.name} className="w-full aspect-[5/7] object-cover rounded mb-1" loading="lazy" />
+                    )}
+                    <p className="text-xs truncate">{p.name}</p>
+                  </button>
+                ))}
+              </div>
+              {filtered.length === 0 && <p className="text-sm text-gray-500">No compatible partners found.</p>}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- Components ---
+
+function CollectionUpload({ onUploaded, collectionCount }) {
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiUpload('/api/collection/upload', file);
+      setResult(data);
+      saveCollection(data.cards);
+      onUploaded(data);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const handleText = async () => {
+    if (!text.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiPost('/api/collection/text', { text });
+      setResult(data);
+      saveCollection(data.cards);
+      onUploaded(data);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const handleClear = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setResult(null);
+    onUploaded({ count: 0, cards: [] });
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <h2 className="text-2xl font-bold">Upload Collection</h2>
+      <p className="text-gray-400">
+        Upload a CSV export from <strong>Archidekt</strong> or <strong>Moxfield</strong>,
+        or paste a card list. Your collection is saved locally in your browser.
+      </p>
+
+      {collectionCount > 0 && (
+        <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 flex items-center justify-between">
+          <p className="text-blue-300">
+            Collection loaded: <strong>{collectionCount}</strong> unique cards
+            {loadCollection() && <span className="text-blue-400/70 text-sm ml-2">(saved in browser)</span>}
+          </p>
+          <button
+            onClick={handleClear}
+            className="text-red-400 hover:text-red-300 text-sm"
+          >
+            Clear Collection
+          </button>
+        </div>
+      )}
+
+      {/* CSV Upload */}
+      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
+        <h3 className="font-semibold text-lg">CSV File Upload</h3>
+        <input
+          type="file"
+          accept=".csv,.txt"
+          onChange={handleFile}
+          className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-500"
+        />
+      </div>
+
+      {/* Text Paste */}
+      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
+        <h3 className="font-semibold text-lg">Paste Card List</h3>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          placeholder={"1 Sol Ring\n1 Rhystic Study\n1 Swords to Plowshares\n..."}
+          rows={8}
+          className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+        />
+        <button
+          onClick={handleText}
+          disabled={loading || !text.trim()}
+          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+        >
+          {loading ? 'Processing...' : 'Upload'}
+        </button>
+      </div>
+
+      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+
+      {result && (
+        <div className="bg-green-900/50 border border-green-700 rounded p-4">
+          <p className="text-green-300 font-medium">
+            Loaded {result.count} unique cards into your collection.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommanderCard({ commander, onClick, selectable, selected, onToggleCompare }) {
+  const hasMatch = commander.match_percentage !== undefined;
+  return (
+    <div
+      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+    >
+      {selectable && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
+          className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all ${
+            selected ? 'bg-purple-500 border-purple-500 text-white' : 'bg-gray-900/70 border-gray-400 text-gray-400 hover:border-purple-400'
+          }`}
+          title={selected ? 'Remove from comparison' : 'Add to comparison'}
+        >
+          {selected ? '✓' : '+'}
+        </button>
+      )}
+      <div onClick={() => onClick?.(commander)}>
+        {commander.image_uri && (
+          <div className="relative">
+            <img
+              src={commander.image_uri}
+              alt={commander.name}
+              className="w-full aspect-[5/7] object-cover"
+              loading="lazy"
             />
-            
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <button
-                style={{
-                  ...styles.button,
-                  flex: 1,
-                  ...(loading || !moxfieldUrl.trim() ? styles.buttonDisabled : {})
-                }}
-                onClick={() => handleMoxfieldImport(moxfieldUrl)}
-                disabled={loading || !moxfieldUrl.trim()}
-              >
-                {loading ? 'Importing from Moxfield...' : '🚀 Import from Moxfield'}
-              </button>
-              
-              {moxfieldUrl.trim() && (
+            {hasMatch && (
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-2 pt-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-300">
+                    {commander.owned_count}/{commander.total_cards}
+                  </span>
+                  <span className={`text-sm font-bold ${
+                    commander.match_percentage >= 60 ? 'text-green-400' :
+                    commander.match_percentage >= 40 ? 'text-yellow-400' :
+                    'text-gray-400'
+                  }`}>
+                    {commander.match_percentage}%
+                  </span>
+                </div>
+                <MatchBar percentage={commander.match_percentage} />
+              </div>
+            )}
+          </div>
+        )}
+        <div className="p-3 space-y-1.5">
+          <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
+          <div className="flex items-center justify-between">
+            <ColorBadge colors={commander.color_identity} />
+            {commander.missing_price > 0 && (
+              <span className="text-xs text-yellow-400">${commander.missing_price.toFixed(0)}</span>
+            )}
+          </div>
+          {commander.num_decks > 0 && (
+            <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SORT_OPTIONS = [
+  { value: 'match_desc', label: 'Most Complete' },
+  { value: 'match_asc', label: 'Least Complete' },
+  { value: 'price_asc', label: 'Cheapest to Complete' },
+  { value: 'price_desc', label: 'Most Expensive to Complete' },
+  { value: 'edhrec', label: 'EDHREC Popularity' },
+  { value: 'owned_desc', label: 'Most Cards Owned' },
+];
+
+function sortResults(results, sortBy) {
+  const sorted = [...results];
+  switch (sortBy) {
+    case 'match_desc': return sorted.sort((a, b) => b.match_percentage - a.match_percentage);
+    case 'match_asc': return sorted.sort((a, b) => a.match_percentage - b.match_percentage);
+    case 'price_asc': return sorted.sort((a, b) => (a.missing_price || 9999) - (b.missing_price || 9999));
+    case 'price_desc': return sorted.sort((a, b) => (b.missing_price || 0) - (a.missing_price || 0));
+    case 'edhrec': return sorted.sort((a, b) => (a.edhrec_rank || 9999) - (b.edhrec_rank || 9999));
+    case 'owned_desc': return sorted.sort((a, b) => b.owned_count - a.owned_count);
+    default: return sorted;
+  }
+}
+
+function Recommendations({ collectionCount, onSelectCommander, compareList, onToggleCompare, excludeInDecks, onToggleExclude, deckCount }) {
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [colorFilter, setColorFilter] = useState([]);
+  const [minOwned, setMinOwned] = useState(20);
+  const [fetched, setFetched] = useState(false);
+  const [sortBy, setSortBy] = useState('match_desc');
+
+  const fetchRecommendations = useCallback(async () => {
+    if (collectionCount === 0) {
+      setError('Upload your collection first.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const color = colorFilter.length > 0 ? colorFilter.join('') : null;
+      const data = await apiPost(
+        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${search ? '&search=' + encodeURIComponent(search) : ''}${excludeInDecks ? '&exclude_in_decks=true' : ''}`,
+        {}
+      );
+      setResults(data.results || []);
+      setFetched(true);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  }, [collectionCount, colorFilter, minOwned, search, excludeInDecks]);
+
+  // Auto-refetch when excludeInDecks toggle changes (if already fetched)
+  useEffect(() => {
+    if (fetched) {
+      fetchRecommendations();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excludeInDecks]);
+
+  const toggleColor = (c) => {
+    setColorFilter(prev =>
+      prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
+    );
+  };
+
+  const sortedResults = sortResults(results, sortBy);
+  const compareNames = new Set(compareList.map(c => c.name));
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Commander Recommendations</h2>
+      <p className="text-gray-400">
+        Based on your collection of {collectionCount} cards, ranked by how many cards
+        you already own in each commander's average EDHREC deck.
+      </p>
+
+      {/* Filters */}
+      <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Search</label>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Commander name..."
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Min owned cards</label>
+            <input
+              type="number"
+              value={minOwned}
+              onChange={e => setMinOwned(parseInt(e.target.value) || 0)}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Color Identity</label>
+            <div className="flex gap-1">
+              {ALL_COLORS.map(c => (
                 <button
-                  style={{
-                    ...styles.button,
-                    backgroundColor: '#10b981',
-                    color: 'white',
-                    padding: '12px 16px',
-                    fontSize: '14px',
-                    whiteSpace: 'nowrap'
-                  }}
-                  onClick={() => {
-                    const collectionId = extractMoxfieldCollectionId(moxfieldUrl);
-                    if (collectionId) {
-                      window.open(`https://moxfield.com/collections/${collectionId}`, '_blank');
-                    }
-                  }}
-                  title="Open collection on Moxfield to download CSV"
+                  key={c}
+                  onClick={() => toggleColor(c)}
+                  className={`w-8 h-8 rounded font-bold text-sm transition-all ${
+                    colorFilter.includes(c)
+                      ? 'ring-2 ring-white scale-110'
+                      : 'opacity-50 hover:opacity-75'
+                  }`}
+                  style={{ backgroundColor: COLOR_MAP[c].bg, color: COLOR_MAP[c].text }}
                 >
-                  📊 Get CSV
+                  {c}
+                </button>
+              ))}
+              {colorFilter.length > 0 && (
+                <button
+                  onClick={() => setColorFilter([])}
+                  className="text-xs text-gray-400 hover:text-white ml-2"
+                >
+                  Clear
                 </button>
               )}
             </div>
-
-            <div style={{
-              marginTop: '8px',
-              padding: '12px',
-              backgroundColor: '#fef3c7',
-              borderRadius: '6px',
-              border: '1px solid #f59e0b'
-            }}>
-              <h4 style={{fontSize: '14px', fontWeight: '600', color: '#d97706', margin: '0 0 8px 0'}}>
-                💡 How to Import from Moxfield
-              </h4>
-              <div style={{fontSize: '12px', color: '#d97706', lineHeight: '1.4'}}>
-                <strong>Browser security prevents direct import.</strong><br/>
-                1. Click "📊 Get CSV" to open your collection<br/>
-                2. Export as CSV from Moxfield<br/>
-                3. Upload the CSV file using the option below<br/>
-                <em>This method is actually faster and more reliable!</em>
-              </div>
-            </div>
           </div>
-        ) : uploadMethod === 'csv' ? (
-          <div>
-            <div style={{marginBottom: '16px'}}>
-              <h3 style={{fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}>
-                CSV File Upload (Moxfield Export)
-              </h3>
-              <p style={{fontSize: '14px', color: '#6b7280', margin: 0}}>
-                Upload your exported CSV file from Moxfield
-              </p>
-            </div>
-
-            <div style={{
-              border: '2px dashed #d1d5db',
-              borderRadius: '8px',
-              padding: '32px',
-              textAlign: 'center',
-              backgroundColor: '#f9fafb',
-              cursor: 'pointer',
-              transition: 'all 0.2s'
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.currentTarget.style.backgroundColor = '#eff6ff';
-              e.currentTarget.style.borderColor = '#3b82f6';
-            }}
-            onDragLeave={(e) => {
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#d1d5db';
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#d1d5db';
-              const files = e.dataTransfer.files;
-              if (files.length > 0) {
-                const fileInput = e.currentTarget.querySelector('input[type="file"]');
-                fileInput.files = files;
-                handleFileUpload({ target: { files } });
-              }
-            }}
-            >
-              <div style={{
-                fontSize: '48px',
-                marginBottom: '16px'
-              }}>📊</div>
-              
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: '12px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  backgroundColor: 'white',
-                  marginBottom: '12px'
-                }}
-              />
-              
-              <p style={{
-                fontSize: '16px',
-                fontWeight: '600',
-                color: '#374151',
-                margin: '0 0 8px 0'
-              }}>
-                Choose CSV file or drag & drop
-              </p>
-              
-              <p style={{
-                fontSize: '14px',
-                color: '#6b7280',
-                margin: 0
-              }}>
-                Export from Moxfield: Collection → Export → CSV
-              </p>
-            </div>
-
-            <div style={{
-              marginTop: '16px',
-              padding: '12px',
-              backgroundColor: '#eff6ff',
-              borderRadius: '6px',
-              border: '1px solid #bfdbfe'
-            }}>
-              <h4 style={{fontSize: '14px', fontWeight: '600', color: '#1e40af', margin: '0 0 8px 0'}}>
-                Supported Moxfield CSV columns:
-              </h4>
-              <div style={{fontSize: '12px', color: '#1e40af', lineHeight: '1.4'}}>
-                <strong>Required:</strong> Count, Name<br/>
-                <strong>Optional:</strong> Edition, Condition, Language, Foil, Collector Number, Alter, Proxy, Purchase Price
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div style={{marginBottom: '16px'}}>
-              <h3 style={{fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}>
-                Simple Text Format
-              </h3>
-              <p style={{fontSize: '14px', color: '#6b7280', margin: 0}}>
-                One card per line: "4 Lightning Bolt"
-              </p>
-            </div>
-            
-            <textarea
-              style={styles.textarea}
-              placeholder={`4 Lightning Bolt
-1 Tarmogoyf
-2 Birds of Paradise
-1 Sol Ring
-...`}
-              value={uploadText}
-              onChange={(e) => setUploadText(e.target.value)}
-            />
-            
-            <button
-              style={{
-                ...styles.button,
-                width: '100%',
-                marginTop: '16px',
-                ...(loading || !uploadText.trim() ? styles.buttonDisabled : {})
-              }}
-              onClick={() => handleCollectionUpload(uploadText, false)}
-              disabled={loading || !uploadText.trim()}
-            >
-              {loading ? 'Processing Collection...' : 'Upload Text Collection'}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const CollectionView = () => {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [newCardName, setNewCardName] = useState('');
-    const [cardViewModes, setCardViewModes] = useState({}); // 'text' or 'image'
-    const [cardFaceSides, setCardFaceSides] = useState({}); // 0 or 1 for double-faced cards
-
-    const filteredCollection = collection.filter(card =>
-      card.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const toggleViewMode = (cardId) => {
-      setCardViewModes(prev => ({
-        ...prev,
-        [cardId]: prev[cardId] === 'image' ? 'text' : 'image'
-      }));
-    };
-
-    const toggleCardFace = (cardId) => {
-      setCardFaceSides(prev => ({
-        ...prev,
-        [cardId]: prev[cardId] === 1 ? 0 : 1
-      }));
-    };
-
-    const getCardImageUrl = (card) => {
-      const scryfallData = card.scryfallData;
-      if (!scryfallData) return null;
-
-      // Check if it's a double-faced card
-      if (scryfallData.card_faces && scryfallData.card_faces.length > 1) {
-        const faceIndex = cardFaceSides[card.id] || 0;
-        return scryfallData.card_faces[faceIndex]?.image_uris?.normal;
-      }
-      
-      // Single-faced card
-      return scryfallData.image_uris?.normal;
-    };
-
-    const isDoubleFaced = (card) => {
-      return card.scryfallData?.card_faces && card.scryfallData.card_faces.length > 1;
-    };
-
-    const getCardData = (card) => {
-      const data = card.scryfallData;
-      if (!data) return { name: card.name, error: 'No additional data available' };
-
-      if (data.card_faces && data.card_faces.length > 1) {
-        const faceIndex = cardFaceSides[card.id] || 0;
-        const face = data.card_faces[faceIndex];
-        return {
-          name: face.name,
-          manaCost: face.mana_cost || '',
-          cmc: face.cmc || data.cmc || 0,
-          typeLine: face.type_line,
-          oracleText: face.oracle_text || '',
-          power: face.power,
-          toughness: face.toughness,
-          flavorText: face.flavor_text || data.flavor_text,
-          isDoubleFaced: true,
-          faceName: face.name
-        };
-      }
-
-      return {
-        name: data.name,
-        manaCost: data.mana_cost || '',
-        cmc: data.cmc || 0,
-        typeLine: data.type_line,
-        oracleText: data.oracle_text || '',
-        power: data.power,
-        toughness: data.toughness,
-        flavorText: data.flavor_text,
-        isDoubleFaced: false
-      };
-    };
-
-    const getColorForCard = (card) => {
-      const colors = card.colors || [];
-      if (colors.length === 0) return '#f8fafc';
-      if (colors.length > 1) return 'linear-gradient(135deg, #fef3c7, #f59e0b)';
-      
-      const colorMap = {
-        'W': '#fffef7',
-        'U': '#f0f9ff', 
-        'B': '#f8fafc',
-        'R': '#fef2f2',
-        'G': '#f0fdf4'
-      };
-      
-      return colorMap[colors[0]] || '#f8fafc';
-    };
-
-    const getManaSymbolColor = (symbol) => {
-      const colorMap = {
-        'W': '#fbbf24',
-        'U': '#3b82f6',
-        'B': '#1f2937',
-        'R': '#ef4444',
-        'G': '#22c55e'
-      };
-      return colorMap[symbol] || '#6b7280';
-    };
-
-    const formatManaSymbols = (manaCost) => {
-      if (!manaCost) return null;
-      
-      // Simple regex to find mana symbols like {W}, {U}, {B}, {R}, {G}, {1}, {2}, etc.
-      const symbols = manaCost.match(/\{[^}]+\}/g) || [];
-      
-      return symbols.map((symbol, index) => {
-        const cleanSymbol = symbol.replace(/[{}]/g, '');
-        const isColorSymbol = ['W', 'U', 'B', 'R', 'G'].includes(cleanSymbol);
-        
-        return (
-          <span
-            key={index}
-            style={{
-              display: 'inline-block',
-              width: '24px',
-              height: '24px',
-              borderRadius: '50%',
-              backgroundColor: isColorSymbol ? getManaSymbolColor(cleanSymbol) : '#6b7280',
-              color: ['B'].includes(cleanSymbol) ? 'white' : 'black',
-              fontSize: '12px',
-              fontWeight: 'bold',
-              textAlign: 'center',
-              lineHeight: '24px',
-              margin: '0 2px',
-              border: '2px solid #374151',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-          >
-            {cleanSymbol}
-          </span>
-        );
-      });
-    };
-
-    return (
-      <div>
-        <div style={{...styles.flexRow, marginBottom: '24px'}}>
-          <input
-            type="text"
-            placeholder="Search your collection..."
-            style={{...styles.input, flex: 1}}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <input
-            type="text"
-            placeholder="Add card name..."
-            style={{...styles.input, width: '200px'}}
-            value={newCardName}
-            onChange={(e) => setNewCardName(e.target.value)}
-          />
           <button
-            style={{
-              ...styles.button,
-              padding: '12px',
-              ...(loading || !newCardName.trim() ? styles.buttonDisabled : {})
-            }}
-            onClick={() => {
-              addSingleCard(newCardName);
-              setNewCardName('');
-            }}
-            disabled={loading || !newCardName.trim()}
+            onClick={fetchRecommendations}
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-5 py-1.5 rounded font-medium"
           >
-            <Plus size={20} />
+            {loading ? 'Loading...' : fetched ? 'Refresh' : 'Get Recommendations'}
           </button>
+          {deckCount > 0 && (
+            <label className="flex items-center gap-2 text-sm cursor-pointer ml-2">
+              <input
+                type="checkbox"
+                checked={excludeInDecks}
+                onChange={onToggleExclude}
+                className="rounded"
+              />
+              <span className="text-gray-400">Exclude cards in decks</span>
+            </label>
+          )}
         </div>
 
-        <div style={styles.grid}>
-          {filteredCollection.map((card) => {
-            const viewMode = cardViewModes[card.id] || 'text';
-            const imageUrl = getCardImageUrl(card);
-            const cardData = getCardData(card);
-            const cardColor = getColorForCard(card);
-            
-            return (
-              <div key={card.id} style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '16px'
-              }}>
-                {/* Card Box with Magic Card Proportions (5:7 ratio) */}
-                <div style={{
-                  width: '280px',
-                  height: '392px', // 280 * 1.4 = 392 (5:7 ratio)
-                  backgroundColor: 'white',
-                  border: '3px solid #374151',
-                  borderRadius: '16px',
-                  boxShadow: '0 6px 20px rgba(0,0,0,0.15)',
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  position: 'relative'
-                }}>
-                  {viewMode === 'text' ? (
-                    <div style={{
-                      padding: '16px',
-                      height: '100%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      background: cardData.isDoubleFaced ? 'linear-gradient(135deg, #f1f5f9, #e2e8f0)' : cardColor,
-                      backgroundImage: typeof cardColor !== 'string' ? cardColor : 'none'
-                    }}>
-                      {/* Header with name and quantity */}
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '12px',
-                        paddingBottom: '8px',
-                        borderBottom: '2px solid #374151'
-                      }}>
-                        <h3 style={{
-                          fontSize: '18px',
-                          fontWeight: 'bold',
-                          margin: 0,
-                          color: '#111827',
-                          lineHeight: '1.2'
-                        }}>
-                          {cardData.name}
-                        </h3>
-                        <span style={{
-                          backgroundColor: card.foil ? '#fbbf24' : '#3b82f6',
-                          color: 'white',
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          fontSize: '14px',
-                          fontWeight: 'bold'
-                        }}>
-                          {card.quantity}x {card.foil ? '✨' : ''}
-                        </span>
-                      </div>
-
-                      {/* Edition and Printing Info */}
-                      {(card.edition || card.condition || card.language !== 'English' || card.alter || card.proxy) && (
-                        <div style={{
-                          marginBottom: '12px',
-                          padding: '8px',
-                          backgroundColor: 'rgba(59,130,246,0.1)',
-                          borderRadius: '6px',
-                          border: '1px solid #bfdbfe'
-                        }}>
-                          <div style={{fontSize: '12px', color: '#1e40af', lineHeight: '1.3'}}>
-                            {card.edition && <div><strong>Set:</strong> {card.edition}</div>}
-                            {card.collectorNumber && <div><strong>#:</strong> {card.collectorNumber}</div>}
-                            {card.condition && <div><strong>Condition:</strong> {card.condition}</div>}
-                            {card.language !== 'English' && <div><strong>Language:</strong> {card.language}</div>}
-                            {card.alter && <div><strong>⚡ Altered</strong></div>}
-                            {card.proxy && <div><strong>🔄 Proxy</strong></div>}
-                            {card.purchasePrice > 0 && <div><strong>Paid:</strong> ${card.purchasePrice.toFixed(2)}</div>}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Mana Cost */}
-                      {cardData.manaCost && (
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          marginBottom: '12px',
-                          gap: '8px'
-                        }}>
-                          <span style={{
-                            fontSize: '14px',
-                            fontWeight: '700',
-                            color: '#1f2937'
-                          }}>
-                            Cost:
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center' }}>
-                            {formatManaSymbols(cardData.manaCost)}
-                            <span style={{
-                              marginLeft: '8px',
-                              fontSize: '12px',
-                              color: '#374151',
-                              fontWeight: '600'
-                            }}>
-                              (CMC: {cardData.cmc})
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Type Line */}
-                      <div style={{
-                        marginBottom: '12px',
-                        padding: '8px',
-                        backgroundColor: 'rgba(255,255,255,0.9)',
-                        borderRadius: '6px',
-                        border: '1px solid #d1d5db'
-                      }}>
-                        <span style={{
-                          fontSize: '14px',
-                          fontWeight: '700',
-                          color: '#1f2937',
-                          fontStyle: 'italic'
-                        }}>
-                          {cardData.typeLine}
-                        </span>
-                      </div>
-
-                      {/* Oracle Text */}
-                      {cardData.oracleText && (
-                        <div style={{
-                          flex: 1,
-                          marginBottom: '12px',
-                          padding: '12px',
-                          backgroundColor: 'rgba(255,255,255,0.95)',
-                          borderRadius: '8px',
-                          border: '1px solid #d1d5db',
-                          overflowY: 'auto'
-                        }}>
-                          <div style={{
-                            fontSize: '13px',
-                            lineHeight: '1.4',
-                            color: '#1f2937',
-                            whiteSpace: 'pre-line'
-                          }}>
-                            {cardData.oracleText}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Bottom section with P/T and Flavor Text */}
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-end',
-                        marginTop: 'auto'
-                      }}>
-                        {/* Flavor Text */}
-                        {cardData.flavorText && (
-                          <div style={{
-                            flex: 1,
-                            padding: '8px',
-                            backgroundColor: 'rgba(107,114,128,0.1)',
-                            borderRadius: '6px',
-                            borderLeft: '3px solid #6b7280',
-                            marginRight: cardData.power && cardData.toughness ? '12px' : '0'
-                          }}>
-                            <em style={{
-                              fontSize: '11px',
-                              color: '#4b5563',
-                              fontStyle: 'italic',
-                              lineHeight: '1.3'
-                            }}>
-                              "{cardData.flavorText}"
-                            </em>
-                          </div>
-                        )}
-
-                        {/* Power/Toughness */}
-                        {cardData.power && cardData.toughness && (
-                          <div style={{
-                            backgroundColor: '#1f2937',
-                            color: 'white',
-                            padding: '6px 12px',
-                            borderRadius: '6px',
-                            fontSize: '16px',
-                            fontWeight: 'bold'
-                          }}>
-                            {cardData.power}/{cardData.toughness}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{
-                      height: '100%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      backgroundColor: '#000',
-                      padding: '8px'
-                    }}>
-                      {imageUrl ? (
-                        <img 
-                          src={imageUrl} 
-                          alt={card.name}
-                          style={{
-                            maxWidth: '100%',
-                            maxHeight: '100%',
-                            objectFit: 'contain',
-                            borderRadius: '8px'
-                          }}
-                        />
-                      ) : (
-                        <div style={{
-                          width: '100%',
-                          height: '100%',
-                          backgroundColor: '#1f2937',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: '#9ca3af',
-                          fontSize: '16px',
-                          borderRadius: '8px'
-                        }}>
-                          No image available
-                        </div>
-                      )}
-
-                      {/* Flip Side button for double-faced cards in image mode */}
-                      {isDoubleFaced(card) && (
-                        <button
-                          style={{
-                            position: 'absolute',
-                            top: '12px',
-                            left: '12px',
-                            backgroundColor: '#8b5cf6',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '8px',
-                            padding: '8px 12px',
-                            fontSize: '12px',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
-                          }}
-                          onClick={() => toggleCardFace(card.id)}
-                        >
-                          Flip Side
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Controls below the card */}
-                <div style={{
-                  display: 'flex',
-                  gap: '12px',
-                  alignItems: 'center'
-                }}>
-                  <button
-                    style={{
-                      backgroundColor: '#f59e0b',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '12px 20px',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
-                      transition: 'all 0.2s'
-                    }}
-                    onClick={() => toggleViewMode(card.id)}
-                    onMouseOver={(e) => {
-                      e.target.style.backgroundColor = '#d97706';
-                      e.target.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseOut={(e) => {
-                      e.target.style.backgroundColor = '#f59e0b';
-                      e.target.style.transform = 'translateY(0)';
-                    }}
-                  >
-                    {viewMode === 'text' ? '🎨 Show Art' : '📝 Show Text'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {filteredCollection.length === 0 && collection.length > 0 && (
-          <div style={{textAlign: 'center', color: '#6b7280', padding: '32px'}}>
-            No cards match your search.
+        {/* Sort */}
+        {fetched && results.length > 0 && (
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-700">
+            <label className="text-xs text-gray-400">Sort by:</label>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+            >
+              {SORT_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500 ml-auto">
+              {results.length} commanders found
+            </span>
           </div>
         )}
       </div>
+
+      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+
+      {loading && (
+        <div className="text-center py-12 text-gray-400">
+          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+          <p>Fetching average decklists from EDHREC and comparing with your collection...</p>
+          <p className="text-sm mt-1">This checks up to 200 commanders and fetches prices. May take a few minutes.</p>
+        </div>
+      )}
+
+      {!loading && sortedResults.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          {sortedResults.map(cmd => (
+            <CommanderCard
+              key={cmd.name}
+              commander={cmd}
+              onClick={onSelectCommander}
+              selectable={true}
+              selected={compareNames.has(cmd.name)}
+              onToggleCompare={onToggleCompare}
+            />
+          ))}
+        </div>
+      )}
+
+      {!loading && fetched && results.length === 0 && (
+        <p className="text-gray-500 text-center py-8">No commanders found with {minOwned}+ owned cards.</p>
+      )}
+    </div>
+  );
+}
+
+function CommanderSearch({ collectionCount, onSelectCommander, compareList, onToggleCompare }) {
+  const [commanders, setCommanders] = useState([]);
+  const [popular, setPopular] = useState([]);
+  const [search, setSearch] = useState('');
+  const [colorFilter, setColorFilter] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadedPopular, setLoadedPopular] = useState(false);
+
+  // Load popular on mount
+  useEffect(() => {
+    if (!loadedPopular) {
+      apiGet('/api/commanders/popular').then(data => {
+        setPopular(data.commanders || []);
+        setLoadedPopular(true);
+      }).catch(() => {});
+    }
+  }, [loadedPopular]);
+
+  const doSearch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const color = colorFilter.length > 0 ? colorFilter.join('') : null;
+      const data = await apiGet('/api/commanders', { search, color });
+      setCommanders(data.commanders || []);
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  }, [search, colorFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (search.length >= 2) doSearch();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, colorFilter, doSearch]);
+
+  const toggleColor = (c) => {
+    setColorFilter(prev =>
+      prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
     );
   };
 
-  const DeckAnalysis = () => {
-    const deckPotential = analyzeDeckPotential();
-    
-    return (
-      <div>
-        <div style={{textAlign: 'center', marginBottom: '32px'}}>
-          <TrendingUp size={48} style={{color: '#10b981', margin: '0 auto 16px'}} />
-          <h2 style={{fontSize: '24px', fontWeight: 'bold', margin: '0 0 8px 0'}}>Deck Building Analysis</h2>
-          <p style={{color: '#6b7280', margin: 0}}>Potential Commander decks from your collection</p>
-        </div>
+  const showPopular = search.length < 2 && colorFilter.length === 0;
+  const displayList = showPopular ? popular : commanders;
+  const compareNames = new Set(compareList.map(c => c.name));
 
-        {Object.keys(deckPotential).length > 0 ? (
-          <div style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
-            {Object.entries(deckPotential).map(([colors, commanders]) => (
-              <div key={colors} style={styles.card}>
-                <h3 style={{fontSize: '20px', fontWeight: '600', marginBottom: '16px'}}>
-                  {colors || 'Colorless'} Identity
-                </h3>
-                <div style={styles.grid}>
-                  {commanders.map((commander) => (
-                    <div key={commander.id} style={{backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px'}}>
-                      <div style={{fontWeight: '500'}}>{commander.name}</div>
-                      <div style={{fontSize: '14px', color: '#6b7280'}}>{commander.type}</div>
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Search Commanders</h2>
+      <p className="text-gray-400">
+        Search any commander and see how close you are to their average EDHREC deck.
+      </p>
+
+      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Type a commander name (min 2 characters)..."
+          className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+        />
+        <div className="flex gap-1 items-center">
+          <span className="text-xs text-gray-400 mr-2">Filter:</span>
+          {ALL_COLORS.map(c => (
+            <button
+              key={c}
+              onClick={() => toggleColor(c)}
+              className={`w-7 h-7 rounded font-bold text-xs transition-all ${
+                colorFilter.includes(c)
+                  ? 'ring-2 ring-white scale-110'
+                  : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{ backgroundColor: COLOR_MAP[c].bg, color: COLOR_MAP[c].text }}
+            >
+              {c}
+            </button>
+          ))}
+          {colorFilter.length > 0 && (
+            <button onClick={() => setColorFilter([])} className="text-xs text-gray-400 hover:text-white ml-2">
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading && <div className="text-center py-4 text-gray-400">Searching...</div>}
+
+      {showPopular && popular.length > 0 && (
+        <h3 className="text-sm font-medium text-gray-400">Popular Commanders</h3>
+      )}
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        {displayList.map(cmd => (
+          <CommanderCard
+            key={cmd.name}
+            commander={cmd}
+            onClick={onSelectCommander}
+            selectable={true}
+            selected={compareNames.has(cmd.name)}
+            onToggleCompare={onToggleCompare}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Card Type Grouping ---
+const CARD_TYPE_ORDER = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+
+function groupByType(cards) {
+  const groups = {};
+  for (const card of cards) {
+    const type = card.card_type || 'Other';
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(card);
+  }
+  return CARD_TYPE_ORDER.filter(t => groups[t]?.length > 0).map(t => ({ type: t, cards: groups[t] }));
+}
+
+function CardListByType({ ownedCards, missingCards, showOwned, showMissing, totalMissingPrice }) {
+  const ownedGroups = groupByType(ownedCards);
+  const missingGroups = groupByType(missingCards);
+
+  return (
+    <div className="grid md:grid-cols-2 gap-6">
+      {showOwned && (
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-green-400">
+            Owned Cards ({ownedCards.length})
+          </h3>
+          {ownedGroups.length === 0 && (
+            <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
+          )}
+          {ownedGroups.map(({ type, cards }) => (
+            <div key={type}>
+              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+                {cards.map(card => (
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                    <div className="flex items-center gap-1.5">
+                      <AvailDot card={card} />
+                      <CardName name={card.name} className="text-sm" />
                     </div>
-                  ))}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <DeckBadges inDecks={card.in_decks} />
+                      {card.qty_owned > 1 && (
+                        <span className="text-[10px] text-gray-500" title={`${card.qty_owned} owned, ${card.qty_in_decks || 0} in decks`}>
+                          {card.qty_in_decks ? `${card.qty_owned - card.qty_in_decks}/${card.qty_owned}` : `x${card.qty_owned}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showMissing && (
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-red-400">
+            Missing Cards ({missingCards.length})
+            {totalMissingPrice > 0 && (
+              <span className="text-sm font-normal text-yellow-400 ml-2">
+                ~${totalMissingPrice.toFixed(2)}
+              </span>
+            )}
+          </h3>
+          {missingGroups.length === 0 && (
+            <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
+          )}
+          {missingGroups.map(({ type, cards }) => (
+            <div key={type}>
+              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+                {cards.map(card => (
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                    <div className="flex items-center gap-1.5">
+                      <AvailDot card={card} />
+                      <CardName name={card.name} className="text-sm" />
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <DeckBadges inDecks={card.in_decks} />
+                      <span className="text-xs text-yellow-400/70">
+                        {card.price ? `$${card.price.toFixed(2)}` : ''}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Deck Builder ---
+
+// Cards that can have any number of copies
+const UNLIMITED_CARDS = new Set([
+  'nazgul', 'persistent petitioners', 'rat colony', 'relentless rats',
+  'shadowborn apostle', 'slime against humanity', 'dragon\'s approach',
+  'seven dwarves', 'plains', 'island', 'swamp', 'mountain', 'forest',
+  'snow-covered plains', 'snow-covered island', 'snow-covered swamp',
+  'snow-covered mountain', 'snow-covered forest', 'wastes',
+]);
+
+function canHaveMultiple(name) {
+  return UNLIMITED_CARDS.has(name.toLowerCase());
+}
+
+function DeckCardImage({ name, small }) {
+  const src = `https://api.scryfall.com/cards/named?format=image&version=${small ? 'small' : 'normal'}&exact=${encodeURIComponent(name)}`;
+  return <img src={src} alt={name} className="rounded-lg shadow-lg" loading="lazy" />;
+}
+
+function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
+  const [hovered, setHovered] = useState(false);
+  const [imgPos, setImgPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+  const STRIP_HEIGHT = 32;
+  const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(card.name)}`;
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    let x = rect.right + 8;
+    let y = rect.top;
+    if (x + 260 > viewportW) x = rect.left - 268;
+    if (y + 370 > viewportH) y = viewportH - 380;
+    if (y < 8) y = 8;
+    setImgPos({ x, y });
+    setHovered(true);
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="relative group"
+      style={{
+        height: isLast ? 'auto' : `${STRIP_HEIGHT}px`,
+        overflow: isLast ? 'visible' : 'hidden',
+        zIndex: hovered ? 100 : index,
+      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* The card strip: show quantity + name */}
+      <div
+        className={`flex items-center gap-1 px-1.5 cursor-pointer rounded-t border border-gray-700 ${
+          hovered ? 'bg-gray-600 border-blue-500' : 'bg-gray-800'
+        }`}
+        style={{ height: `${STRIP_HEIGHT}px` }}
+      >
+        <span className="text-xs text-gray-500 w-4 text-center flex-shrink-0">{card.qty}</span>
+        {card.owned ? (
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+        ) : (
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+        )}
+        <span className="text-xs truncate flex-1">{card.name}</span>
+        {canMultiple && (
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+            <button
+              onClick={(e) => { e.stopPropagation(); onSetQty(card.name, card.qty - 1); }}
+              className="w-4 h-4 rounded bg-gray-700 hover:bg-gray-500 text-[10px] flex items-center justify-center"
+            >-</button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSetQty(card.name, card.qty + 1); }}
+              className="w-4 h-4 rounded bg-gray-700 hover:bg-gray-500 text-[10px] flex items-center justify-center"
+            >+</button>
+          </div>
+        )}
+      </div>
+
+      {/* Hover: show full card image as a floating overlay */}
+      {hovered && (
+        <div
+          className="fixed z-[200] pointer-events-none"
+          style={{ left: imgPos.x, top: imgPos.y }}
+        >
+          <img
+            src={imgSrc}
+            alt={card.name}
+            className="w-[250px] rounded-lg shadow-2xl border border-gray-600"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeckBuilder({ data, commander, onBack }) {
+  const [deck, setDeck] = useState([]);
+  const [exportText, setExportText] = useState('');
+  const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
+
+  // Initialize with avg deck
+  useEffect(() => {
+    if (data) {
+      const initial = [...data.owned_cards, ...data.missing_cards].map(c => ({
+        ...c,
+        included: true,
+        qty: 1,
+      }));
+      const recCards = (data.recommendations || []).map(c => ({
+        name: c.name,
+        card_type: c.card_type || 'Other',
+        owned: c.owned,
+        synergy: c.synergy,
+        included: false,
+        isRecommendation: true,
+        qty: 1,
+      }));
+      setDeck([...initial, ...recCards]);
+    }
+  }, [data]);
+
+  const includedCards = deck.filter(c => c.included);
+  const excludedCards = deck.filter(c => !c.included);
+  const deckSize = includedCards.reduce((sum, c) => sum + c.qty, 0);
+
+  const toggle = (name) => {
+    setDeck(prev => prev.map(c =>
+      c.name === name ? { ...c, included: !c.included, qty: c.included ? c.qty : 1 } : c
+    ));
+  };
+
+  const setQty = (name, qty) => {
+    const val = Math.max(0, qty);
+    setDeck(prev => prev.map(c => {
+      if (c.name !== name) return c;
+      if (val === 0) return { ...c, included: false, qty: 1 };
+      return { ...c, qty: val, included: true };
+    }));
+  };
+
+  const handleExport = () => {
+    const text = includedCards.map(c => `${c.qty} ${c.name}`).join('\n');
+    setExportText(text);
+    navigator.clipboard.writeText(text).catch(() => {});
+  };
+
+  const includedGroups = groupByType(includedCards);
+
+  // --- View renderers ---
+  const renderListView = () => (
+    <div className="grid md:grid-cols-3 gap-6">
+      <div className="md:col-span-2 space-y-4">
+        <h3 className="text-lg font-semibold text-green-400">In Deck ({deckSize})</h3>
+        {includedGroups.map(({ type, cards }) => (
+          <div key={type}>
+            <h4 className="text-sm font-medium text-gray-400 mb-1">
+              {type} ({cards.reduce((s, c) => s + c.qty, 0)})
+            </h4>
+            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              {cards.map(card => (
+                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+                  <div className="flex items-center gap-2">
+                    {card.owned ? (
+                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
+                    )}
+                    <CardName name={card.name} className="text-sm" />
+                    {card.isRecommendation && <span className="text-xs text-purple-400">rec</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {canHaveMultiple(card.name) ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setQty(card.name, card.qty - 1)}
+                          className="w-5 h-5 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center"
+                        >-</button>
+                        <span className="text-xs w-5 text-center">{card.qty}</span>
+                        <button
+                          onClick={() => setQty(card.name, card.qty + 1)}
+                          className="w-5 h-5 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center"
+                        >+</button>
+                      </div>
+                    ) : (
+                      card.qty > 1 && <span className="text-xs text-gray-500">x{card.qty}</span>
+                    )}
+                    <button
+                      onClick={() => toggle(card.name)}
+                      className="text-xs text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-400">Removed / Available ({excludedCards.length})</h3>
+        <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
+          {excludedCards.map(card => (
+            <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+              <div className="flex items-center gap-2">
+                {card.owned ? (
+                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+                )}
+                <CardName name={card.name} className="text-sm text-gray-400" />
+              </div>
+              <button
+                onClick={() => toggle(card.name)}
+                className="text-xs text-green-400 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                Add
+              </button>
+            </div>
+          ))}
+          {excludedCards.length === 0 && (
+            <p className="px-3 py-4 text-gray-500 text-sm">No removed cards</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderGalleryView = () => (
+    <div className="space-y-6">
+      {includedGroups.map(({ type, cards }) => (
+        <div key={type}>
+          <h4 className="text-sm font-medium text-gray-400 mb-2">
+            {type} ({cards.reduce((s, c) => s + c.qty, 0)})
+          </h4>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8 gap-2">
+            {cards.map(card => (
+              <div key={card.name} className="relative group">
+                <DeckCardImage name={card.name} small />
+                {card.qty > 1 && (
+                  <span className="absolute top-1 right-1 bg-black/80 text-white text-xs font-bold px-1.5 py-0.5 rounded">
+                    x{card.qty}
+                  </span>
+                )}
+                {card.owned && (
+                  <span className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 border border-black" />
+                )}
+                <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 rounded-lg">
+                  {canHaveMultiple(card.name) && (
+                    <>
+                      <button onClick={() => setQty(card.name, card.qty - 1)}
+                        className="w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">-</button>
+                      <span className="text-xs font-bold w-4 text-center">{card.qty}</span>
+                      <button onClick={() => setQty(card.name, card.qty + 1)}
+                        className="w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">+</button>
+                    </>
+                  )}
+                  <button onClick={() => toggle(card.name)}
+                    className="w-6 h-6 rounded bg-red-700 hover:bg-red-600 text-xs flex items-center justify-center ml-1">✕</button>
                 </div>
               </div>
             ))}
           </div>
-        ) : (
-          <div style={{textAlign: 'center', color: '#6b7280', padding: '32px'}}>
-            <p>No legendary creatures found in your collection.</p>
-            <p style={{fontSize: '14px', marginTop: '8px'}}>Add some commanders to see deck building suggestions!</p>
-          </div>
-        )}
+        </div>
+      ))}
+    </div>
+  );
 
-        <div style={{
-          ...styles.card, 
-          backgroundColor: '#eff6ff', 
-          borderColor: '#bfdbfe',
-          marginTop: '24px'
-        }}>
-          <h4 style={{fontWeight: '600', color: '#1e40af', marginBottom: '8px'}}>Coming Soon:</h4>
-          <ul style={{color: '#1e40af', fontSize: '14px', margin: 0, paddingLeft: '20px'}}>
-            <li>EDHRec integration for synergy analysis</li>
-            <li>Deck completion percentage</li>
-            <li>Card upgrade recommendations</li>
-            <li>Budget optimization suggestions</li>
-          </ul>
+  const renderStacksView = () => (
+    <div className="flex gap-2 overflow-x-auto pb-4">
+      {includedGroups.map(({ type, cards }) => (
+        <div key={type} className="flex-shrink-0" style={{ width: '180px' }}>
+          {/* Column header */}
+          <div className="text-xs font-semibold text-gray-400 border-b border-gray-700 pb-1 mb-1 flex justify-between">
+            <span>{type}</span>
+            <span>Qty: {cards.reduce((s, c) => s + c.qty, 0)}</span>
+          </div>
+          {/* Stacked cards */}
+          <div className="relative">
+            {cards.map((card, idx) => (
+              <StackCard
+                key={card.name}
+                card={card}
+                index={idx}
+                isLast={idx === cards.length - 1}
+                canMultiple={canHaveMultiple(card.name)}
+                onToggle={toggle}
+                onSetQty={setQty}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
+          <p className={`text-sm mt-1 ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
+            {deckSize}/100 cards (including commander)
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* View mode toggle */}
+          <div className="flex bg-gray-800 rounded overflow-hidden">
+            {[
+              { id: 'list', label: 'List' },
+              { id: 'gallery', label: 'Gallery' },
+              { id: 'stacks', label: 'Stacks' },
+            ].map(v => (
+              <button
+                key={v.id}
+                onClick={() => setViewMode(v.id)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-medium">
+            Export Deck
+          </button>
+        </div>
+      </div>
+
+      {exportText && (
+        <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-green-400">Copied to clipboard!</p>
+            <button onClick={() => setExportText('')} className="text-xs text-gray-400 hover:text-white">Close</button>
+          </div>
+          <textarea
+            readOnly
+            value={exportText}
+            rows={6}
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
+            onFocus={e => e.target.select()}
+          />
+        </div>
+      )}
+
+      {viewMode === 'list' && renderListView()}
+      {viewMode === 'gallery' && renderGalleryView()}
+      {viewMode === 'stacks' && renderStacksView()}
+    </div>
+  );
+}
+
+// --- Multi-Commander Comparison ---
+function CompareView({ commanders, onBack, onSelectCommander }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    apiPost('/api/compare', { commanders: commanders.map(c => c.name) })
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [commanders]);
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+        <p className="text-gray-400">Comparing commanders...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
+        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+      <h2 className="text-2xl font-bold">Commander Comparison</h2>
+
+      {/* Summary cards */}
+      <div className={`grid gap-4 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+        {data.commanders.map((cmd, i) => {
+          const matchColor = cmd.match_percentage >= 60 ? 'text-green-400' :
+            cmd.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
+          const orig = commanders[i];
+          return (
+            <div key={cmd.name} className="bg-gray-800 rounded-lg p-4 space-y-3">
+              {orig?.image_uri && (
+                <img src={orig.image_uri} alt={cmd.name} className="w-32 rounded-lg mx-auto" />
+              )}
+              <h3
+                className="font-bold text-center cursor-pointer hover:text-blue-400"
+                onClick={() => onSelectCommander(orig || { name: cmd.name })}
+              >
+                {cmd.name}
+              </h3>
+              <div className="text-center">
+                <span className={`text-3xl font-bold ${matchColor}`}>{cmd.match_percentage}%</span>
+                <p className="text-xs text-gray-400 mt-1">{cmd.owned_count}/{cmd.total_cards} owned</p>
+              </div>
+              <MatchBar percentage={cmd.match_percentage} size="lg" />
+              <div className="text-center text-sm">
+                {cmd.missing_price > 0 && (
+                  <span className="text-yellow-400">~${cmd.missing_price.toFixed(2)} to complete</span>
+                )}
+              </div>
+              <div className="text-center text-xs text-gray-500 space-y-1">
+                <p>{cmd.unique_cards.length} unique cards</p>
+                {cmd.num_decks > 0 && <p>{cmd.num_decks.toLocaleString()} decks</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Shared cards */}
+      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+        <h3 className="font-semibold text-blue-400">
+          Shared Across All ({data.shared_count} cards)
+        </h3>
+        <p className="text-xs text-gray-400">Cards that appear in every commander's average deck.</p>
+        <div className="flex flex-wrap gap-2">
+          {(data.commanders[0]?.shared_cards || []).map(name => (
+            <span key={name} className="text-xs bg-gray-700 px-2 py-1 rounded">
+              <CardName name={name} />
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Unique cards per commander */}
+      <div className={`grid gap-4 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+        {data.commanders.map(cmd => (
+          <div key={cmd.name} className="bg-gray-800 rounded-lg p-4 space-y-2">
+            <h4 className="font-semibold text-sm text-purple-400">
+              Only in {cmd.name} ({cmd.unique_cards.length})
+            </h4>
+            <div className="divide-y divide-gray-700 max-h-72 overflow-y-auto">
+              {cmd.unique_cards.map(name => (
+                <div key={name} className="py-1 text-sm">
+                  <CardName name={name} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Commander Detail with progressive loading ---
+function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder, excludeInDecks }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [budget, setBudget] = useState('');
+  const [theme, setTheme] = useState('');
+  const [showOwned, setShowOwned] = useState(true);
+  const [showMissing, setShowMissing] = useState(true);
+  const [exportText, setExportText] = useState('');
+  const [recSort, setRecSort] = useState('synergy_desc');
+  const [recFilter, setRecFilter] = useState('all');
+  const [recTypeFilter, setRecTypeFilter] = useState('all');
+  const [selectedPartner, setSelectedPartner] = useState(null);
+
+  const fetchDetail = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = {
+        budget: budget || null,
+        theme: theme || null,
+        exclude_in_decks: excludeInDecks || null,
+      };
+      if (selectedPartner) {
+        params.partner = selectedPartner.name;
+      }
+      const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
+      setData(d);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
+
+  useEffect(() => { fetchDetail(); }, [fetchDetail]);
+
+  const handleExport = (type) => {
+    if (!data) return;
+    const allCards = [...data.owned_cards, ...data.missing_cards];
+    let text;
+    if (type === 'full') {
+      text = allCards.map(c => `1 ${c.name}`).join('\n');
+    } else {
+      text = data.missing_cards.map(c => `1 ${c.name}`).join('\n');
+    }
+    setExportText(text);
+    navigator.clipboard.writeText(text).catch(() => {});
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+        {/* Show header immediately with commander card info */}
+        <div className="flex gap-6 items-start">
+          {commander.image_uri && (
+            <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
+          )}
+          <div className="space-y-3 flex-1">
+            <h2 className="text-3xl font-bold">{commander.name}</h2>
+            <ColorBadge colors={commander.color_identity} />
+            <div className="space-y-3 mt-4">
+              <div className="animate-pulse space-y-3">
+                <div className="h-10 bg-gray-700 rounded w-32" />
+                <div className="h-2.5 bg-gray-700 rounded w-full" />
+                <div className="h-4 bg-gray-700 rounded w-48" />
+              </div>
+              <p className="text-gray-400 text-sm mt-4">Fetching average deck from EDHREC, classifying cards, and loading prices...</p>
+            </div>
+          </div>
         </div>
       </div>
     );
-  };
+  }
+
+  if (error) {
+    return (
+      <div>
+        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
+        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const matchColor = data.match_percentage >= 60 ? 'text-green-400' :
+    data.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
+
+  // Compute available card types in recommendations for the type filter
+  const allRecs = data.recommendations || [];
+  const recTypes = [...new Set(allRecs.map(r => r.card_type || 'Other'))].sort();
+
+  // Apply filters
+  let filteredRecs = [...allRecs];
+  if (recFilter === 'owned') filteredRecs = filteredRecs.filter(c => c.owned);
+  else if (recFilter === 'not_owned') filteredRecs = filteredRecs.filter(c => !c.owned);
+  if (recTypeFilter !== 'all') filteredRecs = filteredRecs.filter(c => (c.card_type || 'Other') === recTypeFilter);
+  if (recSort === 'synergy_desc') filteredRecs.sort((a, b) => (b.synergy || 0) - (a.synergy || 0));
+  else if (recSort === 'synergy_asc') filteredRecs.sort((a, b) => (a.synergy || 0) - (b.synergy || 0));
+  else if (recSort === 'inclusion_desc') filteredRecs.sort((a, b) => (b.inclusion || 0) - (a.inclusion || 0));
 
   return (
-    <div style={styles.container}>
-      <style>
-        {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}
-      </style>
-      
-      <header style={styles.header}>
-        <h1 style={styles.headerTitle}>MTG Collection Manager</h1>
-        <p style={styles.headerSubtitle}>Manage your collection and discover optimal deck builds</p>
-      </header>
+    <div className="space-y-6">
+      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
 
-      <nav style={styles.nav}>
-        <ul style={styles.navList}>
-          {[
-            { id: 'upload', label: 'Upload', icon: Upload },
-            { id: 'collection', label: `Collection (${collection.length})`, icon: Database },
-            { id: 'analysis', label: 'Deck Analysis', icon: TrendingUp }
-          ].map(({ id, label, icon: Icon }) => (
-            <li
-              key={id}
-              style={{
-                ...styles.navItem,
-                ...(activeTab === id ? styles.navItemActive : styles.navItemInactive)
-              }}
-              onClick={() => setActiveTab(id)}
+      {/* Header */}
+      <div className="flex gap-6 items-start">
+        {commander.image_uri && (
+          <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
+        )}
+        <div className="space-y-3 flex-1">
+          <h2 className="text-3xl font-bold">{commander.name}</h2>
+          <ColorBadge colors={commander.color_identity} />
+          <div className="flex items-baseline gap-4">
+            <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
+            <span className="text-gray-400">
+              {data.owned_count}/{data.total_cards} cards owned
+            </span>
+          </div>
+          <MatchBar percentage={data.match_percentage} size="lg" />
+          <div className="flex gap-4 text-sm">
+            {data.num_decks > 0 && (
+              <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
+            )}
+            {data.total_missing_price > 0 && (
+              <span className="text-yellow-400">
+                ~${data.total_missing_price.toFixed(2)} to complete
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Partner Commander */}
+      <PartnerPicker
+        commanderName={commander.name}
+        onSelectPartner={setSelectedPartner}
+        selectedPartner={selectedPartner}
+      />
+
+      {/* Filters + Export + Deck Builder */}
+      <div className="bg-gray-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Budget</label>
+          <div className="flex gap-1">
+            {[
+              { value: '', label: 'Any' },
+              { value: 'budget', label: '$' },
+              { value: 'expensive', label: '$$$' },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setBudget(opt.value)}
+                className={`px-3 py-1 rounded text-sm ${
+                  budget === opt.value
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {data.themes && data.themes.length > 0 && (
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Theme</label>
+            <select
+              value={theme}
+              onChange={e => setTheme(e.target.value)}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
             >
-              <Icon size={16} />
-              <span>{label}</span>
-            </li>
-          ))}
-        </ul>
-      </nav>
-
-      <main style={styles.main}>
-        {loading && (
-          <div style={styles.loadingSpinner}>
-            <div style={styles.spinner}></div>
-            <p style={{marginTop: '8px', color: '#6b7280'}}>Processing cards... This may take a few minutes for large collections.</p>
+              <option value="">All themes</option>
+              {data.themes.map(t => (
+                <option key={t.slug || t.name} value={t.slug || t.name}>
+                  {t.name} {t.count ? `(${t.count.toLocaleString()})` : ''}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 
-        {activeTab === 'upload' && <CollectionUpload />}
-        {activeTab === 'collection' && <CollectionView />}
-        {activeTab === 'analysis' && <DeckAnalysis />}
+        <div className="ml-auto flex gap-2">
+          <button
+            onClick={() => onOpenDeckBuilder(data)}
+            className="bg-purple-700 hover:bg-purple-600 px-3 py-1.5 rounded text-sm font-medium"
+          >
+            Deck Builder
+          </button>
+          <button
+            onClick={() => handleExport('full')}
+            className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm"
+          >
+            Export Full Deck
+          </button>
+          <button
+            onClick={() => handleExport('missing')}
+            className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1.5 rounded text-sm"
+          >
+            Export Missing Cards
+          </button>
+        </div>
+      </div>
+
+      {exportText && (
+        <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-green-400">Copied to clipboard! You can also copy from below:</p>
+            <button onClick={() => setExportText('')} className="text-xs text-gray-400 hover:text-white">Close</button>
+          </div>
+          <textarea
+            readOnly
+            value={exportText}
+            rows={6}
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
+            onFocus={e => e.target.select()}
+          />
+        </div>
+      )}
+
+      {data.error && (
+        <div className="bg-yellow-900/50 border border-yellow-700 rounded p-3 text-yellow-300 text-sm">
+          Note: {data.error}
+        </div>
+      )}
+
+      {/* Card List Toggles + Legend */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={showOwned} onChange={e => setShowOwned(e.target.checked)} className="rounded" />
+            <span className="text-green-400">Owned ({data.owned_count})</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={showMissing} onChange={e => setShowMissing(e.target.checked)} className="rounded" />
+            <span className="text-red-400">Missing ({data.missing_count})</span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
+        </div>
+      </div>
+
+      {/* Card Lists Grouped by Type */}
+      <CardListByType
+        ownedCards={data.owned_cards}
+        missingCards={data.missing_cards}
+        showOwned={showOwned}
+        showMissing={showMissing}
+        totalMissingPrice={data.total_missing_price}
+      />
+
+      {/* Possible Recommendations */}
+      {allRecs.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-purple-400">
+            Possible Recommendations ({filteredRecs.length})
+          </h3>
+          <p className="text-xs text-gray-400">
+            Cards with high synergy for this commander that aren't in the average deck.
+          </p>
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Sort:</label>
+              <select
+                value={recSort}
+                onChange={e => setRecSort(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+              >
+                <option value="synergy_desc">Highest Synergy</option>
+                <option value="synergy_asc">Lowest Synergy</option>
+                <option value="inclusion_desc">Most Included</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Show:</label>
+              <select
+                value={recFilter}
+                onChange={e => setRecFilter(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+              >
+                <option value="all">All</option>
+                <option value="owned">In Collection</option>
+                <option value="not_owned">Not In Collection</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Type:</label>
+              <select
+                value={recTypeFilter}
+                onChange={e => setRecTypeFilter(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+              >
+                <option value="all">All Types</option>
+                {recTypes.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+            {filteredRecs.map(card => (
+              <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  {card.owned ? (
+                    <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="In collection" />
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="Not in collection" />
+                  )}
+                  <CardName name={card.name} className="text-sm" />
+                  {card.card_type && (
+                    <span className="text-xs text-gray-600">{card.card_type}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  {card.synergy != null && (
+                    <span className={`font-medium ${card.synergy > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                      {card.synergy > 0 ? '+' : ''}{card.synergy}% synergy
+                    </span>
+                  )}
+                  {card.inclusion != null && (
+                    <span className="text-gray-500">{card.inclusion}% inclusion</span>
+                  )}
+                  {card.source && (
+                    <span className="text-purple-400/70">{card.source}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {filteredRecs.length === 0 && (
+              <p className="px-3 py-4 text-gray-500 text-sm">No recommendations match the current filters.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Card Availability Dot ---
+function AvailDot({ card }) {
+  // card has: qty_owned, qty_in_decks, in_decks
+  const owned = card.qty_owned || 0;
+  const inDecks = card.qty_in_decks || 0;
+  const deckNames = (card.in_decks || []).map(d => d.name).join(', ');
+
+  if (owned === 0) {
+    return <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Not owned" />;
+  }
+  if (inDecks === 0) {
+    return <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title={`Owned: ${owned}`} />;
+  }
+  if (owned > inDecks) {
+    return <span className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" title={`Owned: ${owned}, In decks: ${inDecks} (${deckNames})`} />;
+  }
+  return <span className="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0" title={`All ${owned} in decks (${deckNames})`} />;
+}
+
+function DeckBadges({ inDecks }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+
+  if (!inDecks || inDecks.length === 0) return null;
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    let x = rect.left;
+    let y = rect.bottom + 4;
+    if (x + 200 > viewportW) x = viewportW - 210;
+    if (y + 100 > window.innerHeight) y = rect.top - 104;
+    setTooltipPos({ x, y });
+    setShowTooltip(true);
+  };
+
+  // Show compact: just a count badge that expands on hover
+  return (
+    <span
+      ref={ref}
+      className="relative inline-flex items-center ml-1 cursor-default"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <span className="text-[10px] bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded">
+        <span className="text-purple-400">In {inDecks.length} Deck{inDecks.length > 1 ? 's' : ''}</span>
+      </span>
+      {showTooltip && (
+        <div
+          className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-2 space-y-1 min-w-[140px]"
+          style={{ left: tooltipPos.x, top: tooltipPos.y }}
+        >
+          <p className="text-[10px] text-gray-500 font-medium mb-1">In {inDecks.length} deck{inDecks.length > 1 ? 's' : ''}:</p>
+          {inDecks.map(d => (
+            <p key={d.id} className="text-xs text-gray-300 truncate">{d.name}</p>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// --- My Decks ---
+function MyDecks({ onDecksChanged, decksReady }) {
+  const [decks, setDecks] = useState({});
+  const [newName, setNewName] = useState('');
+  const [newCommander, setNewCommander] = useState('');
+  const [newCards, setNewCards] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editCards, setEditCards] = useState('');
+  const [error, setError] = useState('');
+  const [validating, setValidating] = useState(false);
+  const [invalidCards, setInvalidCards] = useState([]);
+
+  // Load decks only after restore is complete
+  useEffect(() => {
+    if (!decksReady) return;
+    apiGet('/api/decks').then(data => {
+      const deckMap = {};
+      (data.decks || []).forEach(d => { deckMap[d.id] = d; });
+      setDecks(deckMap);
+    }).catch(() => {});
+  }, [decksReady]);
+
+  // Parse card names from text
+  const parseCardNames = (text) => {
+    return text.trim().split('\n')
+      .map(l => l.trim())
+      .filter(l => l)
+      .map(l => {
+        const m = l.match(/^(\d+)x?\s+(.+)/);
+        return m ? m[2].trim() : l.trim();
+      });
+  };
+
+  const validateAndAdd = async () => {
+    if (!newName.trim()) return;
+    setError('');
+    setInvalidCards([]);
+
+    // Validate cards if any are provided
+    if (newCards.trim()) {
+      setValidating(true);
+      try {
+        const names = parseCardNames(newCards);
+        if (names.length > 0) {
+          const result = await apiPost('/api/cards/validate', { cards: names });
+          if (result.invalid && result.invalid.length > 0) {
+            setInvalidCards(result.invalid);
+            setError(`${result.invalid.length} unrecognized card(s) found. Fix or remove them before saving.`);
+            setValidating(false);
+            return;
+          }
+        }
+      } catch (e) {
+        // If validation fails (network issue), allow saving anyway
+        console.warn('Card validation failed, proceeding:', e);
+      }
+      setValidating(false);
+    }
+
+    // Create deck
+    try {
+      const deck = await apiPost('/api/decks', {
+        name: newName, commander: newCommander, cards_text: newCards,
+      });
+      const updated = { ...decks, [deck.id]: deck };
+      setDecks(updated);
+      saveDecks(updated);
+      onDecksChanged();
+      setNewName(''); setNewCommander(''); setNewCards('');
+      setInvalidCards([]);
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await fetch(`${API}/api/decks/${id}`, { method: 'DELETE' });
+      const updated = { ...decks };
+      delete updated[id];
+      setDecks(updated);
+      saveDecks(updated);
+      onDecksChanged();
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleEdit = async (id) => {
+    if (editingId === id) {
+      // Validate before saving
+      setError('');
+      setInvalidCards([]);
+      if (editCards.trim()) {
+        setValidating(true);
+        try {
+          const names = parseCardNames(editCards);
+          if (names.length > 0) {
+            const result = await apiPost('/api/cards/validate', { cards: names });
+            if (result.invalid && result.invalid.length > 0) {
+              setInvalidCards(result.invalid);
+              setError(`${result.invalid.length} unrecognized card(s) found. Fix or remove them before saving.`);
+              setValidating(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('Card validation failed, proceeding:', e);
+        }
+        setValidating(false);
+      }
+
+      // Save
+      try {
+        const res = await fetch(`${API}/api/decks/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cards_text: editCards }),
+        });
+        const deck = await res.json();
+        const updated = { ...decks, [id]: deck };
+        setDecks(updated);
+        saveDecks(updated);
+        onDecksChanged();
+        setEditingId(null);
+        setInvalidCards([]);
+      } catch (e) { setError(e.message); }
+    } else {
+      // Start editing - load full deck
+      try {
+        const deck = await apiGet(`/api/decks/${id}`);
+        const cardsText = Object.entries(deck.cards || {}).map(([n, q]) => `${q} ${n}`).join('\n');
+        setEditCards(cardsText);
+        setEditingId(id);
+        setInvalidCards([]);
+      } catch (e) { setError(e.message); }
+    }
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      <h2 className="text-2xl font-bold">My Decks</h2>
+      <p className="text-gray-400">
+        Add your existing deck lists here. Cards committed to decks can be excluded from
+        recommendations so you only see what's actually available.
+      </p>
+
+      {/* Add new deck */}
+      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
+        <h3 className="font-semibold text-lg">Add Deck</h3>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="block text-xs text-gray-400 mb-1">Deck Name *</label>
+            <input
+              value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="e.g. Ur-Dragon Tribal"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs text-gray-400 mb-1">Commander</label>
+            <CommanderAutocomplete
+              value={newCommander}
+              onChange={setNewCommander}
+              placeholder="e.g. The Ur-Dragon"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Card List (paste from Archidekt/Moxfield export)</label>
+          <textarea
+            value={newCards} onChange={e => { setNewCards(e.target.value); setInvalidCards([]); }}
+            placeholder={"1 Sol Ring\n1 Command Tower\n1 Arcane Signet\n..."}
+            rows={8}
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        {invalidCards.length > 0 && (
+          <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
+            <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
+            <ul className="text-xs text-red-300 space-y-0.5">
+              {invalidCards.map(name => <li key={name}>- {name}</li>)}
+            </ul>
+          </div>
+        )}
+        <button
+          onClick={validateAndAdd} disabled={!newName.trim() || validating}
+          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+        >
+          {validating ? 'Validating cards...' : 'Add Deck'}
+        </button>
+      </div>
+
+      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+
+      {/* Deck list */}
+      {Object.values(decks).length === 0 && (
+        <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
+      )}
+
+      {Object.values(decks).map(deck => (
+        <div key={deck.id} className="bg-gray-800 rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="font-semibold">{deck.name}</h4>
+              {deck.commander && <p className="text-sm text-gray-400">{deck.commander}</p>}
+              <p className="text-xs text-gray-500">{deck.card_count || Object.keys(deck.cards || {}).length} cards</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleEdit(deck.id)}
+                disabled={validating}
+                className={`px-3 py-1 rounded text-sm ${
+                  editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
+                }`}
+              >
+                {editingId === deck.id ? (validating ? 'Validating...' : 'Save') : 'Edit'}
+              </button>
+              <button
+                onClick={() => handleDelete(deck.id)}
+                className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-sm"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+          {editingId === deck.id && (
+            <>
+              <textarea
+                value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
+                rows={10}
+                className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+              />
+              {invalidCards.length > 0 && (
+                <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
+                  <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
+                  <ul className="text-xs text-red-300 space-y-0.5">
+                    {invalidCards.map(name => <li key={name}>- {name}</li>)}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+
+      {/* Legend */}
+      {Object.values(decks).length > 0 && (
+        <div className="bg-gray-800/50 rounded-lg p-4 space-y-2">
+          <h4 className="text-sm font-medium text-gray-400">Availability Legend</h4>
+          <div className="flex flex-wrap gap-4 text-xs text-gray-400">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Main App ---
+
+function App() {
+  const [tab, setTab] = useState('upload');
+  const [collectionCount, setCollectionCount] = useState(0);
+  const [selectedCommander, setSelectedCommander] = useState(null);
+  const [compareList, setCompareList] = useState([]);
+  const [deckBuilderData, setDeckBuilderData] = useState(null);
+  const [excludeInDecks, setExcludeInDecks] = useState(false);
+  const [deckCount, setDeckCount] = useState(0);
+  const [decksReady, setDecksReady] = useState(false);
+
+  // Restore collection and decks from localStorage on startup
+  useEffect(() => {
+    const saved = loadCollection();
+    if (saved) {
+      apiPost('/api/collection/restore', { cards: saved }).then(data => {
+        setCollectionCount(data.count || 0);
+        if (data.count > 0) setTab('recommend');
+      }).catch(() => {
+        apiGet('/api/collection').then(data => {
+          setCollectionCount(data.count || 0);
+        }).catch(() => {});
+      });
+    } else {
+      apiGet('/api/collection').then(data => {
+        setCollectionCount(data.count || 0);
+      }).catch(() => {});
+    }
+
+    // Restore decks, then signal ready
+    const savedDecks = loadDecks();
+    if (savedDecks && Object.keys(savedDecks).length > 0) {
+      apiPost('/api/decks/restore', { decks: savedDecks }).then(data => {
+        setDeckCount(data.count || 0);
+      }).catch(() => {}).finally(() => setDecksReady(true));
+    } else {
+      setDecksReady(true);
+    }
+  }, []);
+
+  const handleUploaded = (data) => {
+    setCollectionCount(data.count);
+    if (data.cards) saveCollection(data.cards);
+  };
+
+  const handleSelectCommander = (cmd) => {
+    setSelectedCommander(cmd);
+    setTab('detail');
+  };
+
+  const handleToggleCompare = (cmd) => {
+    setCompareList(prev => {
+      const exists = prev.find(c => c.name === cmd.name);
+      if (exists) return prev.filter(c => c.name !== cmd.name);
+      if (prev.length >= 3) return prev;
+      return [...prev, cmd];
+    });
+  };
+
+  const handleOpenDeckBuilder = (data) => {
+    setDeckBuilderData(data);
+    setTab('deckbuilder');
+  };
+
+  const handleDecksChanged = () => {
+    apiGet('/api/decks').then(data => {
+      setDeckCount((data.decks || []).length);
+    }).catch(() => {});
+  };
+
+  const tabs = [
+    { id: 'upload', label: 'Upload Collection' },
+    { id: 'recommend', label: 'Recommendations' },
+    { id: 'search', label: 'Search' },
+    { id: 'mydecks', label: `My Decks${deckCount ? ` (${deckCount})` : ''}` },
+  ];
+
+  return (
+    <div className="min-h-screen">
+      {/* Header */}
+      <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
+          {collectionCount > 0 && (
+            <span className="text-sm text-gray-400">
+              Collection: {collectionCount} unique cards
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* Nav */}
+      <nav className="bg-gray-900/50 border-b border-gray-800 px-6">
+        <div className="max-w-7xl mx-auto flex gap-1 items-center">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                tab === t.id || (tab === 'detail' && t.id === 'recommend') || (tab === 'deckbuilder' && t.id === 'recommend')
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+
+          {/* Compare button */}
+          {compareList.length >= 2 && (
+            <button
+              onClick={() => setTab('compare')}
+              className={`ml-4 px-4 py-1.5 rounded text-sm font-medium transition-all ${
+                tab === 'compare'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-purple-700/50 text-purple-300 hover:bg-purple-700'
+              }`}
+            >
+              Compare ({compareList.length})
+            </button>
+          )}
+          {compareList.length > 0 && compareList.length < 2 && (
+            <span className="ml-4 text-xs text-gray-500">Select {2 - compareList.length} more to compare</span>
+          )}
+          {compareList.length > 0 && (
+            <button
+              onClick={() => setCompareList([])}
+              className="ml-2 text-xs text-gray-500 hover:text-red-400"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </nav>
+
+      {/* Content - tabs stay mounted to preserve state */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        <div style={{ display: tab === 'upload' ? 'block' : 'none' }}>
+          <CollectionUpload onUploaded={handleUploaded} collectionCount={collectionCount} />
+        </div>
+
+        <div style={{ display: tab === 'recommend' ? 'block' : 'none' }}>
+          <Recommendations
+            collectionCount={collectionCount}
+            onSelectCommander={handleSelectCommander}
+            compareList={compareList}
+            onToggleCompare={handleToggleCompare}
+            excludeInDecks={excludeInDecks}
+            onToggleExclude={() => setExcludeInDecks(prev => !prev)}
+            deckCount={deckCount}
+          />
+        </div>
+
+        <div style={{ display: tab === 'search' ? 'block' : 'none' }}>
+          <CommanderSearch
+            collectionCount={collectionCount}
+            onSelectCommander={handleSelectCommander}
+            compareList={compareList}
+            onToggleCompare={handleToggleCompare}
+          />
+        </div>
+
+        <div style={{ display: tab === 'mydecks' ? 'block' : 'none' }}>
+          <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
+        </div>
+
+        {tab === 'detail' && selectedCommander && (
+          <CommanderDetail
+            commander={selectedCommander}
+            collectionCount={collectionCount}
+            onBack={() => setTab('recommend')}
+            onOpenDeckBuilder={handleOpenDeckBuilder}
+            excludeInDecks={excludeInDecks}
+          />
+        )}
+
+        {tab === 'deckbuilder' && selectedCommander && deckBuilderData && (
+          <DeckBuilder
+            data={deckBuilderData}
+            commander={selectedCommander}
+            onBack={() => setTab('detail')}
+          />
+        )}
+
+        {tab === 'compare' && compareList.length >= 2 && (
+          <CompareView
+            commanders={compareList}
+            onBack={() => setTab('recommend')}
+            onSelectCommander={handleSelectCommander}
+          />
+        )}
       </main>
     </div>
   );
-};
+}
 
-export default MTGCollectionManager;
+export default App;
