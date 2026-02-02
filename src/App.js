@@ -875,9 +875,14 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                       <CardName name={card.name} className="text-sm" />
                       <DeckBadges inDecks={card.in_decks} />
                     </div>
-                    <span className="text-xs text-gray-500">
-                      {card.qty_owned > 1 && `x${card.qty_owned} `}{card.category}
-                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {card.qty_owned > 1 && (
+                        <span className="text-[10px] text-gray-500" title={`${card.qty_owned} owned, ${card.qty_in_decks || 0} in decks`}>
+                          {card.qty_in_decks ? `${card.qty_owned - card.qty_in_decks}/${card.qty_owned}` : `x${card.qty_owned}`}
+                        </span>
+                      )}
+                      <DeckBadges inDecks={card.in_decks} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -908,11 +913,13 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" />
-                      <DeckBadges inDecks={card.in_decks} />
                     </div>
-                    <span className="text-xs text-yellow-400/70">
-                      {card.price ? `$${card.price.toFixed(2)}` : ''}
-                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <DeckBadges inDecks={card.in_decks} />
+                      <span className="text-xs text-yellow-400/70">
+                        {card.price ? `$${card.price.toFixed(2)}` : ''}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1748,12 +1755,45 @@ function AvailDot({ card }) {
 }
 
 function DeckBadges({ inDecks }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+
   if (!inDecks || inDecks.length === 0) return null;
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    let x = rect.left;
+    let y = rect.bottom + 4;
+    if (x + 200 > viewportW) x = viewportW - 210;
+    if (y + 100 > window.innerHeight) y = rect.top - 104;
+    setTooltipPos({ x, y });
+    setShowTooltip(true);
+  };
+
+  // Show compact: just a count badge that expands on hover
   return (
-    <span className="inline-flex gap-1 ml-1">
-      {inDecks.map(d => (
-        <span key={d.id} className="text-[10px] bg-gray-700 text-gray-400 px-1 rounded">{d.name}</span>
-      ))}
+    <span
+      ref={ref}
+      className="relative inline-flex items-center ml-1 cursor-default"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <span className="text-[10px] bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+        <span className="text-purple-400">{inDecks.length}d</span>
+      </span>
+      {showTooltip && (
+        <div
+          className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-2 space-y-1 min-w-[140px]"
+          style={{ left: tooltipPos.x, top: tooltipPos.y }}
+        >
+          <p className="text-[10px] text-gray-500 font-medium mb-1">In {inDecks.length} deck{inDecks.length > 1 ? 's' : ''}:</p>
+          {inDecks.map(d => (
+            <p key={d.id} className="text-xs text-gray-300 truncate">{d.name}</p>
+          ))}
+        </div>
+      )}
     </span>
   );
 }
