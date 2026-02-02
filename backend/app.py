@@ -533,7 +533,7 @@ async def popular_commanders():
     return {"commanders": top}
 
 
-@app.get("/api/commander/{commander_name}")
+@app.get("/api/commander/{commander_name:path}")
 @rate_limit(RATE_LIMIT)
 async def get_commander_detail(
     request: Request,
@@ -543,14 +543,16 @@ async def get_commander_detail(
     include_prices: bool = True,
 ):
     """Get commander average deck from EDHREC, compare with collection, categorize by type."""
-    data = get_commander_avg_deck(commander_name, budget=budget, theme=theme)
+    # For DFCs, use only the front face name for EDHREC lookups
+    front_face = commander_name.split("//")[0].strip()
+    data = get_commander_avg_deck(front_face, budget=budget, theme=theme)
 
     # Get type-specific data for categorization
     type_data = {}
     try:
-        type_data = get_commander_synergy_cards(commander_name)
+        type_data = get_commander_synergy_cards(front_face)
     except Exception as e:
-        logger.error(f"Error fetching type data for {commander_name}: {e}")
+        logger.error(f"Error fetching type data for {front_face}: {e}")
 
     # Build a set of all cards in the avg deck
     avg_deck_names = set(c["name_normalized"] for c in data.get("decklist", []))
@@ -759,7 +761,8 @@ async def compare_commanders(request: Request, body: dict):
 
     results = []
     for name in names:
-        data = get_commander_avg_deck(name)
+        front_face = name.split("//")[0].strip()
+        data = get_commander_avg_deck(front_face)
         deck_cards = set(data.get("deck_card_names", []))
         owned_count = len(deck_cards & collection)
         total = len(deck_cards)
