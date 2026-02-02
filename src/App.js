@@ -245,6 +245,7 @@ function CommanderAutocomplete({ value, onChange, placeholder, className }) {
                 <span className="text-[10px] text-purple-400 flex-shrink-0">
                   {cmd.partner_type === 'partner' ? 'Partner' :
                    cmd.partner_type === 'partner_with' ? 'Partner with' :
+                   cmd.partner_type === 'partner_variant' ? 'Partner' :
                    cmd.partner_type === 'choose_a_background' ? 'Background' :
                    cmd.partner_type === 'background' ? 'BG' :
                    cmd.partner_type === 'friends_forever' ? 'Friends' :
@@ -274,8 +275,8 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
       .then(data => {
         setPartnerType(data.partner_type || '');
         setPartners(data.partners || []);
-        // If partner_with, auto-select the specific partner
-        if (data.partner_type === 'partner_with' && data.partners?.length === 1) {
+        // If partner_with or partner_variant with only one option, auto-select
+        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1) {
           onSelectPartner(data.partners[0]);
         }
       })
@@ -288,6 +289,7 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
   const partnerLabel =
     partnerType === 'partner' ? 'Partner' :
     partnerType === 'partner_with' ? 'Partner With' :
+    partnerType === 'partner_variant' ? 'Partner' :
     partnerType === 'choose_a_background' ? 'Choose a Background' :
     partnerType === 'background' ? 'Background For' :
     partnerType === 'friends_forever' ? 'Friends Forever' :
@@ -328,7 +330,7 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
             <div className="text-center py-2 text-gray-400 text-sm">Loading partners...</div>
           ) : (
             <>
-              {partners.length > 10 && (
+              {partners.length > 5 && (
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
@@ -336,17 +338,18 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
                   className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500"
                 />
               )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto p-1">
                 {filtered.slice(0, 40).map(p => (
                   <button
                     key={p.name}
                     onClick={() => onSelectPartner(p)}
-                    className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors"
+                    className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors group"
                   >
                     {p.image_uri && (
-                      <img src={p.image_uri} alt={p.name} className="w-full aspect-[5/7] object-cover rounded mb-1" loading="lazy" />
+                      <img src={p.image_uri} alt={p.name} className="w-full rounded-lg shadow-lg group-hover:scale-[1.02] transition-transform" loading="lazy" />
                     )}
-                    <p className="text-xs truncate">{p.name}</p>
+                    <p className="text-xs mt-1.5 text-center font-medium">{p.name}</p>
+                    {p.color_identity && <div className="mt-1 text-center"><ColorBadge colors={p.color_identity} /></div>}
                   </button>
                 ))}
               </div>
@@ -1810,6 +1813,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
   const [decks, setDecks] = useState({});
   const [newName, setNewName] = useState('');
   const [newCommander, setNewCommander] = useState('');
+  const [newPartner, setNewPartner] = useState(null);
   const [newCards, setNewCards] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editCards, setEditCards] = useState('');
@@ -1873,7 +1877,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
       setDecks(updated);
       saveDecks(updated);
       onDecksChanged();
-      setNewName(''); setNewCommander(''); setNewCards('');
+      setNewName(''); setNewCommander(''); setNewPartner(null); setNewCards('');
       setInvalidCards([]);
     } catch (e) { setError(e.message); }
   };
@@ -1964,12 +1968,19 @@ function MyDecks({ onDecksChanged, decksReady }) {
             <label className="block text-xs text-gray-400 mb-1">Commander</label>
             <CommanderAutocomplete
               value={newCommander}
-              onChange={setNewCommander}
+              onChange={v => { setNewCommander(v); setNewPartner(null); }}
               placeholder="e.g. The Ur-Dragon"
               className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
             />
           </div>
         </div>
+        {newCommander && (
+          <PartnerPicker
+            commanderName={newCommander}
+            selectedPartner={newPartner}
+            onSelectPartner={setNewPartner}
+          />
+        )}
         <div>
           <label className="block text-xs text-gray-400 mb-1">Card List (paste from Archidekt/Moxfield export)</label>
           <textarea
@@ -2003,48 +2014,67 @@ function MyDecks({ onDecksChanged, decksReady }) {
       )}
 
       {Object.values(decks).map(deck => (
-        <div key={deck.id} className="bg-gray-800 rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="font-semibold">{deck.name}</h4>
-              {deck.commander && <p className="text-sm text-gray-400">{deck.commander}</p>}
-              <p className="text-xs text-gray-500">{deck.card_count || Object.keys(deck.cards || {}).length} cards</p>
+        <div key={deck.id} className="relative bg-gray-800 rounded-lg overflow-hidden">
+          {/* Commander art banner */}
+          {deck.art_crop && (
+            <div className="absolute inset-0 z-0">
+              <img src={deck.art_crop} alt="" className="w-full h-full object-cover opacity-15" />
+              <div className="absolute inset-0 bg-gradient-to-r from-gray-800/90 via-gray-800/70 to-gray-800/90" />
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleEdit(deck.id)}
-                disabled={validating}
-                className={`px-3 py-1 rounded text-sm ${
-                  editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
-                }`}
-              >
-                {editingId === deck.id ? (validating ? 'Validating...' : 'Save') : 'Edit'}
-              </button>
-              <button
-                onClick={() => handleDelete(deck.id)}
-                className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-sm"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-          {editingId === deck.id && (
-            <>
-              <textarea
-                value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
-                rows={10}
-                className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
-              />
-              {invalidCards.length > 0 && (
-                <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
-                  <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
-                  <ul className="text-xs text-red-300 space-y-0.5">
-                    {invalidCards.map(name => <li key={name}>- {name}</li>)}
-                  </ul>
-                </div>
-              )}
-            </>
           )}
+          <div className="relative z-10 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {deck.image_uri && (
+                  <img src={deck.image_uri} alt="" className="w-10 h-14 rounded object-cover flex-shrink-0 shadow-lg" />
+                )}
+                <div>
+                  <h4 className="font-semibold">{deck.name}</h4>
+                  {deck.commander && <p className="text-sm text-gray-300">{deck.commander}</p>}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {deck.color_identity && deck.color_identity.length > 0 && (
+                      <ColorBadge colors={deck.color_identity} />
+                    )}
+                    <span className="text-xs text-gray-500">{deck.card_count || Object.keys(deck.cards || {}).length} cards</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleEdit(deck.id)}
+                  disabled={validating}
+                  className={`px-3 py-1 rounded text-sm ${
+                    editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
+                  }`}
+                >
+                  {editingId === deck.id ? (validating ? 'Validating...' : 'Save') : 'Edit'}
+                </button>
+                <button
+                  onClick={() => handleDelete(deck.id)}
+                  className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-sm"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+            {editingId === deck.id && (
+              <>
+                <textarea
+                  value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
+                  rows={10}
+                  className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+                />
+                {invalidCards.length > 0 && (
+                  <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
+                    <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
+                    <ul className="text-xs text-red-300 space-y-0.5">
+                      {invalidCards.map(name => <li key={name}>- {name}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       ))}
 
