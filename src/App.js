@@ -707,6 +707,83 @@ function DeckCardImage({ name, small }) {
   return <img src={src} alt={name} className="rounded-lg shadow-lg" loading="lazy" />;
 }
 
+function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
+  const [hovered, setHovered] = useState(false);
+  const [imgPos, setImgPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+  const STRIP_HEIGHT = 32;
+  const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(card.name)}`;
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    let x = rect.right + 8;
+    let y = rect.top;
+    if (x + 260 > viewportW) x = rect.left - 268;
+    if (y + 370 > viewportH) y = viewportH - 380;
+    if (y < 8) y = 8;
+    setImgPos({ x, y });
+    setHovered(true);
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="relative group"
+      style={{
+        height: isLast ? 'auto' : `${STRIP_HEIGHT}px`,
+        overflow: isLast ? 'visible' : 'hidden',
+        zIndex: hovered ? 100 : index,
+      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* The card strip: show quantity + name */}
+      <div
+        className={`flex items-center gap-1 px-1.5 cursor-pointer rounded-t border border-gray-700 ${
+          hovered ? 'bg-gray-600 border-blue-500' : 'bg-gray-800'
+        }`}
+        style={{ height: `${STRIP_HEIGHT}px` }}
+      >
+        <span className="text-xs text-gray-500 w-4 text-center flex-shrink-0">{card.qty}</span>
+        {card.owned ? (
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+        ) : (
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+        )}
+        <span className="text-xs truncate flex-1">{card.name}</span>
+        {canMultiple && (
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+            <button
+              onClick={(e) => { e.stopPropagation(); onSetQty(card.name, card.qty - 1); }}
+              className="w-4 h-4 rounded bg-gray-700 hover:bg-gray-500 text-[10px] flex items-center justify-center"
+            >-</button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSetQty(card.name, card.qty + 1); }}
+              className="w-4 h-4 rounded bg-gray-700 hover:bg-gray-500 text-[10px] flex items-center justify-center"
+            >+</button>
+          </div>
+        )}
+      </div>
+
+      {/* Hover: show full card image as a floating overlay */}
+      {hovered && (
+        <div
+          className="fixed z-[200] pointer-events-none"
+          style={{ left: imgPos.x, top: imgPos.y }}
+        >
+          <img
+            src={imgSrc}
+            alt={card.name}
+            className="w-[250px] rounded-lg shadow-2xl border border-gray-600"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
@@ -882,35 +959,26 @@ function DeckBuilder({ data, commander, onBack }) {
   );
 
   const renderStacksView = () => (
-    <div className="space-y-6">
+    <div className="flex gap-2 overflow-x-auto pb-4">
       {includedGroups.map(({ type, cards }) => (
-        <div key={type}>
-          <h4 className="text-sm font-medium text-gray-400 mb-2">
-            {type} ({cards.reduce((s, c) => s + c.qty, 0)})
-          </h4>
-          <div className="flex flex-wrap gap-1">
+        <div key={type} className="flex-shrink-0" style={{ width: '180px' }}>
+          {/* Column header */}
+          <div className="text-xs font-semibold text-gray-400 border-b border-gray-700 pb-1 mb-1 flex justify-between">
+            <span>{type}</span>
+            <span>Qty: {cards.reduce((s, c) => s + c.qty, 0)}</span>
+          </div>
+          {/* Stacked cards */}
+          <div className="relative">
             {cards.map((card, idx) => (
-              <div
+              <StackCard
                 key={card.name}
-                className="relative group flex-shrink-0"
-                style={{
-                  width: '130px',
-                  marginRight: idx < cards.length - 1 ? '-90px' : '0',
-                  zIndex: idx,
-                }}
-              >
-                <div className="transition-transform group-hover:translate-y-[-20px] group-hover:z-50 relative">
-                  <DeckCardImage name={card.name} small />
-                  {card.qty > 1 && (
-                    <span className="absolute top-1 right-1 bg-black/80 text-white text-xs font-bold px-1.5 py-0.5 rounded">
-                      x{card.qty}
-                    </span>
-                  )}
-                  {card.owned && (
-                    <span className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 border border-black" />
-                  )}
-                </div>
-              </div>
+                card={card}
+                index={idx}
+                isLast={idx === cards.length - 1}
+                canMultiple={canHaveMultiple(card.name)}
+                onToggle={toggle}
+                onSetQty={setQty}
+              />
             ))}
           </div>
         </div>
