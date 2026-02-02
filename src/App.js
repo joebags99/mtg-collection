@@ -170,6 +170,195 @@ async function apiUpload(path, file) {
   return res.json();
 }
 
+// --- Commander Autocomplete ---
+function CommanderAutocomplete({ value, onChange, placeholder, className }) {
+  const [query, setQuery] = useState(value || '');
+  const [results, setResults] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const containerRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  useEffect(() => { setQuery(value || ''); }, [value]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleInput = (val) => {
+    setQuery(val);
+    onChange(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (val.length < 2) { setResults([]); setShowDropdown(false); return; }
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await apiGet('/api/commanders/search_autocomplete', { q: val });
+        setResults(data.results || []);
+        setShowDropdown(true);
+      } catch { setResults([]); }
+      setLoading(false);
+    }, 200);
+  };
+
+  const handleSelect = (cmd) => {
+    setQuery(cmd.name);
+    onChange(cmd.name);
+    setShowDropdown(false);
+    setResults([]);
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        value={query}
+        onChange={e => handleInput(e.target.value)}
+        onFocus={() => { if (results.length > 0) setShowDropdown(true); }}
+        placeholder={placeholder}
+        className={className}
+      />
+      {loading && (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+          <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+      {showDropdown && results.length > 0 && (
+        <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+          {results.map(cmd => (
+            <button
+              key={cmd.name}
+              onClick={() => handleSelect(cmd)}
+              className="w-full px-3 py-2 text-left text-sm hover:bg-gray-700 flex items-center gap-2 transition-colors"
+            >
+              {cmd.image_uri && (
+                <img src={cmd.image_uri} alt="" className="w-6 h-8 rounded object-cover flex-shrink-0" />
+              )}
+              <span className="flex-1 truncate">{cmd.name}</span>
+              <ColorBadge colors={cmd.color_identity} />
+              {cmd.partner_type && (
+                <span className="text-[10px] text-purple-400 flex-shrink-0">
+                  {cmd.partner_type === 'partner' ? 'Partner' :
+                   cmd.partner_type === 'partner_with' ? 'Partner with' :
+                   cmd.partner_type === 'choose_a_background' ? 'Background' :
+                   cmd.partner_type === 'background' ? 'BG' :
+                   cmd.partner_type === 'friends_forever' ? 'Friends' :
+                   cmd.partner_type === 'doctors_companion' ? 'Companion' :
+                   cmd.partner_type === 'doctor' ? 'Doctor' : ''}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Partner Picker ---
+function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
+  const [partners, setPartners] = useState([]);
+  const [partnerType, setPartnerType] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (!commanderName) { setPartners([]); setPartnerType(''); return; }
+    setLoading(true);
+    apiGet(`/api/commander/${encodeURIComponent(commanderName)}/partners`)
+      .then(data => {
+        setPartnerType(data.partner_type || '');
+        setPartners(data.partners || []);
+        // If partner_with, auto-select the specific partner
+        if (data.partner_type === 'partner_with' && data.partners?.length === 1) {
+          onSelectPartner(data.partners[0]);
+        }
+      })
+      .catch(() => { setPartners([]); setPartnerType(''); })
+      .finally(() => setLoading(false));
+  }, [commanderName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!partnerType) return null;
+
+  const partnerLabel =
+    partnerType === 'partner' ? 'Partner' :
+    partnerType === 'partner_with' ? 'Partner With' :
+    partnerType === 'choose_a_background' ? 'Choose a Background' :
+    partnerType === 'background' ? 'Background For' :
+    partnerType === 'friends_forever' ? 'Friends Forever' :
+    partnerType === 'doctors_companion' ? "Doctor's Companion For" :
+    partnerType === 'doctor' ? 'Doctor For' : 'Partner';
+
+  const filtered = search.length >= 2
+    ? partners.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    : partners;
+
+  return (
+    <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold text-purple-400">{partnerLabel}</h4>
+        {selectedPartner && (
+          <button
+            onClick={() => onSelectPartner(null)}
+            className="text-xs text-gray-400 hover:text-red-400"
+          >
+            Remove Partner
+          </button>
+        )}
+      </div>
+
+      {selectedPartner ? (
+        <div className="flex items-center gap-3 bg-gray-800 rounded-lg p-2">
+          {selectedPartner.image_uri && (
+            <img src={selectedPartner.image_uri} alt={selectedPartner.name} className="w-12 h-16 rounded object-cover" />
+          )}
+          <div>
+            <p className="font-medium text-sm">{selectedPartner.name}</p>
+            <ColorBadge colors={selectedPartner.color_identity} />
+          </div>
+        </div>
+      ) : (
+        <>
+          {loading ? (
+            <div className="text-center py-2 text-gray-400 text-sm">Loading partners...</div>
+          ) : (
+            <>
+              {partners.length > 10 && (
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search partners..."
+                  className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500"
+                />
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+                {filtered.slice(0, 40).map(p => (
+                  <button
+                    key={p.name}
+                    onClick={() => onSelectPartner(p)}
+                    className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors"
+                  >
+                    {p.image_uri && (
+                      <img src={p.image_uri} alt={p.name} className="w-full aspect-[5/7] object-cover rounded mb-1" loading="lazy" />
+                    )}
+                    <p className="text-xs truncate">{p.name}</p>
+                  </button>
+                ))}
+              </div>
+              {filtered.length === 0 && <p className="text-sm text-gray-500">No compatible partners found.</p>}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // --- Components ---
 
 function CollectionUpload({ onUploaded, collectionCount }) {
@@ -1215,22 +1404,27 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const [recSort, setRecSort] = useState('synergy_desc');
   const [recFilter, setRecFilter] = useState('all');
   const [recTypeFilter, setRecTypeFilter] = useState('all');
+  const [selectedPartner, setSelectedPartner] = useState(null);
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, {
+      const params = {
         budget: budget || null,
         theme: theme || null,
         exclude_in_decks: excludeInDecks || null,
-      });
+      };
+      if (selectedPartner) {
+        params.partner = selectedPartner.name;
+      }
+      const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
       setData(d);
     } catch (err) {
       setError(err.message);
     }
     setLoading(false);
-  }, [commander.name, budget, theme, excludeInDecks]);
+  }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
 
   useEffect(() => { fetchDetail(); }, [fetchDetail]);
 
@@ -1331,6 +1525,13 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
           </div>
         </div>
       </div>
+
+      {/* Partner Commander */}
+      <PartnerPicker
+        commanderName={commander.name}
+        onSelectPartner={setSelectedPartner}
+        selectedPartner={selectedPartner}
+      />
 
       {/* Filters + Export + Deck Builder */}
       <div className="bg-gray-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
@@ -1566,6 +1767,8 @@ function MyDecks({ onDecksChanged }) {
   const [editingId, setEditingId] = useState(null);
   const [editCards, setEditCards] = useState('');
   const [error, setError] = useState('');
+  const [validating, setValidating] = useState(false);
+  const [invalidCards, setInvalidCards] = useState([]);
 
   // Load on mount
   useEffect(() => {
@@ -1576,9 +1779,44 @@ function MyDecks({ onDecksChanged }) {
     }).catch(() => {});
   }, []);
 
-  const handleAdd = async () => {
+  // Parse card names from text
+  const parseCardNames = (text) => {
+    return text.trim().split('\n')
+      .map(l => l.trim())
+      .filter(l => l)
+      .map(l => {
+        const m = l.match(/^(\d+)x?\s+(.+)/);
+        return m ? m[2].trim() : l.trim();
+      });
+  };
+
+  const validateAndAdd = async () => {
     if (!newName.trim()) return;
     setError('');
+    setInvalidCards([]);
+
+    // Validate cards if any are provided
+    if (newCards.trim()) {
+      setValidating(true);
+      try {
+        const names = parseCardNames(newCards);
+        if (names.length > 0) {
+          const result = await apiPost('/api/cards/validate', { cards: names });
+          if (result.invalid && result.invalid.length > 0) {
+            setInvalidCards(result.invalid);
+            setError(`${result.invalid.length} unrecognized card(s) found. Fix or remove them before saving.`);
+            setValidating(false);
+            return;
+          }
+        }
+      } catch (e) {
+        // If validation fails (network issue), allow saving anyway
+        console.warn('Card validation failed, proceeding:', e);
+      }
+      setValidating(false);
+    }
+
+    // Create deck
     try {
       const deck = await apiPost('/api/decks', {
         name: newName, commander: newCommander, cards_text: newCards,
@@ -1588,13 +1826,12 @@ function MyDecks({ onDecksChanged }) {
       saveDecks(updated);
       onDecksChanged();
       setNewName(''); setNewCommander(''); setNewCards('');
+      setInvalidCards([]);
     } catch (e) { setError(e.message); }
   };
 
   const handleDelete = async (id) => {
     try {
-      await apiPost(`/api/decks/${id}`, {});
-      // Use fetch directly for DELETE
       await fetch(`${API}/api/decks/${id}`, { method: 'DELETE' });
       const updated = { ...decks };
       delete updated[id];
@@ -1606,6 +1843,28 @@ function MyDecks({ onDecksChanged }) {
 
   const handleEdit = async (id) => {
     if (editingId === id) {
+      // Validate before saving
+      setError('');
+      setInvalidCards([]);
+      if (editCards.trim()) {
+        setValidating(true);
+        try {
+          const names = parseCardNames(editCards);
+          if (names.length > 0) {
+            const result = await apiPost('/api/cards/validate', { cards: names });
+            if (result.invalid && result.invalid.length > 0) {
+              setInvalidCards(result.invalid);
+              setError(`${result.invalid.length} unrecognized card(s) found. Fix or remove them before saving.`);
+              setValidating(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('Card validation failed, proceeding:', e);
+        }
+        setValidating(false);
+      }
+
       // Save
       try {
         const res = await fetch(`${API}/api/decks/${id}`, {
@@ -1619,6 +1878,7 @@ function MyDecks({ onDecksChanged }) {
         saveDecks(updated);
         onDecksChanged();
         setEditingId(null);
+        setInvalidCards([]);
       } catch (e) { setError(e.message); }
     } else {
       // Start editing - load full deck
@@ -1627,6 +1887,7 @@ function MyDecks({ onDecksChanged }) {
         const cardsText = Object.entries(deck.cards || {}).map(([n, q]) => `${q} ${n}`).join('\n');
         setEditCards(cardsText);
         setEditingId(id);
+        setInvalidCards([]);
       } catch (e) { setError(e.message); }
     }
   };
@@ -1653,8 +1914,9 @@ function MyDecks({ onDecksChanged }) {
           </div>
           <div className="flex-1">
             <label className="block text-xs text-gray-400 mb-1">Commander</label>
-            <input
-              value={newCommander} onChange={e => setNewCommander(e.target.value)}
+            <CommanderAutocomplete
+              value={newCommander}
+              onChange={setNewCommander}
               placeholder="e.g. The Ur-Dragon"
               className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
             />
@@ -1663,17 +1925,25 @@ function MyDecks({ onDecksChanged }) {
         <div>
           <label className="block text-xs text-gray-400 mb-1">Card List (paste from Archidekt/Moxfield export)</label>
           <textarea
-            value={newCards} onChange={e => setNewCards(e.target.value)}
+            value={newCards} onChange={e => { setNewCards(e.target.value); setInvalidCards([]); }}
             placeholder={"1 Sol Ring\n1 Command Tower\n1 Arcane Signet\n..."}
             rows={8}
             className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
           />
         </div>
+        {invalidCards.length > 0 && (
+          <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
+            <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
+            <ul className="text-xs text-red-300 space-y-0.5">
+              {invalidCards.map(name => <li key={name}>- {name}</li>)}
+            </ul>
+          </div>
+        )}
         <button
-          onClick={handleAdd} disabled={!newName.trim()}
+          onClick={validateAndAdd} disabled={!newName.trim() || validating}
           className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
         >
-          Add Deck
+          {validating ? 'Validating cards...' : 'Add Deck'}
         </button>
       </div>
 
@@ -1695,11 +1965,12 @@ function MyDecks({ onDecksChanged }) {
             <div className="flex gap-2">
               <button
                 onClick={() => handleEdit(deck.id)}
+                disabled={validating}
                 className={`px-3 py-1 rounded text-sm ${
                   editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
                 }`}
               >
-                {editingId === deck.id ? 'Save' : 'Edit'}
+                {editingId === deck.id ? (validating ? 'Validating...' : 'Save') : 'Edit'}
               </button>
               <button
                 onClick={() => handleDelete(deck.id)}
@@ -1710,11 +1981,21 @@ function MyDecks({ onDecksChanged }) {
             </div>
           </div>
           {editingId === deck.id && (
-            <textarea
-              value={editCards} onChange={e => setEditCards(e.target.value)}
-              rows={10}
-              className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
-            />
+            <>
+              <textarea
+                value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
+                rows={10}
+                className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+              />
+              {invalidCards.length > 0 && (
+                <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
+                  <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
+                  <ul className="text-xs text-red-300 space-y-0.5">
+                    {invalidCards.map(name => <li key={name}>- {name}</li>)}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
       ))}

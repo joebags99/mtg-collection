@@ -195,8 +195,49 @@ def get_available_collection(exclude_in_decks: bool = False) -> set[str]:
     return available
 
 
+def _detect_partner_type(card: dict) -> str:
+    """Detect what type of partner mechanic a commander has from Scryfall data.
+    Returns one of: 'partner', 'partner_with', 'choose_a_background', 'background',
+    'friends_forever', 'doctors_companion', 'doctor', or '' (none).
+    """
+    keywords = [k.lower() for k in card.get("keywords", [])]
+    oracle = card.get("oracle_text", "")
+    # Check card faces too for DFCs
+    for face in card.get("card_faces", []):
+        oracle += " " + face.get("oracle_text", "")
+    oracle_lower = oracle.lower()
+    type_line = card.get("type_line", "").lower()
+
+    if "partner with" in oracle_lower:
+        return "partner_with"
+    if "choose a background" in oracle_lower:
+        return "choose_a_background"
+    if "background" in type_line and "legendary" in type_line and "enchantment" in type_line:
+        return "background"
+    if "friends forever" in keywords or "friends forever" in oracle_lower:
+        return "friends_forever"
+    if "doctor's companion" in keywords or "doctor's companion" in oracle_lower:
+        return "doctors_companion"
+    if "time lord" in type_line and "doctor" in type_line:
+        return "doctor"
+    if "partner" in keywords:
+        return "partner"
+    return ""
+
+
+def _extract_partner_with_name(card: dict) -> str:
+    """Extract the specific partner name from 'Partner with X' oracle text."""
+    oracle = card.get("oracle_text", "")
+    for face in card.get("card_faces", []):
+        oracle += "\n" + face.get("oracle_text", "")
+    match = re.search(r"[Pp]artner with ([^\n(]+)", oracle)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
 def get_all_commanders() -> list[dict]:
-    """Fetch all legal commanders from Scryfall bulk search."""
+    """Fetch all legal commanders from Scryfall bulk search, including partner info."""
     commanders = []
     url = "https://api.scryfall.com/cards/search"
     params = {
@@ -212,14 +253,20 @@ def get_all_commanders() -> list[dict]:
             break
         data = resp.json()
         for card in data.get("data", []):
-            commanders.append({
+            partner_type = _detect_partner_type(card)
+            entry = {
                 "name": card["name"],
                 "name_normalized": normalize_card_name(card["name"]),
                 "color_identity": card.get("color_identity", []),
                 "image_uri": (card.get("image_uris") or {}).get("normal", "")
                     or (card.get("card_faces", [{}])[0].get("image_uris") or {}).get("normal", ""),
                 "edhrec_rank": card.get("edhrec_rank", 999999),
-            })
+                "partner_type": partner_type,
+                "type_line": card.get("type_line", ""),
+            }
+            if partner_type == "partner_with":
+                entry["partner_with"] = _extract_partner_with_name(card)
+            commanders.append(entry)
 
         if data.get("has_more"):
             url = data.get("next_page")
@@ -227,6 +274,35 @@ def get_all_commanders() -> list[dict]:
             time.sleep(0.1)
         else:
             url = None
+
+    # Second pass: fetch backgrounds (legendary enchantments with Background subtype)
+    bg_url = "https://api.scryfall.com/cards/search"
+    bg_params = {"q": "t:background t:legendary t:enchantment f:commander", "order": "edhrec", "unique": "cards"}
+    existing_names = {c["name_normalized"] for c in commanders}
+    while bg_url:
+        resp = requests.get(bg_url, params=bg_params)
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        for card in data.get("data", []):
+            if normalize_card_name(card["name"]) not in existing_names:
+                commanders.append({
+                    "name": card["name"],
+                    "name_normalized": normalize_card_name(card["name"]),
+                    "color_identity": card.get("color_identity", []),
+                    "image_uri": (card.get("image_uris") or {}).get("normal", "")
+                        or (card.get("card_faces", [{}])[0].get("image_uris") or {}).get("normal", ""),
+                    "edhrec_rank": card.get("edhrec_rank", 999999),
+                    "partner_type": "background",
+                    "type_line": card.get("type_line", ""),
+                })
+                existing_names.add(normalize_card_name(card["name"]))
+        if data.get("has_more"):
+            bg_url = data.get("next_page")
+            bg_params = {}
+            time.sleep(0.1)
+        else:
+            bg_url = None
 
     return commanders
 
@@ -736,6 +812,134 @@ async def list_commanders(color: Optional[str] = None, search: Optional[str] = N
     return {"count": len(results), "commanders": results[:200]}
 
 
+@app.get("/api/commanders/search_autocomplete")
+async def search_commanders_autocomplete(q: str = ""):
+    """Fast autocomplete search for commander names."""
+    if len(q) < 2:
+        return {"results": []}
+    commanders = get_cached_commanders()
+    q_lower = q.lower()
+    # Exact prefix match first, then contains
+    prefix_matches = []
+    contains_matches = []
+    for c in commanders:
+        name_lower = c["name"].lower()
+        if name_lower.startswith(q_lower):
+            prefix_matches.append(c)
+        elif q_lower in name_lower:
+            contains_matches.append(c)
+    results = (prefix_matches + contains_matches)[:20]
+    return {"results": results}
+
+
+def _get_compatible_partners(commander: dict) -> list[dict]:
+    """Get list of commanders that can be paired with the given commander."""
+    pt = commander.get("partner_type", "")
+    if not pt:
+        return []
+
+    all_cmds = get_cached_commanders()
+
+    if pt == "partner":
+        # Generic Partner can pair with any other generic Partner
+        return [c for c in all_cmds if c.get("partner_type") == "partner"
+                and c["name_normalized"] != commander["name_normalized"]]
+    elif pt == "partner_with":
+        # Partner with a specific card
+        partner_name = commander.get("partner_with", "")
+        if partner_name:
+            normalized = normalize_card_name(partner_name)
+            return [c for c in all_cmds if c["name_normalized"] == normalized]
+        return []
+    elif pt == "choose_a_background":
+        # Can pair with any Background enchantment
+        return [c for c in all_cmds if c.get("partner_type") == "background"]
+    elif pt == "background":
+        # Can pair with any "Choose a Background" commander
+        return [c for c in all_cmds if c.get("partner_type") == "choose_a_background"]
+    elif pt == "friends_forever":
+        # Friends Forever pairs with any other Friends Forever
+        return [c for c in all_cmds if c.get("partner_type") == "friends_forever"
+                and c["name_normalized"] != commander["name_normalized"]]
+    elif pt == "doctors_companion":
+        # Doctor's Companion pairs with any Doctor (Time Lord Doctor creature)
+        return [c for c in all_cmds if c.get("partner_type") == "doctor"]
+    elif pt == "doctor":
+        # Doctor pairs with Doctor's Companion
+        return [c for c in all_cmds if c.get("partner_type") == "doctors_companion"]
+    return []
+
+
+@app.get("/api/commander/{commander_name:path}/partners")
+async def get_commander_partners(commander_name: str):
+    """Get compatible partner commanders for a given commander."""
+    commanders = get_cached_commanders()
+    front_face = commander_name.split("//")[0].strip()
+    normalized = normalize_card_name(front_face)
+
+    commander = None
+    for c in commanders:
+        if c["name_normalized"] == normalized:
+            commander = c
+            break
+
+    if not commander:
+        return {"partner_type": "", "partners": []}
+
+    partners = _get_compatible_partners(commander)
+    return {
+        "partner_type": commander.get("partner_type", ""),
+        "partner_with": commander.get("partner_with", ""),
+        "partners": partners[:100],
+    }
+
+
+@app.post("/api/cards/validate")
+async def validate_cards(body: dict):
+    """Validate a list of card names against Scryfall. Returns recognized and unrecognized cards."""
+    card_names = body.get("cards", [])
+    if not card_names:
+        return {"valid": [], "invalid": []}
+
+    valid = []
+    invalid = []
+
+    # Batch check via Scryfall collection endpoint (75 per batch)
+    for i in range(0, len(card_names), 75):
+        batch = card_names[i:i+75]
+        identifiers = [{"name": name} for name in batch]
+        try:
+            resp = requests.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": identifiers},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                found_names = set()
+                for card in data.get("data", []):
+                    found_names.add(normalize_card_name(card["name"]))
+                for name in batch:
+                    if normalize_card_name(name) in found_names:
+                        valid.append(name)
+                    else:
+                        invalid.append(name)
+                # Also check not_found
+                for nf in data.get("not_found", []):
+                    nf_name = nf.get("name", "")
+                    if nf_name and nf_name not in invalid:
+                        invalid.append(nf_name)
+            else:
+                # If Scryfall fails, don't block — treat all as valid
+                valid.extend(batch)
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Card validation error: {e}")
+            valid.extend(batch)
+
+    return {"valid": valid, "invalid": invalid}
+
+
 @app.get("/api/commanders/popular")
 async def popular_commanders():
     commanders = get_cached_commanders()
@@ -752,11 +956,31 @@ async def get_commander_detail(
     theme: Optional[str] = None,
     include_prices: bool = True,
     exclude_in_decks: bool = False,
+    partner: Optional[str] = None,
 ):
     """Get commander average deck from EDHREC, compare with collection, categorize by type."""
     # For DFCs, use only the front face name for EDHREC lookups
     front_face = commander_name.split("//")[0].strip()
-    data = get_commander_avg_deck(front_face, budget=budget, theme=theme)
+
+    # If partner provided, try combined EDHREC lookup first
+    lookup_name = front_face
+    if partner:
+        partner_front = partner.split("//")[0].strip()
+        # EDHREC uses alphabetical order for partner pair slugs
+        slugs = sorted([edhrec_slug(front_face), edhrec_slug(partner_front)])
+        combined_slug = "-".join(slugs)
+        # Try the combined lookup
+        try:
+            combined_data = get_commander_avg_deck(combined_slug, budget=budget, theme=theme)
+            if combined_data.get("decklist") and not combined_data.get("error"):
+                combined_data["commander"] = f"{front_face} // {partner_front}"
+                data = combined_data
+            else:
+                data = get_commander_avg_deck(front_face, budget=budget, theme=theme)
+        except Exception:
+            data = get_commander_avg_deck(front_face, budget=budget, theme=theme)
+    else:
+        data = get_commander_avg_deck(front_face, budget=budget, theme=theme)
 
     # Get type-specific data for categorization
     type_data = {}
