@@ -873,7 +873,6 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" />
-                      <DeckBadges inDecks={card.in_decks} />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {card.qty_owned > 1 && (
@@ -1780,8 +1779,8 @@ function DeckBadges({ inDecks }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShowTooltip(false)}
     >
-      <span className="text-[10px] bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-        <span className="text-purple-400">{inDecks.length}d</span>
+      <span className="text-[10px] bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded">
+        <span className="text-purple-400">In {inDecks.length} Deck{inDecks.length > 1 ? 's' : ''}</span>
       </span>
       {showTooltip && (
         <div
