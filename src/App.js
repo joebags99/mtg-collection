@@ -875,12 +875,12 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                       <CardName name={card.name} className="text-sm" />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      <DeckBadges inDecks={card.in_decks} />
                       {card.qty_owned > 1 && (
                         <span className="text-[10px] text-gray-500" title={`${card.qty_owned} owned, ${card.qty_in_decks || 0} in decks`}>
                           {card.qty_in_decks ? `${card.qty_owned - card.qty_in_decks}/${card.qty_owned}` : `x${card.qty_owned}`}
                         </span>
                       )}
-                      <DeckBadges inDecks={card.in_decks} />
                     </div>
                   </div>
                 ))}
@@ -1626,16 +1626,24 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
         </div>
       )}
 
-      {/* Card List Toggles */}
-      <div className="flex gap-4">
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={showOwned} onChange={e => setShowOwned(e.target.checked)} className="rounded" />
-          <span className="text-green-400">Owned ({data.owned_count})</span>
-        </label>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={showMissing} onChange={e => setShowMissing(e.target.checked)} className="rounded" />
-          <span className="text-red-400">Missing ({data.missing_count})</span>
-        </label>
+      {/* Card List Toggles + Legend */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={showOwned} onChange={e => setShowOwned(e.target.checked)} className="rounded" />
+            <span className="text-green-400">Owned ({data.owned_count})</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={showMissing} onChange={e => setShowMissing(e.target.checked)} className="rounded" />
+            <span className="text-red-400">Missing ({data.missing_count})</span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
+        </div>
       </div>
 
       {/* Card Lists Grouped by Type */}
