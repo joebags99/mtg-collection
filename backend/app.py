@@ -73,7 +73,8 @@ def rate_limit(limit_string):
 edhrec = EDHRec()
 
 # In-memory state
-collection: set[str] = set()
+collection: dict[str, int] = {}  # normalized_name -> quantity owned
+deck_lists: dict[str, dict] = {}  # deck_id -> {id, name, commander, cards: {normalized_name: qty}}
 # Cache: commander_name -> {avg_deck, commander_data, timestamp}
 commander_cache: dict[str, dict] = {}
 CACHE_TTL = 3600  # 1 hour
@@ -95,37 +96,81 @@ def normalize_card_name(name: str) -> str:
     return name
 
 
-def parse_csv_collection(content: str) -> set[str]:
-    """Parse CSV from Archidekt or Moxfield export. Returns set of normalized card names."""
-    cards = set()
+def parse_csv_collection(content: str) -> dict[str, int]:
+    """Parse CSV from Archidekt or Moxfield export. Returns dict of normalized card name -> quantity."""
+    cards: dict[str, int] = {}
     reader = csv.DictReader(io.StringIO(content))
     name_columns = ["Name", "name", "Card", "card", "Card Name", "card_name"]
+    qty_columns = ["Quantity", "quantity", "Qty", "qty", "Count", "count"]
 
     for row in reader:
+        name = None
         for col in name_columns:
             if col in row and row[col]:
-                cards.add(normalize_card_name(row[col]))
+                name = normalize_card_name(row[col])
                 break
-        else:
+        if not name:
             first_val = next(iter(row.values()), None)
             if first_val:
-                cards.add(normalize_card_name(first_val))
+                name = normalize_card_name(first_val)
+
+        if name:
+            qty = 1
+            for col in qty_columns:
+                if col in row and row[col]:
+                    try:
+                        qty = int(row[col])
+                    except ValueError:
+                        pass
+                    break
+            cards[name] = cards.get(name, 0) + qty
 
     return cards
 
 
-def parse_text_collection(content: str) -> set[str]:
-    """Parse simple text format: '1 Card Name' or just 'Card Name' per line."""
-    cards = set()
+def parse_text_collection(content: str) -> dict[str, int]:
+    """Parse text format: '1 Card Name' or just 'Card Name' per line. Returns dict name -> qty."""
+    cards: dict[str, int] = {}
     for line in content.strip().splitlines():
         line = line.strip()
         if not line:
             continue
-        match = re.match(r"^\d+x?\s+(.+)", line)
+        match = re.match(r"^(\d+)x?\s+(.+)", line)
         if match:
-            line = match.group(1)
-        cards.add(normalize_card_name(line))
+            qty = int(match.group(1))
+            name = normalize_card_name(match.group(2))
+        else:
+            qty = 1
+            name = normalize_card_name(line)
+        cards[name] = cards.get(name, 0) + qty
     return cards
+
+
+def get_cards_in_decks() -> dict[str, dict]:
+    """Get usage info for all cards across deck lists.
+    Returns: {normalized_name: {total_in_decks: int, decks: [{id, name}]}}
+    """
+    usage: dict[str, dict] = {}
+    for deck_id, deck in deck_lists.items():
+        for card_name, qty in deck.get("cards", {}).items():
+            if card_name not in usage:
+                usage[card_name] = {"total_in_decks": 0, "decks": []}
+            usage[card_name]["total_in_decks"] += qty
+            usage[card_name]["decks"].append({"id": deck_id, "name": deck.get("name", "")})
+    return usage
+
+
+def get_available_collection(exclude_in_decks: bool = False) -> set[str]:
+    """Get the set of card names available (owned and optionally not fully committed to decks)."""
+    if not exclude_in_decks:
+        return set(collection.keys())
+    usage = get_cards_in_decks()
+    available = set()
+    for name, qty in collection.items():
+        used = usage.get(name, {}).get("total_in_decks", 0)
+        if qty > used:
+            available.add(name)
+    return available
 
 
 def get_all_commanders() -> list[dict]:
@@ -471,7 +516,11 @@ async def upload_collection(file: UploadFile = File(...)):
 
     collection.clear()
     collection.update(cards)
-    return {"count": len(collection), "cards": sorted(collection)}
+    return {
+        "count": len(collection),
+        "total_cards": sum(collection.values()),
+        "cards": {name: qty for name, qty in sorted(collection.items())},
+    }
 
 
 @app.post("/api/collection/text")
@@ -490,24 +539,163 @@ async def upload_text_collection(body: dict):
 
     collection.clear()
     collection.update(cards)
-    return {"count": len(collection), "cards": sorted(collection)}
+    return {
+        "count": len(collection),
+        "total_cards": sum(collection.values()),
+        "cards": {name: qty for name, qty in sorted(collection.items())},
+    }
 
 
 @app.get("/api/collection")
 async def get_collection():
-    return {"count": len(collection), "cards": sorted(collection)}
+    return {
+        "count": len(collection),
+        "total_cards": sum(collection.values()),
+        "cards": {name: qty for name, qty in sorted(collection.items())},
+    }
 
 
 @app.post("/api/collection/restore")
 async def restore_collection(body: dict):
-    cards = body.get("cards", [])
+    cards = body.get("cards", {})
     if not cards:
         raise HTTPException(status_code=400, detail="No cards provided")
 
     collection.clear()
-    for card in cards:
-        collection.add(normalize_card_name(card))
-    return {"count": len(collection), "cards": sorted(collection)}
+    # Support both old format (list of strings) and new format (dict name->qty)
+    if isinstance(cards, list):
+        for card in cards:
+            name = normalize_card_name(card)
+            collection[name] = collection.get(name, 0) + 1
+    elif isinstance(cards, dict):
+        for name, qty in cards.items():
+            collection[normalize_card_name(name)] = int(qty)
+    return {
+        "count": len(collection),
+        "total_cards": sum(collection.values()),
+        "cards": {name: qty for name, qty in sorted(collection.items())},
+    }
+
+
+# --- Deck List Management ---
+@app.get("/api/decks")
+async def list_decks():
+    usage = get_cards_in_decks()
+    result = []
+    for deck_id, deck in deck_lists.items():
+        card_count = sum(deck.get("cards", {}).values())
+        result.append({
+            "id": deck_id,
+            "name": deck.get("name", ""),
+            "commander": deck.get("commander", ""),
+            "card_count": card_count,
+        })
+    return {"decks": result}
+
+
+@app.post("/api/decks")
+async def create_deck(body: dict):
+    name = body.get("name", "").strip()
+    commander = body.get("commander", "").strip()
+    cards_text = body.get("cards_text", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="Deck name is required")
+
+    deck_id = f"deck_{int(time.time() * 1000)}"
+
+    # Parse card list
+    cards: dict[str, int] = {}
+    if cards_text:
+        for line in cards_text.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r"^(\d+)x?\s+(.+)", line)
+            if match:
+                qty = int(match.group(1))
+                card_name = normalize_card_name(match.group(2))
+            else:
+                qty = 1
+                card_name = normalize_card_name(line)
+            cards[card_name] = cards.get(card_name, 0) + qty
+
+    deck_lists[deck_id] = {
+        "id": deck_id,
+        "name": name,
+        "commander": commander,
+        "cards": cards,
+    }
+    return deck_lists[deck_id]
+
+
+@app.get("/api/decks/{deck_id}")
+async def get_deck(deck_id: str):
+    if deck_id not in deck_lists:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    return deck_lists[deck_id]
+
+
+@app.put("/api/decks/{deck_id}")
+async def update_deck(deck_id: str, body: dict):
+    if deck_id not in deck_lists:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+    deck = deck_lists[deck_id]
+    if "name" in body:
+        deck["name"] = body["name"].strip()
+    if "commander" in body:
+        deck["commander"] = body["commander"].strip()
+    if "cards_text" in body:
+        cards: dict[str, int] = {}
+        for line in body["cards_text"].strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r"^(\d+)x?\s+(.+)", line)
+            if match:
+                qty = int(match.group(1))
+                card_name = normalize_card_name(match.group(2))
+            else:
+                qty = 1
+                card_name = normalize_card_name(line)
+            cards[card_name] = cards.get(card_name, 0) + qty
+        deck["cards"] = cards
+    return deck
+
+
+@app.delete("/api/decks/{deck_id}")
+async def delete_deck(deck_id: str):
+    if deck_id not in deck_lists:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    del deck_lists[deck_id]
+    return {"ok": True}
+
+
+@app.post("/api/decks/restore")
+async def restore_decks(body: dict):
+    """Restore deck lists from localStorage data."""
+    decks = body.get("decks", {})
+    deck_lists.clear()
+    for deck_id, deck in decks.items():
+        deck_lists[deck_id] = deck
+    return {"count": len(deck_lists)}
+
+
+@app.get("/api/collection/availability")
+async def get_collection_availability():
+    """Get availability info for all cards: owned qty, in-deck qty, available qty."""
+    usage = get_cards_in_decks()
+    result = {}
+    for name, qty in collection.items():
+        used = usage.get(name, {}).get("total_in_decks", 0)
+        decks = usage.get(name, {}).get("decks", [])
+        result[name] = {
+            "owned": qty,
+            "in_decks": used,
+            "available": max(0, qty - used),
+            "decks": decks,
+        }
+    return result
 
 
 @app.get("/api/commanders")
@@ -541,6 +729,7 @@ async def get_commander_detail(
     budget: Optional[str] = None,
     theme: Optional[str] = None,
     include_prices: bool = True,
+    exclude_in_decks: bool = False,
 ):
     """Get commander average deck from EDHREC, compare with collection, categorize by type."""
     # For DFCs, use only the front face name for EDHREC lookups
@@ -574,14 +763,29 @@ async def get_commander_detail(
                 card["card_type"] = scryfall_types[card["name"]]
 
     # Split into owned/missing
+    available = get_available_collection(exclude_in_decks)
+    usage = get_cards_in_decks()
     owned = []
     missing = []
     missing_names = []
     for card in all_cards:
-        if card["name_normalized"] in collection:
-            owned.append({**card, "owned": True})
+        card_usage = usage.get(card["name_normalized"], {})
+        deck_info = card_usage.get("decks", [])
+        qty_owned = collection.get(card["name_normalized"], 0)
+        qty_in_decks = card_usage.get("total_in_decks", 0)
+
+        if card["name_normalized"] in available:
+            owned.append({
+                **card, "owned": True,
+                "qty_owned": qty_owned, "qty_in_decks": qty_in_decks,
+                "in_decks": deck_info,
+            })
         else:
-            missing.append({**card, "owned": False})
+            missing.append({
+                **card, "owned": False,
+                "qty_owned": qty_owned, "qty_in_decks": qty_in_decks,
+                "in_decks": deck_info,
+            })
             missing_names.append(card["name"])
 
     # Fetch prices for missing cards
@@ -681,9 +885,12 @@ async def get_recommendations(
     search: Optional[str] = None,
     min_owned: int = 20,
     limit: int = 50,
+    exclude_in_decks: bool = False,
 ):
     if not collection:
         raise HTTPException(status_code=400, detail="No collection uploaded. Upload your collection first.")
+
+    available = get_available_collection(exclude_in_decks)
 
     commanders = get_cached_commanders()
 
@@ -704,14 +911,14 @@ async def get_recommendations(
         if not deck_cards:
             continue
 
-        owned_count = len(deck_cards & collection)
+        owned_count = len(deck_cards & available)
         missing_count = len(deck_cards) - owned_count
         total = len(deck_cards)
 
         if owned_count >= min_owned:
             missing_names = [
                 card["name"] for card in data.get("decklist", [])
-                if card["name_normalized"] not in collection
+                if card["name_normalized"] not in available
             ]
 
             results.append({

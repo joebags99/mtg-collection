@@ -94,6 +94,7 @@ function MatchBar({ percentage, size = 'sm' }) {
 
 // --- localStorage helpers ---
 const STORAGE_KEY = 'mtg_collection';
+const DECKS_STORAGE_KEY = 'mtg_decks';
 
 function saveCollection(cards) {
   try {
@@ -111,6 +112,24 @@ function loadCollection() {
     console.error('Failed to load collection from localStorage:', e);
   }
   return null;
+}
+
+function saveDecks(decks) {
+  try {
+    localStorage.setItem(DECKS_STORAGE_KEY, JSON.stringify(decks));
+  } catch (e) {
+    console.error('Failed to save decks to localStorage:', e);
+  }
+}
+
+function loadDecks() {
+  try {
+    const data = localStorage.getItem(DECKS_STORAGE_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load decks from localStorage:', e);
+  }
+  return {};
 }
 
 // --- API helpers ---
@@ -346,7 +365,7 @@ function sortResults(results, sortBy) {
   }
 }
 
-function Recommendations({ collectionCount, onSelectCommander, compareList, onToggleCompare }) {
+function Recommendations({ collectionCount, onSelectCommander, compareList, onToggleCompare, excludeInDecks, onToggleExclude, deckCount }) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -366,7 +385,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
     try {
       const color = colorFilter.length > 0 ? colorFilter.join('') : null;
       const data = await apiPost(
-        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${search ? '&search=' + encodeURIComponent(search) : ''}`,
+        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${search ? '&search=' + encodeURIComponent(search) : ''}${excludeInDecks ? '&exclude_in_decks=true' : ''}`,
         {}
       );
       setResults(data.results || []);
@@ -375,7 +394,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
       setError(err.message);
     }
     setLoading(false);
-  }, [collectionCount, colorFilter, minOwned, search]);
+  }, [collectionCount, colorFilter, minOwned, search, excludeInDecks]);
 
   const toggleColor = (c) => {
     setColorFilter(prev =>
@@ -449,6 +468,17 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
           >
             {loading ? 'Loading...' : fetched ? 'Refresh' : 'Get Recommendations'}
           </button>
+          {deckCount > 0 && (
+            <label className="flex items-center gap-2 text-sm cursor-pointer ml-2">
+              <input
+                type="checkbox"
+                checked={excludeInDecks}
+                onChange={onToggleExclude}
+                className="rounded"
+              />
+              <span className="text-gray-400">Exclude cards in decks</span>
+            </label>
+          )}
         </div>
 
         {/* Sort */}
@@ -643,8 +673,14 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
               <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
                 {cards.map(card => (
                   <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                    <CardName name={card.name} className="text-sm" />
-                    <span className="text-xs text-gray-500">{card.category}</span>
+                    <div className="flex items-center gap-1.5">
+                      <AvailDot card={card} />
+                      <CardName name={card.name} className="text-sm" />
+                      <DeckBadges inDecks={card.in_decks} />
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {card.qty_owned > 1 && `x${card.qty_owned} `}{card.category}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -672,7 +708,11 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
               <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
                 {cards.map(card => (
                   <div key={card.name} className="px-3 py-2 flex justify-between items-center">
-                    <CardName name={card.name} className="text-sm" />
+                    <div className="flex items-center gap-1.5">
+                      <AvailDot card={card} />
+                      <CardName name={card.name} className="text-sm" />
+                      <DeckBadges inDecks={card.in_decks} />
+                    </div>
                     <span className="text-xs text-yellow-400/70">
                       {card.price ? `$${card.price.toFixed(2)}` : ''}
                     </span>
@@ -1155,7 +1195,7 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
 }
 
 // --- Commander Detail with progressive loading ---
-function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder }) {
+function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder, excludeInDecks }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1175,13 +1215,14 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, {
         budget: budget || null,
         theme: theme || null,
+        exclude_in_decks: excludeInDecks || null,
       });
       setData(d);
     } catch (err) {
       setError(err.message);
     }
     setLoading(false);
-  }, [commander.name, budget, theme]);
+  }, [commander.name, budget, theme, excludeInDecks]);
 
   useEffect(() => { fetchDetail(); }, [fetchDetail]);
 
@@ -1478,6 +1519,214 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   );
 }
 
+// --- Card Availability Dot ---
+function AvailDot({ card }) {
+  // card has: qty_owned, qty_in_decks, in_decks
+  const owned = card.qty_owned || 0;
+  const inDecks = card.qty_in_decks || 0;
+  const deckNames = (card.in_decks || []).map(d => d.name).join(', ');
+
+  if (owned === 0) {
+    return <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Not owned" />;
+  }
+  if (inDecks === 0) {
+    return <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title={`Owned: ${owned}`} />;
+  }
+  if (owned > inDecks) {
+    return <span className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" title={`Owned: ${owned}, In decks: ${inDecks} (${deckNames})`} />;
+  }
+  return <span className="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0" title={`All ${owned} in decks (${deckNames})`} />;
+}
+
+function DeckBadges({ inDecks }) {
+  if (!inDecks || inDecks.length === 0) return null;
+  return (
+    <span className="inline-flex gap-1 ml-1">
+      {inDecks.map(d => (
+        <span key={d.id} className="text-[10px] bg-gray-700 text-gray-400 px-1 rounded">{d.name}</span>
+      ))}
+    </span>
+  );
+}
+
+// --- My Decks ---
+function MyDecks({ onDecksChanged }) {
+  const [decks, setDecks] = useState({});
+  const [newName, setNewName] = useState('');
+  const [newCommander, setNewCommander] = useState('');
+  const [newCards, setNewCards] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editCards, setEditCards] = useState('');
+  const [error, setError] = useState('');
+
+  // Load on mount
+  useEffect(() => {
+    apiGet('/api/decks').then(data => {
+      const deckMap = {};
+      (data.decks || []).forEach(d => { deckMap[d.id] = d; });
+      setDecks(deckMap);
+    }).catch(() => {});
+  }, []);
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setError('');
+    try {
+      const deck = await apiPost('/api/decks', {
+        name: newName, commander: newCommander, cards_text: newCards,
+      });
+      const updated = { ...decks, [deck.id]: deck };
+      setDecks(updated);
+      saveDecks(updated);
+      onDecksChanged();
+      setNewName(''); setNewCommander(''); setNewCards('');
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await apiPost(`/api/decks/${id}`, {});
+      // Use fetch directly for DELETE
+      await fetch(`${API}/api/decks/${id}`, { method: 'DELETE' });
+      const updated = { ...decks };
+      delete updated[id];
+      setDecks(updated);
+      saveDecks(updated);
+      onDecksChanged();
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleEdit = async (id) => {
+    if (editingId === id) {
+      // Save
+      try {
+        const res = await fetch(`${API}/api/decks/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cards_text: editCards }),
+        });
+        const deck = await res.json();
+        const updated = { ...decks, [id]: deck };
+        setDecks(updated);
+        saveDecks(updated);
+        onDecksChanged();
+        setEditingId(null);
+      } catch (e) { setError(e.message); }
+    } else {
+      // Start editing - load full deck
+      try {
+        const deck = await apiGet(`/api/decks/${id}`);
+        const cardsText = Object.entries(deck.cards || {}).map(([n, q]) => `${q} ${n}`).join('\n');
+        setEditCards(cardsText);
+        setEditingId(id);
+      } catch (e) { setError(e.message); }
+    }
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      <h2 className="text-2xl font-bold">My Decks</h2>
+      <p className="text-gray-400">
+        Add your existing deck lists here. Cards committed to decks can be excluded from
+        recommendations so you only see what's actually available.
+      </p>
+
+      {/* Add new deck */}
+      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
+        <h3 className="font-semibold text-lg">Add Deck</h3>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="block text-xs text-gray-400 mb-1">Deck Name *</label>
+            <input
+              value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="e.g. Ur-Dragon Tribal"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs text-gray-400 mb-1">Commander</label>
+            <input
+              value={newCommander} onChange={e => setNewCommander(e.target.value)}
+              placeholder="e.g. The Ur-Dragon"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Card List (paste from Archidekt/Moxfield export)</label>
+          <textarea
+            value={newCards} onChange={e => setNewCards(e.target.value)}
+            placeholder={"1 Sol Ring\n1 Command Tower\n1 Arcane Signet\n..."}
+            rows={8}
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        <button
+          onClick={handleAdd} disabled={!newName.trim()}
+          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+        >
+          Add Deck
+        </button>
+      </div>
+
+      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+
+      {/* Deck list */}
+      {Object.values(decks).length === 0 && (
+        <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
+      )}
+
+      {Object.values(decks).map(deck => (
+        <div key={deck.id} className="bg-gray-800 rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="font-semibold">{deck.name}</h4>
+              {deck.commander && <p className="text-sm text-gray-400">{deck.commander}</p>}
+              <p className="text-xs text-gray-500">{deck.card_count || Object.keys(deck.cards || {}).length} cards</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleEdit(deck.id)}
+                className={`px-3 py-1 rounded text-sm ${
+                  editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
+                }`}
+              >
+                {editingId === deck.id ? 'Save' : 'Edit'}
+              </button>
+              <button
+                onClick={() => handleDelete(deck.id)}
+                className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-sm"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+          {editingId === deck.id && (
+            <textarea
+              value={editCards} onChange={e => setEditCards(e.target.value)}
+              rows={10}
+              className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+            />
+          )}
+        </div>
+      ))}
+
+      {/* Legend */}
+      {Object.values(decks).length > 0 && (
+        <div className="bg-gray-800/50 rounded-lg p-4 space-y-2">
+          <h4 className="text-sm font-medium text-gray-400">Availability Legend</h4>
+          <div className="flex flex-wrap gap-4 text-xs text-gray-400">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Main App ---
 
 function App() {
@@ -1486,11 +1735,13 @@ function App() {
   const [selectedCommander, setSelectedCommander] = useState(null);
   const [compareList, setCompareList] = useState([]);
   const [deckBuilderData, setDeckBuilderData] = useState(null);
+  const [excludeInDecks, setExcludeInDecks] = useState(false);
+  const [deckCount, setDeckCount] = useState(0);
 
-  // Restore collection from localStorage on startup
+  // Restore collection and decks from localStorage on startup
   useEffect(() => {
     const saved = loadCollection();
-    if (saved && saved.length > 0) {
+    if (saved) {
       apiPost('/api/collection/restore', { cards: saved }).then(data => {
         setCollectionCount(data.count || 0);
         if (data.count > 0) setTab('recommend');
@@ -1502,6 +1753,14 @@ function App() {
     } else {
       apiGet('/api/collection').then(data => {
         setCollectionCount(data.count || 0);
+      }).catch(() => {});
+    }
+
+    // Restore decks
+    const savedDecks = loadDecks();
+    if (savedDecks && Object.keys(savedDecks).length > 0) {
+      apiPost('/api/decks/restore', { decks: savedDecks }).then(data => {
+        setDeckCount(data.count || 0);
       }).catch(() => {});
     }
   }, []);
@@ -1520,7 +1779,7 @@ function App() {
     setCompareList(prev => {
       const exists = prev.find(c => c.name === cmd.name);
       if (exists) return prev.filter(c => c.name !== cmd.name);
-      if (prev.length >= 3) return prev; // Max 3
+      if (prev.length >= 3) return prev;
       return [...prev, cmd];
     });
   };
@@ -1530,10 +1789,17 @@ function App() {
     setTab('deckbuilder');
   };
 
+  const handleDecksChanged = () => {
+    apiGet('/api/decks').then(data => {
+      setDeckCount((data.decks || []).length);
+    }).catch(() => {});
+  };
+
   const tabs = [
     { id: 'upload', label: 'Upload Collection' },
     { id: 'recommend', label: 'Recommendations' },
-    { id: 'search', label: 'Search Commanders' },
+    { id: 'search', label: 'Search' },
+    { id: 'mydecks', label: `My Decks${deckCount ? ` (${deckCount})` : ''}` },
   ];
 
   return (
@@ -1544,7 +1810,7 @@ function App() {
           <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
           {collectionCount > 0 && (
             <span className="text-sm text-gray-400">
-              Collection: {collectionCount} cards
+              Collection: {collectionCount} unique cards
             </span>
           )}
         </div>
@@ -1606,6 +1872,9 @@ function App() {
             onSelectCommander={handleSelectCommander}
             compareList={compareList}
             onToggleCompare={handleToggleCompare}
+            excludeInDecks={excludeInDecks}
+            onToggleExclude={() => setExcludeInDecks(prev => !prev)}
+            deckCount={deckCount}
           />
         </div>
 
@@ -1618,12 +1887,17 @@ function App() {
           />
         </div>
 
+        <div style={{ display: tab === 'mydecks' ? 'block' : 'none' }}>
+          <MyDecks onDecksChanged={handleDecksChanged} />
+        </div>
+
         {tab === 'detail' && selectedCommander && (
           <CommanderDetail
             commander={selectedCommander}
             collectionCount={collectionCount}
             onBack={() => setTab('recommend')}
             onOpenDeckBuilder={handleOpenDeckBuilder}
+            excludeInDecks={excludeInDecks}
           />
         )}
 
