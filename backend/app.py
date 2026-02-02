@@ -905,8 +905,16 @@ async def validate_cards(body: dict):
     invalid = []
 
     # Batch check via Scryfall collection endpoint (75 per batch)
-    for i in range(0, len(card_names), 75):
-        batch = card_names[i:i+75]
+    # For DFCs like "Etali, Primal Conqueror // Etali, Primal Sickness", use front face only
+    cleaned_batch_map = {}  # cleaned_name -> [original_names]
+    for name in card_names:
+        front = name.split("//")[0].strip() if "//" in name else name
+        cleaned_batch_map.setdefault(front, []).append(name)
+
+    cleaned_names = list(cleaned_batch_map.keys())
+
+    for i in range(0, len(cleaned_names), 75):
+        batch = cleaned_names[i:i+75]
         identifiers = [{"name": name} for name in batch]
         try:
             resp = requests.post(
@@ -919,23 +927,21 @@ async def validate_cards(body: dict):
                 found_names = set()
                 for card in data.get("data", []):
                     found_names.add(normalize_card_name(card["name"]))
-                for name in batch:
-                    if normalize_card_name(name) in found_names:
-                        valid.append(name)
+                for cleaned in batch:
+                    originals = cleaned_batch_map.get(cleaned, [cleaned])
+                    if normalize_card_name(cleaned) in found_names:
+                        valid.extend(originals)
                     else:
-                        invalid.append(name)
-                # Also check not_found
-                for nf in data.get("not_found", []):
-                    nf_name = nf.get("name", "")
-                    if nf_name and nf_name not in invalid:
-                        invalid.append(nf_name)
+                        invalid.extend(originals)
             else:
                 # If Scryfall fails, don't block — treat all as valid
-                valid.extend(batch)
+                for cleaned in batch:
+                    valid.extend(cleaned_batch_map.get(cleaned, [cleaned]))
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Card validation error: {e}")
-            valid.extend(batch)
+            for cleaned in batch:
+                valid.extend(cleaned_batch_map.get(cleaned, [cleaned]))
 
     return {"valid": valid, "invalid": invalid}
 

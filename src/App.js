@@ -1759,7 +1759,7 @@ function DeckBadges({ inDecks }) {
 }
 
 // --- My Decks ---
-function MyDecks({ onDecksChanged }) {
+function MyDecks({ onDecksChanged, decksReady }) {
   const [decks, setDecks] = useState({});
   const [newName, setNewName] = useState('');
   const [newCommander, setNewCommander] = useState('');
@@ -1770,14 +1770,15 @@ function MyDecks({ onDecksChanged }) {
   const [validating, setValidating] = useState(false);
   const [invalidCards, setInvalidCards] = useState([]);
 
-  // Load on mount
+  // Load decks only after restore is complete
   useEffect(() => {
+    if (!decksReady) return;
     apiGet('/api/decks').then(data => {
       const deckMap = {};
       (data.decks || []).forEach(d => { deckMap[d.id] = d; });
       setDecks(deckMap);
     }).catch(() => {});
-  }, []);
+  }, [decksReady]);
 
   // Parse card names from text
   const parseCardNames = (text) => {
@@ -2026,6 +2027,7 @@ function App() {
   const [deckBuilderData, setDeckBuilderData] = useState(null);
   const [excludeInDecks, setExcludeInDecks] = useState(false);
   const [deckCount, setDeckCount] = useState(0);
+  const [decksReady, setDecksReady] = useState(false);
 
   // Restore collection and decks from localStorage on startup
   useEffect(() => {
@@ -2045,12 +2047,14 @@ function App() {
       }).catch(() => {});
     }
 
-    // Restore decks
+    // Restore decks, then signal ready
     const savedDecks = loadDecks();
     if (savedDecks && Object.keys(savedDecks).length > 0) {
       apiPost('/api/decks/restore', { decks: savedDecks }).then(data => {
         setDeckCount(data.count || 0);
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => setDecksReady(true));
+    } else {
+      setDecksReady(true);
     }
   }, []);
 
@@ -2177,7 +2181,7 @@ function App() {
         </div>
 
         <div style={{ display: tab === 'mydecks' ? 'block' : 'none' }}>
-          <MyDecks onDecksChanged={handleDecksChanged} />
+          <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
         </div>
 
         {tab === 'detail' && selectedCommander && (
