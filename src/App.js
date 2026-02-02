@@ -688,9 +688,29 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
 }
 
 // --- Deck Builder ---
+
+// Cards that can have any number of copies
+const UNLIMITED_CARDS = new Set([
+  'nazgul', 'persistent petitioners', 'rat colony', 'relentless rats',
+  'shadowborn apostle', 'slime against humanity', 'dragon\'s approach',
+  'seven dwarves', 'plains', 'island', 'swamp', 'mountain', 'forest',
+  'snow-covered plains', 'snow-covered island', 'snow-covered swamp',
+  'snow-covered mountain', 'snow-covered forest', 'wastes',
+]);
+
+function canHaveMultiple(name) {
+  return UNLIMITED_CARDS.has(name.toLowerCase());
+}
+
+function DeckCardImage({ name, small }) {
+  const src = `https://api.scryfall.com/cards/named?format=image&version=${small ? 'small' : 'normal'}&exact=${encodeURIComponent(name)}`;
+  return <img src={src} alt={name} className="rounded-lg shadow-lg" loading="lazy" />;
+}
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
+  const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
 
   // Initialize with avg deck
   useEffect(() => {
@@ -698,8 +718,8 @@ function DeckBuilder({ data, commander, onBack }) {
       const initial = [...data.owned_cards, ...data.missing_cards].map(c => ({
         ...c,
         included: true,
+        qty: 1,
       }));
-      // Add recommendations as not-included
       const recCards = (data.recommendations || []).map(c => ({
         name: c.name,
         card_type: c.card_type || 'Other',
@@ -707,6 +727,7 @@ function DeckBuilder({ data, commander, onBack }) {
         synergy: c.synergy,
         included: false,
         isRecommendation: true,
+        qty: 1,
       }));
       setDeck([...initial, ...recCards]);
     }
@@ -714,35 +735,222 @@ function DeckBuilder({ data, commander, onBack }) {
 
   const includedCards = deck.filter(c => c.included);
   const excludedCards = deck.filter(c => !c.included);
-  const deckSize = includedCards.length;
+  const deckSize = includedCards.reduce((sum, c) => sum + c.qty, 0);
 
   const toggle = (name) => {
     setDeck(prev => prev.map(c =>
-      c.name === name ? { ...c, included: !c.included } : c
+      c.name === name ? { ...c, included: !c.included, qty: c.included ? c.qty : 1 } : c
     ));
   };
 
+  const setQty = (name, qty) => {
+    const val = Math.max(0, qty);
+    setDeck(prev => prev.map(c => {
+      if (c.name !== name) return c;
+      if (val === 0) return { ...c, included: false, qty: 1 };
+      return { ...c, qty: val, included: true };
+    }));
+  };
+
   const handleExport = () => {
-    const text = includedCards.map(c => `1 ${c.name}`).join('\n');
+    const text = includedCards.map(c => `${c.qty} ${c.name}`).join('\n');
     setExportText(text);
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
   const includedGroups = groupByType(includedCards);
 
+  // --- View renderers ---
+  const renderListView = () => (
+    <div className="grid md:grid-cols-3 gap-6">
+      <div className="md:col-span-2 space-y-4">
+        <h3 className="text-lg font-semibold text-green-400">In Deck ({deckSize})</h3>
+        {includedGroups.map(({ type, cards }) => (
+          <div key={type}>
+            <h4 className="text-sm font-medium text-gray-400 mb-1">
+              {type} ({cards.reduce((s, c) => s + c.qty, 0)})
+            </h4>
+            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              {cards.map(card => (
+                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+                  <div className="flex items-center gap-2">
+                    {card.owned ? (
+                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
+                    )}
+                    <CardName name={card.name} className="text-sm" />
+                    {card.isRecommendation && <span className="text-xs text-purple-400">rec</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {canHaveMultiple(card.name) ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setQty(card.name, card.qty - 1)}
+                          className="w-5 h-5 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center"
+                        >-</button>
+                        <span className="text-xs w-5 text-center">{card.qty}</span>
+                        <button
+                          onClick={() => setQty(card.name, card.qty + 1)}
+                          className="w-5 h-5 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center"
+                        >+</button>
+                      </div>
+                    ) : (
+                      card.qty > 1 && <span className="text-xs text-gray-500">x{card.qty}</span>
+                    )}
+                    <button
+                      onClick={() => toggle(card.name)}
+                      className="text-xs text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-400">Removed / Available ({excludedCards.length})</h3>
+        <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
+          {excludedCards.map(card => (
+            <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+              <div className="flex items-center gap-2">
+                {card.owned ? (
+                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+                )}
+                <CardName name={card.name} className="text-sm text-gray-400" />
+              </div>
+              <button
+                onClick={() => toggle(card.name)}
+                className="text-xs text-green-400 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                Add
+              </button>
+            </div>
+          ))}
+          {excludedCards.length === 0 && (
+            <p className="px-3 py-4 text-gray-500 text-sm">No removed cards</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderGalleryView = () => (
+    <div className="space-y-6">
+      {includedGroups.map(({ type, cards }) => (
+        <div key={type}>
+          <h4 className="text-sm font-medium text-gray-400 mb-2">
+            {type} ({cards.reduce((s, c) => s + c.qty, 0)})
+          </h4>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8 gap-2">
+            {cards.map(card => (
+              <div key={card.name} className="relative group">
+                <DeckCardImage name={card.name} small />
+                {card.qty > 1 && (
+                  <span className="absolute top-1 right-1 bg-black/80 text-white text-xs font-bold px-1.5 py-0.5 rounded">
+                    x{card.qty}
+                  </span>
+                )}
+                {card.owned && (
+                  <span className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 border border-black" />
+                )}
+                <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 rounded-lg">
+                  {canHaveMultiple(card.name) && (
+                    <>
+                      <button onClick={() => setQty(card.name, card.qty - 1)}
+                        className="w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">-</button>
+                      <span className="text-xs font-bold w-4 text-center">{card.qty}</span>
+                      <button onClick={() => setQty(card.name, card.qty + 1)}
+                        className="w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">+</button>
+                    </>
+                  )}
+                  <button onClick={() => toggle(card.name)}
+                    className="w-6 h-6 rounded bg-red-700 hover:bg-red-600 text-xs flex items-center justify-center ml-1">✕</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderStacksView = () => (
+    <div className="space-y-6">
+      {includedGroups.map(({ type, cards }) => (
+        <div key={type}>
+          <h4 className="text-sm font-medium text-gray-400 mb-2">
+            {type} ({cards.reduce((s, c) => s + c.qty, 0)})
+          </h4>
+          <div className="flex flex-wrap gap-1">
+            {cards.map((card, idx) => (
+              <div
+                key={card.name}
+                className="relative group flex-shrink-0"
+                style={{
+                  width: '130px',
+                  marginRight: idx < cards.length - 1 ? '-90px' : '0',
+                  zIndex: idx,
+                }}
+              >
+                <div className="transition-transform group-hover:translate-y-[-20px] group-hover:z-50 relative">
+                  <DeckCardImage name={card.name} small />
+                  {card.qty > 1 && (
+                    <span className="absolute top-1 right-1 bg-black/80 text-white text-xs font-bold px-1.5 py-0.5 rounded">
+                      x{card.qty}
+                    </span>
+                  )}
+                  {card.owned && (
+                    <span className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 border border-black" />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
           <p className={`text-sm mt-1 ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
             {deckSize}/100 cards (including commander)
           </p>
         </div>
-        <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-medium">
-          Export Deck
-        </button>
+        <div className="flex items-center gap-3">
+          {/* View mode toggle */}
+          <div className="flex bg-gray-800 rounded overflow-hidden">
+            {[
+              { id: 'list', label: 'List' },
+              { id: 'gallery', label: 'Gallery' },
+              { id: 'stacks', label: 'Stacks' },
+            ].map(v => (
+              <button
+                key={v.id}
+                onClick={() => setViewMode(v.id)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-medium">
+            Export Deck
+          </button>
+        </div>
       </div>
 
       {exportText && (
@@ -761,66 +969,9 @@ function DeckBuilder({ data, commander, onBack }) {
         </div>
       )}
 
-      <div className="grid md:grid-cols-3 gap-6">
-        {/* Included cards */}
-        <div className="md:col-span-2 space-y-4">
-          <h3 className="text-lg font-semibold text-green-400">In Deck ({deckSize})</h3>
-          {includedGroups.map(({ type, cards }) => (
-            <div key={type}>
-              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
-              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
-                {cards.map(card => (
-                  <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
-                    <div className="flex items-center gap-2">
-                      {card.owned ? (
-                        <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
-                      ) : (
-                        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
-                      )}
-                      <CardName name={card.name} className="text-sm" />
-                      {card.isRecommendation && <span className="text-xs text-purple-400">rec</span>}
-                    </div>
-                    <button
-                      onClick={() => toggle(card.name)}
-                      className="text-xs text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Excluded / available to add */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-400">Removed / Available ({excludedCards.length})</h3>
-          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
-            {excludedCards.map(card => (
-              <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
-                <div className="flex items-center gap-2">
-                  {card.owned ? (
-                    <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                  ) : (
-                    <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
-                  )}
-                  <CardName name={card.name} className="text-sm text-gray-400" />
-                </div>
-                <button
-                  onClick={() => toggle(card.name)}
-                  className="text-xs text-green-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  Add
-                </button>
-              </div>
-            ))}
-            {excludedCards.length === 0 && (
-              <p className="px-3 py-4 text-gray-500 text-sm">No removed cards</p>
-            )}
-          </div>
-        </div>
-      </div>
+      {viewMode === 'list' && renderListView()}
+      {viewMode === 'gallery' && renderGalleryView()}
+      {viewMode === 'stacks' && renderStacksView()}
     </div>
   );
 }
