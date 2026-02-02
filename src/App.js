@@ -267,6 +267,11 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
   const [partnerType, setPartnerType] = useState('');
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const autoSelectedRef = useRef(false);
+
+  useEffect(() => {
+    autoSelectedRef.current = false;
+  }, [commanderName]);
 
   useEffect(() => {
     if (!commanderName) { setPartners([]); setPartnerType(''); return; }
@@ -275,8 +280,9 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
       .then(data => {
         setPartnerType(data.partner_type || '');
         setPartners(data.partners || []);
-        // If partner_with or partner_variant with only one option, auto-select
-        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1) {
+        // If partner_with or partner_variant with only one option, auto-select once
+        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1 && !autoSelectedRef.current) {
+          autoSelectedRef.current = true;
           onSelectPartner(data.partners[0]);
         }
       })
@@ -1450,7 +1456,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="space-y-6">
         <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
