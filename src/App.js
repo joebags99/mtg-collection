@@ -1128,6 +1128,108 @@ function ManaCurve({ cards }) {
   );
 }
 
+function DeckStats({ cards }) {
+  // Type counts
+  const typeCounts = {};
+  let totalCards = 0;
+  let totalCmc = 0;
+  let nonLandCount = 0;
+
+  // Color pip counts from mana_cost strings like "{2}{U}{B}"
+  const pipCounts = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+
+  for (const card of cards) {
+    const qty = card.qty || 1;
+    const type = card.card_type || 'Other';
+    typeCounts[type] = (typeCounts[type] || 0) + qty;
+    totalCards += qty;
+
+    if (type.toLowerCase() !== 'land') {
+      totalCmc += (card.cmc || 0) * qty;
+      nonLandCount += qty;
+    }
+
+    // Count color pips
+    const cost = card.mana_cost || '';
+    for (const color of ['W', 'U', 'B', 'R', 'G']) {
+      const matches = cost.match(new RegExp(`\\{[^}]*${color}[^}]*\\}`, 'g'));
+      if (matches) pipCounts[color] += matches.length * qty;
+    }
+  }
+
+  const avgCmc = nonLandCount > 0 ? (totalCmc / nonLandCount).toFixed(2) : '0.00';
+  const totalPips = Object.values(pipCounts).reduce((a, b) => a + b, 0);
+
+  const typeOrder = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+  const sortedTypes = typeOrder.filter(t => typeCounts[t] > 0);
+
+  const typeColors = {
+    Creature: 'bg-green-600', Instant: 'bg-blue-500', Sorcery: 'bg-red-500',
+    Enchantment: 'bg-purple-500', Artifact: 'bg-yellow-600', Planeswalker: 'bg-orange-500',
+    Land: 'bg-amber-800', Other: 'bg-gray-500',
+  };
+
+  const pipColors = {
+    W: { bg: '#f9faf4', text: '#333' },
+    U: { bg: '#0e68ab', text: '#fff' },
+    B: { bg: '#2b2b2b', text: '#ccc' },
+    R: { bg: '#d32029', text: '#fff' },
+    G: { bg: '#00733e', text: '#fff' },
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+      <h4 className="text-sm font-semibold text-gray-300">Deck Statistics</h4>
+
+      {/* Average CMC */}
+      <div className="text-center">
+        <span className="text-3xl font-bold text-blue-400">{avgCmc}</span>
+        <p className="text-xs text-gray-500 mt-0.5">Avg. Mana Value</p>
+      </div>
+
+      {/* Type breakdown */}
+      <div className="space-y-1.5">
+        <p className="text-xs text-gray-400 font-medium">Card Types</p>
+        {sortedTypes.map(type => (
+          <div key={type} className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 w-24 truncate">{type}</span>
+            <div className="flex-1 bg-gray-700 rounded-full h-2">
+              <div
+                className={`${typeColors[type] || 'bg-gray-500'} h-2 rounded-full transition-all duration-300`}
+                style={{ width: `${(typeCounts[type] / totalCards) * 100}%` }}
+              />
+            </div>
+            <span className="text-xs text-gray-400 w-6 text-right">{typeCounts[type]}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Color pip distribution */}
+      {totalPips > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-gray-400 font-medium">Color Pips ({totalPips})</p>
+          <div className="flex gap-1">
+            {['W', 'U', 'B', 'R', 'G'].filter(c => pipCounts[c] > 0).map(color => (
+              <div
+                key={color}
+                className="flex-1 rounded-md py-1.5 text-center"
+                style={{
+                  backgroundColor: pipColors[color].bg,
+                  color: pipColors[color].text,
+                  flex: pipCounts[color],
+                }}
+              >
+                <span className="text-sm font-bold">{pipCounts[color]}</span>
+                <p className="text-[10px] opacity-75">{color}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
@@ -1381,8 +1483,13 @@ function DeckBuilder({ data, commander, onBack }) {
         </div>
       )}
 
-      {/* Mana Curve */}
-      <ManaCurve cards={includedCards} />
+      {/* Deck Stats Panel */}
+      <div className="grid md:grid-cols-3 gap-4">
+        <div className="md:col-span-2">
+          <ManaCurve cards={includedCards} />
+        </div>
+        <DeckStats cards={includedCards} />
+      </div>
 
       {viewMode === 'list' && renderListView()}
       {viewMode === 'gallery' && renderGalleryView()}
