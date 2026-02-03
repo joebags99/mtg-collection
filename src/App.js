@@ -1152,11 +1152,14 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
       >
         <span className="text-xs text-gray-500 w-4 text-center flex-shrink-0">{card.qty}</span>
         {card.owned ? (
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
         ) : (
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="Need to buy" />
         )}
         <span className="text-xs truncate flex-1">{card.name}</span>
+        {!card.owned && card.price > 0 && (
+          <span className="text-[10px] text-yellow-400 flex-shrink-0">${card.price.toFixed(2)}</span>
+        )}
         {canMultiple && (
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
             <button
@@ -1408,6 +1411,13 @@ function DeckBuilder({ data, commander, onBack }) {
   const excludedCards = deck.filter(c => !c.included);
   const deckSize = includedCards.reduce((sum, c) => sum + c.qty, 0);
 
+  // Calculate owned vs needed and price
+  const ownedCount = includedCards.filter(c => c.owned).reduce((sum, c) => sum + c.qty, 0);
+  const neededCount = includedCards.filter(c => !c.owned).reduce((sum, c) => sum + c.qty, 0);
+  const priceToComplete = includedCards
+    .filter(c => !c.owned && c.price)
+    .reduce((sum, c) => sum + (c.price * c.qty), 0);
+
   const toggle = (name) => {
     setDeck(prev => prev.map(c =>
       c.name === name ? { ...c, included: !c.included, qty: c.included ? c.qty : 1 } : c
@@ -1553,17 +1563,25 @@ function DeckBuilder({ data, commander, onBack }) {
   );
 
   const renderStacksView = () => {
-    // Pair columns vertically: shorter types stacked under taller types
+    // Smart column pairing: minimize total height by grouping shorter lists together
     const groupMap = {};
     includedGroups.forEach(g => { groupMap[g.type] = g.cards; });
 
-    // Create pairs: [Creature/Instant], [Sorcery/Enchantment], [Artifact/Planeswalker], [Land/Other]
-    const pairs = [
-      ['Creature', 'Instant'],
-      ['Sorcery', 'Enchantment'],
-      ['Artifact', 'Planeswalker'],
-      ['Land', 'Other'],
-    ];
+    // Get types sorted by card count (descending)
+    const typesWithCounts = includedGroups
+      .map(g => ({ type: g.type, count: g.cards.length }))
+      .sort((a, b) => b.count - a.count);
+
+    // Bin-packing: distribute types into 4 columns to minimize max height
+    const columns = [[], [], [], []];
+    const columnHeights = [0, 0, 0, 0];
+
+    for (const { type, count } of typesWithCounts) {
+      // Find column with smallest height
+      const minIdx = columnHeights.indexOf(Math.min(...columnHeights));
+      columns[minIdx].push(type);
+      columnHeights[minIdx] += count;
+    }
 
     const renderColumn = (type) => {
       const cards = groupMap[type];
@@ -1593,10 +1611,9 @@ function DeckBuilder({ data, commander, onBack }) {
 
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {pairs.map(([top, bottom]) => (
-          <div key={`${top}-${bottom}`} className="space-y-4">
-            {renderColumn(top)}
-            {renderColumn(bottom)}
+        {columns.map((types, colIdx) => (
+          <div key={colIdx} className="space-y-4">
+            {types.map(type => renderColumn(type))}
           </div>
         ))}
       </div>
@@ -1609,9 +1626,21 @@ function DeckBuilder({ data, commander, onBack }) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
-          <p className={`text-sm mt-1 ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
-            {deckSize}/100 cards (including commander)
-          </p>
+          <div className="flex items-center gap-4 mt-1 flex-wrap">
+            <p className={`text-sm ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
+              {deckSize}/100 cards
+            </p>
+            <p className="text-sm">
+              <span className="text-green-400">{ownedCount} owned</span>
+              <span className="text-gray-500 mx-1">|</span>
+              <span className="text-red-400">{neededCount} needed</span>
+            </p>
+            {priceToComplete > 0 && (
+              <p className="text-sm text-yellow-400">
+                ~${priceToComplete.toFixed(2)} to complete
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* View mode toggle */}
