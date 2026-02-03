@@ -1184,24 +1184,22 @@ async def get_collection_stats():
     card_names = list(collection.keys())
 
     # Fetch types, mana, and prices in bulk - with error handling for timeouts
-    # For large collections, limit API calls to avoid Scryfall rate limits/timeouts
-    MAX_CARDS_FOR_API = 500  # Only fetch detailed data for first 500 cards
-    api_card_names = card_names[:MAX_CARDS_FOR_API] if len(card_names) > MAX_CARDS_FOR_API else card_names
-
+    # The bulk fetch functions handle batching (75 cards at a time) and caching internally
+    # First load may be slow but subsequent loads will use cached data
     try:
-        types = fetch_card_types_bulk(api_card_names)
+        types = fetch_card_types_bulk(card_names)
     except Exception as e:
         logger.error(f"Failed to fetch types: {e}")
         types = {}
 
     try:
-        mana = fetch_card_mana_bulk(api_card_names)
+        mana = fetch_card_mana_bulk(card_names)
     except Exception as e:
         logger.error(f"Failed to fetch mana data: {e}")
         mana = {}
 
     try:
-        prices = fetch_prices_bulk(api_card_names)
+        prices = fetch_prices_bulk(card_names)
     except Exception as e:
         logger.error(f"Failed to fetch prices: {e}")
         prices = {}
