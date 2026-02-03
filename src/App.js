@@ -2675,14 +2675,13 @@ function CollectionStats({ collectionCount }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (collectionCount > 0 && !stats) {
-      setLoading(true);
-      apiGet('/api/collection/stats')
-        .then(data => { setStats(data); setLoading(false); })
-        .catch(e => { setError(e.message); setLoading(false); });
-    }
-  }, [collectionCount, stats]);
+  const loadStats = () => {
+    setLoading(true);
+    setError('');
+    apiGet('/api/collection/stats')
+      .then(data => { setStats(data); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  };
 
   if (collectionCount === 0) {
     return (
@@ -2711,11 +2710,34 @@ function CollectionStats({ collectionCount }) {
       <div className="space-y-6">
         <h2 className="text-2xl font-bold">Collection Statistics</h2>
         <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+        <button onClick={loadStats} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">
+          Retry
+        </button>
       </div>
     );
   }
 
-  if (!stats) return null;
+  if (!stats) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <div className="text-center py-12 space-y-4">
+          <p className="text-gray-400">
+            Analyze your {collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.
+          </p>
+          <p className="text-xs text-gray-500">
+            This fetches data from Scryfall and may take a moment for large collections.
+          </p>
+          <button
+            onClick={loadStats}
+            className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors"
+          >
+            Load Statistics
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const typeOrder = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
   const typeColors = {
@@ -3205,9 +3227,11 @@ function App() {
           <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
         </div>
 
-        <div style={{ display: tab === 'stats' ? 'block' : 'none' }}>
-          <CollectionStats collectionCount={collectionCount} />
-        </div>
+        {tab === 'stats' && (
+          <div className="page-fade-in">
+            <CollectionStats collectionCount={collectionCount} />
+          </div>
+        )}
 
         {tab === 'detail' && selectedCommander && (
           <div className="page-fade-in">
