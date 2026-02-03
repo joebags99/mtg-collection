@@ -1346,15 +1346,20 @@ function DeckStats({ cards }) {
             {['W', 'U', 'B', 'R', 'G'].filter(c => pipCounts[c] > 0).map(color => (
               <div
                 key={color}
-                className="flex-1 rounded-md py-1.5 flex flex-col items-center justify-center"
+                className="flex-1 rounded-md py-3 flex items-center justify-center relative overflow-hidden"
                 style={{
                   backgroundColor: pipColors[color].bg,
                   color: pipColors[color].text,
                   flex: pipCounts[color],
+                  minWidth: '36px',
                 }}
               >
-                <ManaSymbol symbol={color} size={20} />
-                <span className="text-sm font-bold mt-0.5">{pipCounts[color]}</span>
+                {/* Background icon at low opacity */}
+                <div className="absolute inset-0 flex items-center justify-center opacity-30">
+                  <ManaSymbol symbol={color} size={32} />
+                </div>
+                {/* Count in foreground */}
+                <span className="text-lg font-bold relative z-10">{pipCounts[color]}</span>
               </div>
             ))}
           </div>
@@ -2698,16 +2703,21 @@ function CollectionStats({ collectionCount }) {
                 {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
                   <div
                     key={color}
-                    className="rounded-lg py-3 flex flex-col items-center justify-center transition-all"
+                    className="rounded-lg py-4 flex flex-col items-center justify-center transition-all relative overflow-hidden"
                     style={{
                       backgroundColor: pipColors[color].bg,
                       color: pipColors[color].text,
                       flex: stats.color_counts[color],
+                      minWidth: '60px',
                     }}
                   >
-                    <ManaSymbol symbol={color} size={28} />
-                    <span className="text-lg font-bold">{stats.color_counts[color]}</span>
-                    <p className="text-[10px] opacity-75">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
+                    {/* Background icon at low opacity */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                      <ManaSymbol symbol={color} size={56} />
+                    </div>
+                    {/* Content in foreground */}
+                    <span className="text-xl font-bold relative z-10">{stats.color_counts[color]}</span>
+                    <p className="text-[10px] opacity-75 relative z-10">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
                   </div>
                 ))}
               </div>

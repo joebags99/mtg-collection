@@ -1537,7 +1537,8 @@ async def get_commander_detail(
     all_card_names = [card["name"] for card in all_cards]
     mana_data = fetch_card_mana_bulk(all_card_names)
     for card in all_cards:
-        minfo = mana_data.get(card["name"], {})
+        # Lookup by normalized name since fetch_card_mana_bulk normalizes keys
+        minfo = mana_data.get(card["name_normalized"], mana_data.get(card["name"], {}))
         card["cmc"] = minfo.get("cmc", 0)
         card["mana_cost"] = minfo.get("mana_cost", "")
 
