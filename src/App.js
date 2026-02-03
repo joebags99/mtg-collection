@@ -2411,13 +2411,15 @@ function AuthModal({ isOpen, onClose, onLogin }) {
       saveAuthToken(data.token);
       saveAuthUser(data.user);
 
-      // Notify parent
+      // Notify parent and close
       onLogin(data.user, data.token);
       onClose();
+      setLoading(false);
     } catch (err) {
-      setError(err.message);
+      console.error('Auth error:', err);
+      setError(err.message || 'Something went wrong. Check if the backend is running.');
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   if (!isOpen) return null;
