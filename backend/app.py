@@ -802,20 +802,26 @@ def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
             resp = requests.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
-                timeout=15,
+                timeout=30,
             )
             if resp.status_code == 200:
                 for card in resp.json().get("data", []):
                     name = card.get("name", "")
+                    normalized = normalize_card_name(name)
                     cmc = card.get("cmc", 0)
                     mana_cost = card.get("mana_cost", "")
+                    type_line = card.get("type_line", "")
                     # For DFCs, use front face mana cost
                     if not mana_cost and card.get("card_faces"):
                         mana_cost = card["card_faces"][0].get("mana_cost", "")
                         cmc = card.get("cmc", 0)
                     entry = {"cmc": cmc, "mana_cost": mana_cost}
-                    scryfall_mana_cache[name] = entry
-                    result[name] = entry
+                    scryfall_mana_cache[normalized] = entry
+                    result[normalized] = entry
+                    # Also cache the type while we're here
+                    if normalized not in scryfall_type_cache:
+                        card_type = _parse_type_line(type_line)
+                        scryfall_type_cache[normalized] = card_type
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall mana fetch error: {e}")
@@ -840,15 +846,16 @@ def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
             resp = requests.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
-                timeout=15,
+                timeout=30,
             )
             if resp.status_code == 200:
                 for card in resp.json().get("data", []):
                     name = card.get("name", "")
+                    normalized = normalize_card_name(name)
                     type_line = card.get("type_line", "")
                     card_type = _parse_type_line(type_line)
-                    scryfall_type_cache[name] = card_type
-                    result[name] = card_type
+                    scryfall_type_cache[normalized] = card_type
+                    result[normalized] = card_type
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall type fetch error: {e}")
