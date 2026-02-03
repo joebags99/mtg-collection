@@ -13,62 +13,28 @@ const COLOR_MAP = {
 
 const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 
-// --- Mana Symbol Sprite Component ---
-// Maps mana symbols to positions in the Mana.svg sprite
-// SVG viewBox: -945 -210.002 1045 730.002 (width 1045, height 730)
-// Each symbol is ~100x100px centered at its coordinates
-const MANA_POSITIONS = {
-  // Row 1 (y=-160): Numbers 0-9
-  '0': { x: -895, y: -160 }, '1': { x: -790, y: -160 }, '2': { x: -685, y: -160 },
-  '3': { x: -580, y: -160 }, '4': { x: -475, y: -160 }, '5': { x: -370, y: -160 },
-  '6': { x: -265, y: -160 }, '7': { x: -160, y: -160 }, '8': { x: -55, y: -160 },
-  '9': { x: 50, y: -160 },
-  // Row 2 (y=-55): Numbers 10-20
-  '10': { x: 50, y: -55 }, '11': { x: -55, y: -55 }, '12': { x: -160, y: -55 },
-  '13': { x: -265, y: -55 }, '14': { x: -475, y: -55 }, '15': { x: -580, y: -55 },
-  '16': { x: -685, y: -55 }, '17': { x: -790, y: -55 }, '18': { x: -895, y: -55 },
-  '20': { x: -895, y: 50 },
-  // Row 3 (y=50): Colors and X
-  'X': { x: -790, y: 50 },
-  'W': { x: -475, y: 50 }, 'U': { x: -370, y: 50 }, 'B': { x: -265, y: 50 },
-  'R': { x: -160, y: 50 }, 'G': { x: -55, y: 50 },
-  'C': { x: 50, y: 50 }, // Colorless
-};
-
+// --- Mana Symbol Component ---
+// Uses individual SVG files from /assets/SVG/
+// Handles: numbers (0-20, 100), colors (W,U,B,R,G,C), hybrids (WU, BR, etc.),
+// phyrexian (WP, UP, etc.), 2-hybrids (2W, 2U, etc.), and special (X, T, Q, S)
 function ManaSymbol({ symbol, size = 20 }) {
-  const pos = MANA_POSITIONS[symbol?.toUpperCase()];
-  if (!pos) {
-    // Fallback for unknown symbols - just show text
-    return <span className="inline-flex items-center justify-center text-xs font-bold" style={{ width: size, height: size }}>{symbol}</span>;
-  }
+  if (!symbol) return null;
 
-  // SVG viewBox starts at (-945, -210.002), dimensions 1045x730
-  // Symbol center is at (pos.x, pos.y), each symbol is ~100x100
-  // Calculate position in pixels from top-left of SVG
-  const pxX = pos.x + 945; // Convert from SVG coords to pixels from left
-  const pxY = pos.y + 210; // Convert from SVG coords to pixels from top
-
-  // Scale factor: we want to show 100px symbol at 'size' pixels
-  const scale = size / 100;
-  const bgWidth = 1045 * scale;
-  const bgHeight = 730 * scale;
-
-  // Background position: offset to center the symbol
-  const bgX = -(pxX * scale - size / 2 + size / 2);
-  const bgY = -(pxY * scale - size / 2 + size / 2);
+  // Normalize the symbol for filename lookup
+  // Handle hybrid mana like "W/U" -> "WU", "2/W" -> "2W", "W/P" -> "WP"
+  let filename = symbol.toUpperCase().replace(/\//g, '');
 
   return (
-    <span
-      className="inline-block"
-      style={{
-        width: size,
-        height: size,
-        backgroundImage: `url(/assets/Mana.svg)`,
-        backgroundSize: `${bgWidth}px ${bgHeight}px`,
-        backgroundPosition: `${bgX}px ${bgY}px`,
-        backgroundRepeat: 'no-repeat',
-      }}
+    <img
+      src={`/assets/SVG/${filename}.svg`}
+      alt={symbol}
       title={symbol}
+      style={{ width: size, height: size }}
+      className="inline-block"
+      onError={(e) => {
+        // Fallback: hide broken image and show text
+        e.target.style.display = 'none';
+      }}
     />
   );
 }
