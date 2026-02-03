@@ -1822,6 +1822,33 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const [recFilter, setRecFilter] = useState('all');
   const [recTypeFilter, setRecTypeFilter] = useState('all');
   const [selectedPartner, setSelectedPartner] = useState(null);
+  const [partnerReady, setPartnerReady] = useState(false);
+
+  // First, check if this commander has a locked partner (partner_with or partner_variant with 1 option)
+  // This ensures we include the partner in the initial EDHREC fetch instead of fetching twice
+  useEffect(() => {
+    const checkLockedPartner = async () => {
+      // If commander doesn't have a partner type that could be locked, skip
+      if (!commander.partner_type || !['partner_with', 'partner_variant'].includes(commander.partner_type)) {
+        setPartnerReady(true);
+        return;
+      }
+
+      try {
+        const data = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}/partners`);
+        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1) {
+          setSelectedPartner(data.partners[0]);
+        }
+      } catch (e) {
+        // Ignore errors, just proceed without partner
+      }
+      setPartnerReady(true);
+    };
+
+    setPartnerReady(false);
+    setSelectedPartner(null);
+    checkLockedPartner();
+  }, [commander.name, commander.partner_type]);
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -1843,7 +1870,12 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     setLoading(false);
   }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
 
-  useEffect(() => { fetchDetail(); }, [fetchDetail]);
+  // Only fetch EDHREC data after partner check is complete
+  useEffect(() => {
+    if (partnerReady) {
+      fetchDetail();
+    }
+  }, [partnerReady, fetchDetail]);
 
   const handleExport = (type) => {
     if (!data) return;
