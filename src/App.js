@@ -1060,6 +1060,74 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
   );
 }
 
+function ManaCurve({ cards }) {
+  // Group included cards by CMC bucket (0, 1, 2, 3, 4, 5, 6, 7+)
+  const buckets = [0, 1, 2, 3, 4, 5, 6, 7];
+  const counts = buckets.map(() => ({ total: 0, creature: 0, nonCreature: 0 }));
+
+  for (const card of cards) {
+    // Skip lands from mana curve
+    if ((card.card_type || '').toLowerCase() === 'land') continue;
+    const cmc = Math.floor(card.cmc || 0);
+    const idx = Math.min(cmc, 7);
+    const qty = card.qty || 1;
+    counts[idx].total += qty;
+    if ((card.card_type || '').toLowerCase() === 'creature') {
+      counts[idx].creature += qty;
+    } else {
+      counts[idx].nonCreature += qty;
+    }
+  }
+
+  const maxCount = Math.max(...counts.map(c => c.total), 1);
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4">
+      <h4 className="text-sm font-semibold text-gray-300 mb-3">Mana Curve</h4>
+      <div className="flex items-end gap-1.5" style={{ height: '120px' }}>
+        {buckets.map((cmc, i) => {
+          const pct = counts[i].total / maxCount;
+          const creaturePct = counts[i].total > 0 ? counts[i].creature / counts[i].total : 0;
+          return (
+            <div key={cmc} className="flex-1 flex flex-col items-center h-full justify-end">
+              {/* Count label */}
+              <span className="text-xs text-gray-400 mb-1">
+                {counts[i].total > 0 ? counts[i].total : ''}
+              </span>
+              {/* Stacked bar */}
+              <div
+                className="w-full rounded-t relative overflow-hidden transition-all duration-300"
+                style={{ height: `${Math.max(pct * 100, counts[i].total > 0 ? 4 : 0)}%`, minHeight: counts[i].total > 0 ? '4px' : '0' }}
+              >
+                {/* Creature portion (brighter blue) */}
+                <div
+                  className="absolute bottom-0 w-full bg-blue-500"
+                  style={{ height: `${creaturePct * 100}%` }}
+                />
+                {/* Non-creature portion (darker blue) */}
+                <div
+                  className="absolute top-0 w-full bg-blue-800"
+                  style={{ height: `${(1 - creaturePct) * 100}%` }}
+                />
+              </div>
+              {/* CMC label */}
+              <span className="text-xs text-gray-500 mt-1">{cmc === 7 ? '7+' : cmc}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-4 mt-2 justify-center">
+        <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="w-3 h-2 bg-blue-500 rounded-sm inline-block" /> Creatures
+        </span>
+        <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="w-3 h-2 bg-blue-800 rounded-sm inline-block" /> Non-Creatures
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
@@ -1312,6 +1380,9 @@ function DeckBuilder({ data, commander, onBack }) {
           />
         </div>
       )}
+
+      {/* Mana Curve */}
+      <ManaCurve cards={includedCards} />
 
       {viewMode === 'list' && renderListView()}
       {viewMode === 'gallery' && renderGalleryView()}

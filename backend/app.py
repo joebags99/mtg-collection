@@ -462,6 +462,43 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
 
 
 scryfall_type_cache = {}
+scryfall_mana_cache = {}  # {card_name: {"cmc": float, "mana_cost": str}}
+
+
+def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
+    """Fetch cmc and mana_cost from Scryfall collection endpoint."""
+    result = {}
+    uncached = [n for n in card_names if n not in scryfall_mana_cache]
+    for n in card_names:
+        if n in scryfall_mana_cache:
+            result[n] = scryfall_mana_cache[n]
+
+    for i in range(0, len(uncached), 75):
+        batch = uncached[i:i+75]
+        identifiers = [{"name": n} for n in batch]
+        try:
+            resp = requests.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": identifiers},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                for card in resp.json().get("data", []):
+                    name = card.get("name", "")
+                    cmc = card.get("cmc", 0)
+                    mana_cost = card.get("mana_cost", "")
+                    # For DFCs, use front face mana cost
+                    if not mana_cost and card.get("card_faces"):
+                        mana_cost = card["card_faces"][0].get("mana_cost", "")
+                        cmc = card.get("cmc", 0)
+                    entry = {"cmc": cmc, "mana_cost": mana_cost}
+                    scryfall_mana_cache[name] = entry
+                    result[name] = entry
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Scryfall mana fetch error: {e}")
+
+    return result
 
 
 def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
@@ -1055,6 +1092,14 @@ async def get_commander_detail(
         for card in all_cards:
             if not card["card_type"] and card["name"] in scryfall_types:
                 card["card_type"] = scryfall_types[card["name"]]
+
+    # Fetch mana data (cmc, mana_cost) for all cards
+    all_card_names = [card["name"] for card in all_cards]
+    mana_data = fetch_card_mana_bulk(all_card_names)
+    for card in all_cards:
+        minfo = mana_data.get(card["name"], {})
+        card["cmc"] = minfo.get("cmc", 0)
+        card["mana_cost"] = minfo.get("mana_cost", "")
 
     # Split into owned/missing
     available = get_available_collection(exclude_in_decks)
