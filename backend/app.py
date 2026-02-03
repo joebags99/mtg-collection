@@ -1637,6 +1637,15 @@ async def get_commander_detail(
             if not r["card_type"] and r["name"] in rec_types:
                 r["card_type"] = rec_types[r["name"]]
 
+    # Fetch mana data (cmc, mana_cost) for recommendations
+    rec_names = [r["name"] for r in recommendations]
+    if rec_names:
+        rec_mana = fetch_card_mana_bulk(rec_names)
+        for r in recommendations:
+            minfo = rec_mana.get(r["name_normalized"], rec_mana.get(r["name"], {}))
+            r["cmc"] = minfo.get("cmc", 0)
+            r["mana_cost"] = minfo.get("mana_cost", "")
+
     # Sort recommendations by synergy descending
     recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
 

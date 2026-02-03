@@ -1382,6 +1382,8 @@ function DeckBuilder({ data, commander, onBack }) {
         card_type: c.card_type || 'Other',
         owned: c.owned,
         synergy: c.synergy,
+        cmc: c.cmc || 0,
+        mana_cost: c.mana_cost || '',
         included: false,
         isRecommendation: true,
         qty: 1,
