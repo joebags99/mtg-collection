@@ -1850,6 +1850,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
       const deckMap = {};
       (data.decks || []).forEach(d => { deckMap[d.id] = d; });
       setDecks(deckMap);
+      saveDecks(deckMap);
     }).catch(() => {});
   }, [decksReady]);
 
