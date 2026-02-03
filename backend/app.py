@@ -101,8 +101,8 @@ security = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt."""
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    """Hash a password using bcrypt. Using rounds=8 for faster hashing."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=8)).decode('utf-8')
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -1176,10 +1176,28 @@ async def get_collection_stats():
 
     card_names = list(collection.keys())
 
-    # Fetch types, mana, and prices in bulk
-    types = fetch_card_types_bulk(card_names)
-    mana = fetch_card_mana_bulk(card_names)
-    prices = fetch_prices_bulk(card_names)
+    # Fetch types, mana, and prices in bulk - with error handling for timeouts
+    # For large collections, limit API calls to avoid Scryfall rate limits/timeouts
+    MAX_CARDS_FOR_API = 500  # Only fetch detailed data for first 500 cards
+    api_card_names = card_names[:MAX_CARDS_FOR_API] if len(card_names) > MAX_CARDS_FOR_API else card_names
+
+    try:
+        types = fetch_card_types_bulk(api_card_names)
+    except Exception as e:
+        logger.error(f"Failed to fetch types: {e}")
+        types = {}
+
+    try:
+        mana = fetch_card_mana_bulk(api_card_names)
+    except Exception as e:
+        logger.error(f"Failed to fetch mana data: {e}")
+        mana = {}
+
+    try:
+        prices = fetch_prices_bulk(api_card_names)
+    except Exception as e:
+        logger.error(f"Failed to fetch prices: {e}")
+        prices = {}
 
     cards = []
     total_value = 0
