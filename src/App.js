@@ -119,6 +119,48 @@ function MatchBar({ percentage, size = 'sm' }) {
 // --- localStorage helpers ---
 const STORAGE_KEY = 'mtg_collection';
 const DECKS_STORAGE_KEY = 'mtg_decks';
+const AUTH_TOKEN_KEY = 'mtg_auth_token';
+const AUTH_USER_KEY = 'mtg_auth_user';
+
+function saveAuthToken(token) {
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch (e) {
+    console.error('Failed to save auth token:', e);
+  }
+}
+
+function loadAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch (e) {
+    console.error('Failed to load auth token:', e);
+  }
+  return null;
+}
+
+function saveAuthUser(user) {
+  try {
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+  } catch (e) {
+    console.error('Failed to save auth user:', e);
+  }
+}
+
+function loadAuthUser() {
+  try {
+    const data = localStorage.getItem(AUTH_USER_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load auth user:', e);
+  }
+  return null;
+}
+
+function clearAuth() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
 
 function saveCollection(cards) {
   try {
@@ -187,6 +229,37 @@ async function apiUpload(path, file) {
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(API + path, { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+// --- Auth API helpers ---
+async function apiAuthPost(path, body) {
+  const token = loadAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiAuthGet(path) {
+  const token = loadAuthToken();
+  const headers = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(API + path, { headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'API error');
@@ -2317,6 +2390,119 @@ function MyDecks({ onDecksChanged, decksReady }) {
   );
 }
 
+// --- Auth Modal ---
+function AuthModal({ isOpen, onClose, onLogin }) {
+  const [mode, setMode] = useState('login'); // 'login' or 'register'
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const data = await apiPost(endpoint, { username, password });
+
+      // Save auth data
+      saveAuthToken(data.token);
+      saveAuthUser(data.user);
+
+      // Notify parent
+      onLogin(data.user, data.token);
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-sm space-y-4 page-fade-in">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">
+            {mode === 'login' ? 'Login' : 'Create Account'}
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">&times;</button>
+        </div>
+
+        <p className="text-sm text-gray-400">
+          {mode === 'login'
+            ? 'Login to sync your collection and decks across devices.'
+            : 'Create an account to save your collection and decks to the cloud.'}
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="Enter username"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              required
+              minLength={3}
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Enter password"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              required
+              minLength={4}
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-900/50 border border-red-700 rounded p-2 text-red-300 text-sm">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium transition-colors"
+          >
+            {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create Account'}
+          </button>
+        </form>
+
+        <div className="text-center text-sm text-gray-500">
+          {mode === 'login' ? (
+            <>
+              Don't have an account?{' '}
+              <button onClick={() => { setMode('register'); setError(''); }} className="text-blue-400 hover:underline">
+                Create one
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{' '}
+              <button onClick={() => { setMode('login'); setError(''); }} className="text-blue-400 hover:underline">
+                Login
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Collection Statistics ---
 
 function CollectionStats({ collectionCount }) {
@@ -2544,6 +2730,87 @@ function App() {
   const [deckCount, setDeckCount] = useState(0);
   const [decksReady, setDecksReady] = useState(false);
 
+  // Auth state
+  const [user, setUser] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(''); // '', 'syncing', 'synced', 'error'
+
+  // Check for existing auth on mount
+  useEffect(() => {
+    const savedUser = loadAuthUser();
+    const savedToken = loadAuthToken();
+    if (savedUser && savedToken) {
+      // Verify token is still valid
+      apiAuthGet('/api/auth/me')
+        .then(data => setUser(data.user))
+        .catch(() => {
+          clearAuth();
+          setUser(null);
+        });
+    }
+  }, []);
+
+  // Sync to server when logged in and data changes
+  const syncToServer = useCallback(async () => {
+    if (!user) return;
+
+    setSyncStatus('syncing');
+    try {
+      const collection = loadCollection() || {};
+      const decks = loadDecks() || {};
+
+      await Promise.all([
+        apiAuthPost('/api/user/collection/save', { cards: collection }),
+        apiAuthPost('/api/user/decks/save', { decks }),
+      ]);
+
+      setSyncStatus('synced');
+      setTimeout(() => setSyncStatus(''), 2000);
+    } catch (err) {
+      console.error('Sync failed:', err);
+      setSyncStatus('error');
+      setTimeout(() => setSyncStatus(''), 3000);
+    }
+  }, [user]);
+
+  // Handle login - load user data from server
+  const handleLogin = async (loggedInUser, token) => {
+    setUser(loggedInUser);
+
+    try {
+      // Load user data from server
+      const data = await apiAuthGet('/api/user/data');
+
+      // If server has data, use it; otherwise sync local data to server
+      if (data.collection.count > 0 || data.decks.count > 0) {
+        // Server has data - restore it locally
+        if (data.collection.count > 0) {
+          saveCollection(data.collection.cards);
+          await apiPost('/api/collection/restore', { cards: data.collection.cards });
+          setCollectionCount(data.collection.count);
+        }
+        if (data.decks.count > 0) {
+          saveDecks(data.decks.decks);
+          await apiPost('/api/decks/restore', { decks: data.decks.decks });
+          setDeckCount(data.decks.count);
+        }
+        if (data.collection.count > 0) setTab('recommend');
+      } else {
+        // Server is empty - sync local data up
+        await syncToServer();
+      }
+    } catch (err) {
+      console.error('Failed to load user data:', err);
+    }
+  };
+
+  // Handle logout
+  const handleLogout = () => {
+    clearAuth();
+    setUser(null);
+    setSyncStatus('');
+  };
+
   // Restore collection and decks from localStorage on startup
   useEffect(() => {
     const saved = loadCollection();
@@ -2575,7 +2842,11 @@ function App() {
 
   const handleUploaded = (data) => {
     setCollectionCount(data.count);
-    if (data.cards) saveCollection(data.cards);
+    if (data.cards) {
+      saveCollection(data.cards);
+      // Auto-sync to server if logged in
+      if (user) syncToServer();
+    }
   };
 
   const handleSelectCommander = (cmd) => {
@@ -2600,6 +2871,8 @@ function App() {
   const handleDecksChanged = () => {
     apiGet('/api/decks').then(data => {
       setDeckCount((data.decks || []).length);
+      // Auto-sync to server if logged in
+      if (user) syncToServer();
     }).catch(() => {});
   };
 
@@ -2613,15 +2886,63 @@ function App() {
 
   return (
     <div className="min-h-screen">
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onLogin={handleLogin}
+      />
+
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
-          {collectionCount > 0 && (
-            <span className="text-sm text-gray-400">
-              Collection: {collectionCount} unique cards
-            </span>
-          )}
+          <div className="flex items-center gap-4">
+            {collectionCount > 0 && (
+              <span className="text-sm text-gray-400">
+                {collectionCount} cards
+              </span>
+            )}
+            {/* Sync status */}
+            {user && syncStatus && (
+              <span className={`text-xs px-2 py-1 rounded ${
+                syncStatus === 'syncing' ? 'bg-blue-900/50 text-blue-400' :
+                syncStatus === 'synced' ? 'bg-green-900/50 text-green-400' :
+                'bg-red-900/50 text-red-400'
+              }`}>
+                {syncStatus === 'syncing' ? 'Syncing...' :
+                 syncStatus === 'synced' ? 'Saved!' : 'Sync failed'}
+              </span>
+            )}
+            {/* Auth buttons */}
+            {user ? (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-400">
+                  <span className="text-green-400">●</span> {user.username}
+                </span>
+                <button
+                  onClick={syncToServer}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                  title="Sync to cloud"
+                >
+                  Sync
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-gray-400 hover:text-red-400"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-sm font-medium transition-colors"
+              >
+                Login / Sign Up
+              </button>
+            )}
+          </div>
         </div>
       </header>
 

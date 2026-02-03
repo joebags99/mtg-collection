@@ -6,10 +6,15 @@ import re
 import time
 import logging
 import unicodedata
+import sqlite3
 from typing import Optional
+from datetime import datetime, timedelta
 
 import requests
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+import bcrypt
+import jwt
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pyedhrec import EDHRec
 
@@ -34,6 +39,115 @@ logger = logging.getLogger(__name__)
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 REDIS_URL = os.environ.get("REDIS_URL", "")
 RATE_LIMIT = os.environ.get("RATE_LIMIT", "30/minute")
+JWT_SECRET = os.environ.get("JWT_SECRET", "mtg-collection-secret-change-in-production")
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "mtg_collection.db")
+
+# --- Database setup ---
+def get_db():
+    """Get a database connection."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    """Initialize database tables."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Users table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # User collections - one per user, replaced on update
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_collections (
+            user_id INTEGER PRIMARY KEY,
+            cards_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    # User decks - multiple per user, updated in place
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_decks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            deck_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            commander TEXT NOT NULL,
+            cards_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, deck_id)
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+    logger.info(f"Database initialized at {DATABASE_PATH}")
+
+
+# --- Auth utilities ---
+security = HTTPBearer(auto_error=False)
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash."""
+    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
+
+def create_token(user_id: int, username: str) -> str:
+    """Create a JWT token for a user."""
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "exp": datetime.utcnow() + timedelta(days=30)  # 30 day expiry
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def verify_token(token: str) -> Optional[dict]:
+    """Verify a JWT token and return the payload."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
+    """Dependency to get the current user from the Authorization header."""
+    if not credentials:
+        return None
+    payload = verify_token(credentials.credentials)
+    return payload
+
+
+async def require_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """Dependency that requires a valid user."""
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = verify_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload
+
 
 # --- Redis setup (optional) ---
 redis_client = None
@@ -70,6 +184,214 @@ def rate_limit(limit_string):
             return limiter.limit(limit_string)(func)
         return func
     return decorator
+
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+
+
+# --- Auth endpoints ---
+@app.post("/api/auth/register")
+async def register(body: dict):
+    """Register a new user."""
+    username = body.get("username", "").strip().lower()
+    password = body.get("password", "")
+
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if not password or len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+    if not username.isalnum():
+        raise HTTPException(status_code=400, detail="Username must be alphanumeric")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Check if username exists
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    # Create user
+    password_hash = hash_password(password)
+    cursor.execute(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+        (username, password_hash)
+    )
+    conn.commit()
+    user_id = cursor.lastrowid
+    conn.close()
+
+    token = create_token(user_id, username)
+    return {"token": token, "user": {"id": user_id, "username": username}}
+
+
+@app.post("/api/auth/login")
+async def login(body: dict):
+    """Login and get a token."""
+    username = body.get("username", "").strip().lower()
+    password = body.get("password", "")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password required")
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row or not verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = create_token(row["id"], row["username"])
+    return {"token": token, "user": {"id": row["id"], "username": row["username"]}}
+
+
+@app.get("/api/auth/me")
+async def get_me(user: dict = Depends(require_user)):
+    """Get current user info."""
+    return {"user": {"id": user["user_id"], "username": user["username"]}}
+
+
+# --- User data sync endpoints ---
+@app.post("/api/user/collection/save")
+async def save_user_collection(body: dict, user: dict = Depends(require_user)):
+    """Save user's collection to database. Replaces existing data."""
+    cards = body.get("cards", {})
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Upsert - replace if exists, insert if not
+    cursor.execute("""
+        INSERT INTO user_collections (user_id, cards_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            cards_json = excluded.cards_json,
+            updated_at = CURRENT_TIMESTAMP
+    """, (user_id, json.dumps(cards)))
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "count": len(cards)}
+
+
+@app.get("/api/user/collection")
+async def get_user_collection(user: dict = Depends(require_user)):
+    """Load user's collection from database."""
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT cards_json, updated_at FROM user_collections WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {"cards": {}, "count": 0}
+
+    cards = json.loads(row["cards_json"])
+    return {"cards": cards, "count": len(cards), "updated_at": row["updated_at"]}
+
+
+@app.post("/api/user/decks/save")
+async def save_user_decks(body: dict, user: dict = Depends(require_user)):
+    """Save user's decks to database. Replaces all existing decks."""
+    decks = body.get("decks", {})
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Delete all existing decks for this user
+    cursor.execute("DELETE FROM user_decks WHERE user_id = ?", (user_id,))
+
+    # Insert new decks
+    for deck_id, deck in decks.items():
+        cursor.execute("""
+            INSERT INTO user_decks (user_id, deck_id, name, commander, cards_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (
+            user_id,
+            deck_id,
+            deck.get("name", ""),
+            deck.get("commander", ""),
+            json.dumps(deck.get("cards", {}))
+        ))
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "count": len(decks)}
+
+
+@app.get("/api/user/decks")
+async def get_user_decks(user: dict = Depends(require_user)):
+    """Load user's decks from database."""
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT deck_id, name, commander, cards_json, updated_at
+        FROM user_decks WHERE user_id = ?
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    decks = {}
+    for row in rows:
+        decks[row["deck_id"]] = {
+            "id": row["deck_id"],
+            "name": row["name"],
+            "commander": row["commander"],
+            "cards": json.loads(row["cards_json"]),
+        }
+
+    return {"decks": decks, "count": len(decks)}
+
+
+@app.get("/api/user/data")
+async def get_all_user_data(user: dict = Depends(require_user)):
+    """Load all user data (collection + decks) in one call."""
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get collection
+    cursor.execute("SELECT cards_json FROM user_collections WHERE user_id = ?", (user_id,))
+    coll_row = cursor.fetchone()
+    cards = json.loads(coll_row["cards_json"]) if coll_row else {}
+
+    # Get decks
+    cursor.execute("""
+        SELECT deck_id, name, commander, cards_json
+        FROM user_decks WHERE user_id = ?
+    """, (user_id,))
+    deck_rows = cursor.fetchall()
+    conn.close()
+
+    decks = {}
+    for row in deck_rows:
+        decks[row["deck_id"]] = {
+            "id": row["deck_id"],
+            "name": row["name"],
+            "commander": row["commander"],
+            "cards": json.loads(row["cards_json"]),
+        }
+
+    return {
+        "collection": {"cards": cards, "count": len(cards)},
+        "decks": {"decks": decks, "count": len(decks)}
+    }
+
 
 edhrec = EDHRec()
 
