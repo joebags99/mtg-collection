@@ -2317,6 +2317,221 @@ function MyDecks({ onDecksChanged, decksReady }) {
   );
 }
 
+// --- Collection Statistics ---
+
+function CollectionStats({ collectionCount }) {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (collectionCount > 0 && !stats) {
+      setLoading(true);
+      apiGet('/api/collection/stats')
+        .then(data => { setStats(data); setLoading(false); })
+        .catch(e => { setError(e.message); setLoading(false); });
+    }
+  }, [collectionCount, stats]);
+
+  if (collectionCount === 0) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <p className="text-gray-500 text-center py-12">Upload a collection to see your stats.</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <div className="text-center py-12">
+          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-gray-400">Analyzing your collection...</p>
+          <p className="text-xs text-gray-500 mt-1">Fetching prices and card data from Scryfall</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+      </div>
+    );
+  }
+
+  if (!stats) return null;
+
+  const typeOrder = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+  const typeColors = {
+    Creature: '#22c55e', Instant: '#3b82f6', Sorcery: '#ef4444',
+    Enchantment: '#a855f7', Artifact: '#eab308', Planeswalker: '#f97316',
+    Land: '#92400e', Other: '#6b7280',
+  };
+  const pipColors = {
+    W: { bg: '#f9faf4', text: '#333' },
+    U: { bg: '#0e68ab', text: '#fff' },
+    B: { bg: '#2b2b2b', text: '#ccc' },
+    R: { bg: '#d32029', text: '#fff' },
+    G: { bg: '#00733e', text: '#fff' },
+    C: { bg: '#6b7280', text: '#fff' },
+  };
+
+  const totalTyped = Object.values(stats.type_counts).reduce((a, b) => a + b, 0);
+  const totalPips = Object.values(stats.color_counts).reduce((a, b) => a + b, 0);
+  const cmcBuckets = [0, 1, 2, 3, 4, 5, 6, 7];
+  const cmcCounts = cmcBuckets.map(b => stats.cmc_distribution[String(b)] || 0);
+  const maxCmc = Math.max(...cmcCounts, 1);
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Collection Statistics</h2>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-blue-400">{stats.total_unique.toLocaleString()}</span>
+          <p className="text-xs text-gray-500 mt-1">Unique Cards</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-green-400">{stats.total_cards.toLocaleString()}</span>
+          <p className="text-xs text-gray-500 mt-1">Total Cards</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-yellow-400">${stats.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          <p className="text-xs text-gray-500 mt-1">Est. Total Value</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-purple-400">{stats.total_in_decks}</span>
+          <p className="text-xs text-gray-500 mt-1">Cards in Decks</p>
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Type Distribution */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Card Type Distribution</h3>
+          {/* Visual stacked bar */}
+          <div className="flex rounded-full overflow-hidden h-4">
+            {typeOrder.filter(t => stats.type_counts[t]).map(type => (
+              <div
+                key={type}
+                style={{
+                  width: `${(stats.type_counts[type] / totalTyped) * 100}%`,
+                  backgroundColor: typeColors[type],
+                }}
+                title={`${type}: ${stats.type_counts[type]}`}
+              />
+            ))}
+          </div>
+          {/* Legend */}
+          <div className="space-y-1.5">
+            {typeOrder.filter(t => stats.type_counts[t]).map(type => (
+              <div key={type} className="flex items-center gap-2">
+                <span
+                  className="w-3 h-3 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: typeColors[type] }}
+                />
+                <span className="text-xs text-gray-400 flex-1">{type}</span>
+                <span className="text-xs text-gray-300 font-medium">{stats.type_counts[type]}</span>
+                <span className="text-xs text-gray-500 w-10 text-right">
+                  {((stats.type_counts[type] / totalTyped) * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Color Distribution */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Color Distribution</h3>
+          {totalPips > 0 && (
+            <>
+              {/* Visual blocks */}
+              <div className="flex gap-2">
+                {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
+                  <div
+                    key={color}
+                    className="rounded-lg py-3 text-center transition-all"
+                    style={{
+                      backgroundColor: pipColors[color].bg,
+                      color: pipColors[color].text,
+                      flex: stats.color_counts[color],
+                    }}
+                  >
+                    <span className="text-lg font-bold">{stats.color_counts[color]}</span>
+                    <p className="text-[10px] opacity-75">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Percentage bar */}
+              <div className="flex rounded-full overflow-hidden h-3">
+                {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
+                  <div
+                    key={color}
+                    style={{
+                      width: `${(stats.color_counts[color] / totalPips) * 100}%`,
+                      backgroundColor: pipColors[color].bg,
+                    }}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Mana Curve */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Collection Mana Curve</h3>
+          <div className="flex items-end gap-2" style={{ height: '140px' }}>
+            {cmcBuckets.map((cmc, i) => {
+              const pct = cmcCounts[i] / maxCmc;
+              return (
+                <div key={cmc} className="flex-1 flex flex-col items-center h-full justify-end">
+                  <span className="text-xs text-gray-400 mb-1">
+                    {cmcCounts[i] > 0 ? cmcCounts[i] : ''}
+                  </span>
+                  <div
+                    className="w-full bg-blue-600 rounded-t transition-all duration-300"
+                    style={{ height: `${Math.max(pct * 100, cmcCounts[i] > 0 ? 3 : 0)}%` }}
+                  />
+                  <span className="text-xs text-gray-500 mt-1">{cmc === 7 ? '7+' : cmc}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Most Valuable */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Most Valuable Cards</h3>
+          <div className="divide-y divide-gray-700">
+            {stats.top_valuable.map((card, i) => (
+              <div key={card.name} className="flex items-center justify-between py-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600 w-5">{i + 1}.</span>
+                  <CardName name={card.name} className="text-sm" />
+                  {card.qty > 1 && <span className="text-xs text-gray-500">x{card.qty}</span>}
+                </div>
+                <span className="text-sm font-medium text-yellow-400">${card.price.toFixed(2)}</span>
+              </div>
+            ))}
+            {stats.top_valuable.length === 0 && (
+              <p className="text-gray-500 text-sm py-4">No price data available</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Main App ---
 
 function App() {
@@ -2393,6 +2608,7 @@ function App() {
     { id: 'recommend', label: 'Recommendations' },
     { id: 'search', label: 'Search' },
     { id: 'mydecks', label: `My Decks${deckCount ? ` (${deckCount})` : ''}` },
+    { id: 'stats', label: 'Stats' },
   ];
 
   return (
@@ -2482,6 +2698,10 @@ function App() {
 
         <div style={{ display: tab === 'mydecks' ? 'block' : 'none' }}>
           <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
+        </div>
+
+        <div style={{ display: tab === 'stats' ? 'block' : 'none' }}>
+          <CollectionStats collectionCount={collectionCount} />
         </div>
 
         {tab === 'detail' && selectedCommander && (

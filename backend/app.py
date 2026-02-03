@@ -846,6 +846,80 @@ async def get_collection_availability():
     return result
 
 
+@app.get("/api/collection/stats")
+async def get_collection_stats():
+    """Get detailed statistics for the entire collection: prices, types, mana data."""
+    if not collection:
+        return {"error": "No collection loaded", "total_unique": 0}
+
+    card_names = list(collection.keys())
+
+    # Fetch types, mana, and prices in bulk
+    types = fetch_card_types_bulk(card_names)
+    mana = fetch_card_mana_bulk(card_names)
+    prices = fetch_prices_bulk(card_names)
+
+    cards = []
+    total_value = 0
+    type_counts = {}
+    color_counts = {"W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "C": 0}
+    rarity_counts = {}
+    cmc_distribution = {}
+
+    for name, qty in collection.items():
+        card_type = types.get(name, "Other")
+        mana_info = mana.get(name, {})
+        price = prices.get(name)
+        cmc = mana_info.get("cmc", 0)
+        mana_cost = mana_info.get("mana_cost", "")
+
+        card_entry = {
+            "name": name,
+            "qty": qty,
+            "card_type": card_type,
+            "cmc": cmc,
+            "mana_cost": mana_cost,
+            "price": price,
+        }
+        cards.append(card_entry)
+
+        if price:
+            total_value += price * qty
+
+        type_counts[card_type] = type_counts.get(card_type, 0) + qty
+
+        # Color identity from mana cost
+        has_color = False
+        for color in ["W", "U", "B", "R", "G"]:
+            if "{" + color + "}" in mana_cost or "/" + color in mana_cost or color + "/" in mana_cost:
+                color_counts[color] += qty
+                has_color = True
+        if not has_color and card_type != "Land":
+            color_counts["C"] += qty
+
+        cmc_bucket = str(min(int(cmc), 7)) if cmc else "0"
+        cmc_distribution[cmc_bucket] = cmc_distribution.get(cmc_bucket, 0) + qty
+
+    # Top 10 most valuable cards
+    priced = [c for c in cards if c["price"]]
+    priced.sort(key=lambda c: (c["price"] or 0), reverse=True)
+    top_valuable = priced[:10]
+
+    usage = get_cards_in_decks()
+    total_in_decks = sum(u.get("total_in_decks", 0) for u in usage.values())
+
+    return {
+        "total_unique": len(collection),
+        "total_cards": sum(collection.values()),
+        "total_value": round(total_value, 2),
+        "total_in_decks": total_in_decks,
+        "type_counts": type_counts,
+        "color_counts": color_counts,
+        "cmc_distribution": cmc_distribution,
+        "top_valuable": top_valuable,
+    }
+
+
 @app.get("/api/commanders")
 async def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
     commanders = get_cached_commanders()
