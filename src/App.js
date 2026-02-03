@@ -16,17 +16,25 @@ const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 function getColorGlow(colors) {
   if (!colors || colors.length === 0) return 'rgba(128,128,128,0.3)';
   const glowColors = {
-    W: 'rgba(249,250,244,0.35)',
-    U: 'rgba(14,104,171,0.45)',
-    B: 'rgba(100,80,120,0.4)',
-    R: 'rgba(211,32,41,0.45)',
-    G: 'rgba(0,115,62,0.45)',
+    W: [249,250,244],
+    U: [14,104,171],
+    B: [100,80,120],
+    R: [211,32,41],
+    G: [0,115,62],
   };
-  if (colors.length === 1) return glowColors[colors[0]] || 'rgba(128,128,128,0.3)';
-  // Multi-color: blend first two for a gradient-like glow
-  const c1 = glowColors[colors[0]] || 'rgba(128,128,128,0.3)';
-  const c2 = glowColors[colors[1]] || 'rgba(128,128,128,0.3)';
-  return `${c1}`;
+  const fallback = [128,128,128];
+  if (colors.length === 1) {
+    const c = glowColors[colors[0]] || fallback;
+    return `rgba(${c[0]},${c[1]},${c[2]},0.4)`;
+  }
+  // Multi-color: average the RGB values of all colors in identity
+  const avg = [0,0,0];
+  colors.forEach(col => {
+    const c = glowColors[col] || fallback;
+    avg[0] += c[0]; avg[1] += c[1]; avg[2] += c[2];
+  });
+  const n = colors.length;
+  return `rgba(${Math.round(avg[0]/n)},${Math.round(avg[1]/n)},${Math.round(avg[2]/n)},0.4)`;
 }
 
 function ColorBadge({ colors }) {

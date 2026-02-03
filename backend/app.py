@@ -1299,7 +1299,8 @@ async def compare_commanders(request: Request, body: dict):
     all_deck_sets = [set(r["deck_card_names"]) for r in results]
     shared_across_all = set.intersection(*all_deck_sets) if all_deck_sets else set()
     for r in results:
-        others = [s for s in all_deck_sets if s is not set(r["deck_card_names"])]
+        this_set = set(r["deck_card_names"])
+        others = [s for s in all_deck_sets if s != this_set]
         r["unique_cards"] = sorted(set(r["deck_card_names"]) - set.union(*others) if others else set(r["deck_card_names"]))
         r["shared_cards"] = sorted(shared_across_all)
         del r["deck_card_names"]  # Don't send the full set
