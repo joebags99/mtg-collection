@@ -13,6 +13,30 @@ const COLOR_MAP = {
 
 const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 
+function getColorGlow(colors) {
+  if (!colors || colors.length === 0) return 'rgba(128,128,128,0.3)';
+  const glowColors = {
+    W: [249,250,244],
+    U: [14,104,171],
+    B: [100,80,120],
+    R: [211,32,41],
+    G: [0,115,62],
+  };
+  const fallback = [128,128,128];
+  if (colors.length === 1) {
+    const c = glowColors[colors[0]] || fallback;
+    return `rgba(${c[0]},${c[1]},${c[2]},0.4)`;
+  }
+  // Multi-color: average the RGB values of all colors in identity
+  const avg = [0,0,0];
+  colors.forEach(col => {
+    const c = glowColors[col] || fallback;
+    avg[0] += c[0]; avg[1] += c[1]; avg[2] += c[2];
+  });
+  const n = colors.length;
+  return `rgba(${Math.round(avg[0]/n)},${Math.round(avg[1]/n)},${Math.round(avg[2]/n)},0.4)`;
+}
+
 function ColorBadge({ colors }) {
   if (!colors || colors.length === 0) {
     return <span className="text-xs bg-gray-600 px-1.5 py-0.5 rounded">C</span>;
@@ -245,6 +269,7 @@ function CommanderAutocomplete({ value, onChange, placeholder, className }) {
                 <span className="text-[10px] text-purple-400 flex-shrink-0">
                   {cmd.partner_type === 'partner' ? 'Partner' :
                    cmd.partner_type === 'partner_with' ? 'Partner with' :
+                   cmd.partner_type === 'partner_variant' ? 'Partner' :
                    cmd.partner_type === 'choose_a_background' ? 'Background' :
                    cmd.partner_type === 'background' ? 'BG' :
                    cmd.partner_type === 'friends_forever' ? 'Friends' :
@@ -266,6 +291,11 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
   const [partnerType, setPartnerType] = useState('');
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const autoSelectedRef = useRef(false);
+
+  useEffect(() => {
+    autoSelectedRef.current = false;
+  }, [commanderName]);
 
   useEffect(() => {
     if (!commanderName) { setPartners([]); setPartnerType(''); return; }
@@ -274,8 +304,9 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
       .then(data => {
         setPartnerType(data.partner_type || '');
         setPartners(data.partners || []);
-        // If partner_with, auto-select the specific partner
-        if (data.partner_type === 'partner_with' && data.partners?.length === 1) {
+        // If partner_with or partner_variant with only one option, auto-select once
+        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1 && !autoSelectedRef.current) {
+          autoSelectedRef.current = true;
           onSelectPartner(data.partners[0]);
         }
       })
@@ -288,6 +319,7 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
   const partnerLabel =
     partnerType === 'partner' ? 'Partner' :
     partnerType === 'partner_with' ? 'Partner With' :
+    partnerType === 'partner_variant' ? 'Partner' :
     partnerType === 'choose_a_background' ? 'Choose a Background' :
     partnerType === 'background' ? 'Background For' :
     partnerType === 'friends_forever' ? 'Friends Forever' :
@@ -328,7 +360,7 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
             <div className="text-center py-2 text-gray-400 text-sm">Loading partners...</div>
           ) : (
             <>
-              {partners.length > 10 && (
+              {partners.length > 5 && (
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
@@ -336,17 +368,18 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
                   className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500"
                 />
               )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto p-1">
                 {filtered.slice(0, 40).map(p => (
                   <button
                     key={p.name}
                     onClick={() => onSelectPartner(p)}
-                    className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors"
+                    className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors group"
                   >
                     {p.image_uri && (
-                      <img src={p.image_uri} alt={p.name} className="w-full aspect-[5/7] object-cover rounded mb-1" loading="lazy" />
+                      <img src={p.image_uri} alt={p.name} className="w-full rounded-lg shadow-lg group-hover:scale-[1.02] transition-transform" loading="lazy" />
                     )}
-                    <p className="text-xs truncate">{p.name}</p>
+                    <p className="text-xs mt-1.5 text-center font-medium">{p.name}</p>
+                    {p.color_identity && <div className="mt-1 text-center"><ColorBadge colors={p.color_identity} /></div>}
                   </button>
                 ))}
               </div>
@@ -1447,7 +1480,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="space-y-6">
         <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
@@ -1810,6 +1843,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
   const [decks, setDecks] = useState({});
   const [newName, setNewName] = useState('');
   const [newCommander, setNewCommander] = useState('');
+  const [newPartner, setNewPartner] = useState(null);
   const [newCards, setNewCards] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editCards, setEditCards] = useState('');
@@ -1824,6 +1858,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
       const deckMap = {};
       (data.decks || []).forEach(d => { deckMap[d.id] = d; });
       setDecks(deckMap);
+      saveDecks(deckMap);
     }).catch(() => {});
   }, [decksReady]);
 
@@ -1873,7 +1908,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
       setDecks(updated);
       saveDecks(updated);
       onDecksChanged();
-      setNewName(''); setNewCommander(''); setNewCards('');
+      setNewName(''); setNewCommander(''); setNewPartner(null); setNewCards('');
       setInvalidCards([]);
     } catch (e) { setError(e.message); }
   };
@@ -1964,12 +1999,19 @@ function MyDecks({ onDecksChanged, decksReady }) {
             <label className="block text-xs text-gray-400 mb-1">Commander</label>
             <CommanderAutocomplete
               value={newCommander}
-              onChange={setNewCommander}
+              onChange={v => { setNewCommander(v); setNewPartner(null); }}
               placeholder="e.g. The Ur-Dragon"
               className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
             />
           </div>
         </div>
+        {newCommander && (
+          <PartnerPicker
+            commanderName={newCommander}
+            selectedPartner={newPartner}
+            onSelectPartner={setNewPartner}
+          />
+        )}
         <div>
           <label className="block text-xs text-gray-400 mb-1">Card List (paste from Archidekt/Moxfield export)</label>
           <textarea
@@ -2002,19 +2044,41 @@ function MyDecks({ onDecksChanged, decksReady }) {
         <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
       )}
 
-      {Object.values(decks).map(deck => (
-        <div key={deck.id} className="bg-gray-800 rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="font-semibold">{deck.name}</h4>
-              {deck.commander && <p className="text-sm text-gray-400">{deck.commander}</p>}
-              <p className="text-xs text-gray-500">{deck.card_count || Object.keys(deck.cards || {}).length} cards</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {Object.values(decks).map(deck => {
+        const glow = getColorGlow(deck.color_identity);
+        const glowStyle = {
+          boxShadow: `0 0 20px 2px ${glow}, inset 0 0 20px 0px ${glow}`,
+        };
+        return (
+        <div key={deck.id} className="relative bg-gray-800 rounded-xl overflow-hidden transition-all hover:scale-[1.02]" style={glowStyle}>
+          {/* Commander art banner */}
+          {deck.art_crop && (
+            <div className="absolute inset-0 z-0">
+              <img src={deck.art_crop} alt="" className="w-full h-full object-cover opacity-20" />
+              <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/80 to-gray-900/40" />
             </div>
-            <div className="flex gap-2">
+          )}
+          <div className="relative z-10 p-4 flex flex-col h-full">
+            {/* Commander image prominently displayed */}
+            <div className="flex justify-center mb-3">
+              {deck.image_uri && (
+                <img src={deck.image_uri} alt={deck.commander} className="w-32 rounded-lg shadow-xl" style={{filter: `drop-shadow(0 0 8px ${glow})`}} />
+              )}
+            </div>
+            <h4 className="font-bold text-center text-sm">{deck.name}</h4>
+            {deck.commander && <p className="text-xs text-gray-400 text-center mt-0.5">{deck.commander}</p>}
+            <div className="flex items-center justify-center gap-2 mt-1.5">
+              {deck.color_identity && deck.color_identity.length > 0 && (
+                <ColorBadge colors={deck.color_identity} />
+              )}
+              <span className="text-xs text-gray-500">{deck.card_count || 0} cards</span>
+            </div>
+            <div className="flex gap-2 justify-center mt-3">
               <button
                 onClick={() => handleEdit(deck.id)}
                 disabled={validating}
-                className={`px-3 py-1 rounded text-sm ${
+                className={`px-3 py-1 rounded text-xs ${
                   editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
                 }`}
               >
@@ -2022,31 +2086,33 @@ function MyDecks({ onDecksChanged, decksReady }) {
               </button>
               <button
                 onClick={() => handleDelete(deck.id)}
-                className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-sm"
+                className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs"
               >
                 Delete
               </button>
             </div>
+            {editingId === deck.id && (
+              <div className="mt-3 space-y-2">
+                <textarea
+                  value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
+                  rows={8}
+                  className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono focus:outline-none focus:border-blue-500"
+                />
+                {invalidCards.length > 0 && (
+                  <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
+                    <p className="text-xs text-red-400 font-medium">Unrecognized cards:</p>
+                    <ul className="text-[11px] text-red-300 space-y-0.5">
+                      {invalidCards.map(name => <li key={name}>- {name}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          {editingId === deck.id && (
-            <>
-              <textarea
-                value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
-                rows={10}
-                className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
-              />
-              {invalidCards.length > 0 && (
-                <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
-                  <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
-                  <ul className="text-xs text-red-300 space-y-0.5">
-                    {invalidCards.map(name => <li key={name}>- {name}</li>)}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
         </div>
-      ))}
+        );
+      })}
+      </div>
 
       {/* Legend */}
       {Object.values(decks).length > 0 && (

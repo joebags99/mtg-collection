@@ -198,7 +198,7 @@ def get_available_collection(exclude_in_decks: bool = False) -> set[str]:
 def _detect_partner_type(card: dict) -> str:
     """Detect what type of partner mechanic a commander has from Scryfall data.
     Returns one of: 'partner', 'partner_with', 'choose_a_background', 'background',
-    'friends_forever', 'doctors_companion', 'doctor', or '' (none).
+    'friends_forever', 'doctors_companion', 'doctor', 'partner_variant', or '' (none).
     """
     keywords = [k.lower() for k in card.get("keywords", [])]
     oracle = card.get("oracle_text", "")
@@ -210,6 +210,11 @@ def _detect_partner_type(card: dict) -> str:
 
     if "partner with" in oracle_lower:
         return "partner_with"
+    # Detect custom partner variants like "Partner—Father & Son", "Partner—Friends", etc.
+    # These use an em-dash followed by a label and only pair with cards sharing the same label.
+    partner_variant = _extract_partner_variant_label(card)
+    if partner_variant:
+        return "partner_variant"
     if "choose a background" in oracle_lower:
         return "choose_a_background"
     if "background" in type_line and "legendary" in type_line and "enchantment" in type_line:
@@ -222,6 +227,19 @@ def _detect_partner_type(card: dict) -> str:
         return "doctor"
     if "partner" in keywords:
         return "partner"
+    return ""
+
+
+def _extract_partner_variant_label(card: dict) -> str:
+    """Extract custom partner variant label from oracle text (e.g. 'Father & Son' from 'Partner—Father & Son')."""
+    oracle = card.get("oracle_text", "")
+    for face in card.get("card_faces", []):
+        oracle += "\n" + face.get("oracle_text", "")
+    # Match "Partner—<label>" patterns (em-dash variant mechanics)
+    # but NOT "Partner with" which is a different mechanic
+    match = re.search(r'[Pp]artner\s*[—\u2014]\s*([^\n(]+)', oracle)
+    if match:
+        return match.group(1).strip()
     return ""
 
 
@@ -254,18 +272,21 @@ def get_all_commanders() -> list[dict]:
         data = resp.json()
         for card in data.get("data", []):
             partner_type = _detect_partner_type(card)
+            image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
             entry = {
                 "name": card["name"],
                 "name_normalized": normalize_card_name(card["name"]),
                 "color_identity": card.get("color_identity", []),
-                "image_uri": (card.get("image_uris") or {}).get("normal", "")
-                    or (card.get("card_faces", [{}])[0].get("image_uris") or {}).get("normal", ""),
+                "image_uri": image_uris.get("normal", ""),
+                "art_crop": image_uris.get("art_crop", ""),
                 "edhrec_rank": card.get("edhrec_rank", 999999),
                 "partner_type": partner_type,
                 "type_line": card.get("type_line", ""),
             }
             if partner_type == "partner_with":
                 entry["partner_with"] = _extract_partner_with_name(card)
+            if partner_type == "partner_variant":
+                entry["partner_variant_label"] = _extract_partner_variant_label(card)
             commanders.append(entry)
 
         if data.get("has_more"):
@@ -286,12 +307,13 @@ def get_all_commanders() -> list[dict]:
         data = resp.json()
         for card in data.get("data", []):
             if normalize_card_name(card["name"]) not in existing_names:
+                bg_image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
                 commanders.append({
                     "name": card["name"],
                     "name_normalized": normalize_card_name(card["name"]),
                     "color_identity": card.get("color_identity", []),
-                    "image_uri": (card.get("image_uris") or {}).get("normal", "")
-                        or (card.get("card_faces", [{}])[0].get("image_uris") or {}).get("normal", ""),
+                    "image_uri": bg_image_uris.get("normal", ""),
+                    "art_crop": bg_image_uris.get("art_crop", ""),
                     "edhrec_rank": card.get("edhrec_rank", 999999),
                     "partner_type": "background",
                     "type_line": card.get("type_line", ""),
@@ -678,16 +700,7 @@ async def restore_collection(body: dict):
 # --- Deck List Management ---
 @app.get("/api/decks")
 async def list_decks():
-    usage = get_cards_in_decks()
-    result = []
-    for deck_id, deck in deck_lists.items():
-        card_count = sum(deck.get("cards", {}).values())
-        result.append({
-            "id": deck_id,
-            "name": deck.get("name", ""),
-            "commander": deck.get("commander", ""),
-            "card_count": card_count,
-        })
+    result = [_enrich_deck_response(deck) for deck in deck_lists.values()]
     return {"decks": result}
 
 
@@ -723,14 +736,14 @@ async def create_deck(body: dict):
         "commander": commander,
         "cards": cards,
     }
-    return deck_lists[deck_id]
+    return _enrich_deck_response(deck_lists[deck_id])
 
 
 @app.get("/api/decks/{deck_id}")
 async def get_deck(deck_id: str):
     if deck_id not in deck_lists:
         raise HTTPException(status_code=404, detail="Deck not found")
-    return deck_lists[deck_id]
+    return _enrich_deck_response(deck_lists[deck_id])
 
 
 @app.put("/api/decks/{deck_id}")
@@ -758,7 +771,7 @@ async def update_deck(deck_id: str, body: dict):
                 card_name = normalize_card_name(line)
             cards[card_name] = cards.get(card_name, 0) + qty
         deck["cards"] = cards
-    return deck
+    return _enrich_deck_response(deck)
 
 
 @app.delete("/api/decks/{deck_id}")
@@ -832,6 +845,25 @@ async def search_commanders_autocomplete(q: str = ""):
     return {"results": results}
 
 
+def _enrich_deck_response(deck: dict) -> dict:
+    """Add commander metadata to a deck response."""
+    commanders = get_cached_commanders()
+    cmd_lookup = {c["name_normalized"]: c for c in commanders}
+    commander_name = deck.get("commander", "")
+    cmd_data = cmd_lookup.get(normalize_card_name(commander_name), {}) if commander_name else {}
+    return {
+        "id": deck["id"],
+        "name": deck.get("name", ""),
+        "commander": commander_name,
+        "cards": deck.get("cards", {}),
+        "card_count": sum(deck.get("cards", {}).values()),
+        "color_identity": cmd_data.get("color_identity", []),
+        "image_uri": cmd_data.get("image_uri", ""),
+        "art_crop": cmd_data.get("art_crop", ""),
+        "partner_type": cmd_data.get("partner_type", ""),
+    }
+
+
 def _get_compatible_partners(commander: dict) -> list[dict]:
     """Get list of commanders that can be paired with the given commander."""
     pt = commander.get("partner_type", "")
@@ -840,7 +872,17 @@ def _get_compatible_partners(commander: dict) -> list[dict]:
 
     all_cmds = get_cached_commanders()
 
-    if pt == "partner":
+    if pt == "partner_variant":
+        # Custom partner variant (e.g. Partner—Father & Son) pairs only with
+        # other commanders that share the exact same variant label
+        label = commander.get("partner_variant_label", "")
+        if label:
+            return [c for c in all_cmds
+                    if c.get("partner_type") == "partner_variant"
+                    and c.get("partner_variant_label", "") == label
+                    and c["name_normalized"] != commander["name_normalized"]]
+        return []
+    elif pt == "partner":
         # Generic Partner can pair with any other generic Partner
         return [c for c in all_cmds if c.get("partner_type") == "partner"
                 and c["name_normalized"] != commander["name_normalized"]]
@@ -1257,7 +1299,8 @@ async def compare_commanders(request: Request, body: dict):
     all_deck_sets = [set(r["deck_card_names"]) for r in results]
     shared_across_all = set.intersection(*all_deck_sets) if all_deck_sets else set()
     for r in results:
-        others = [s for s in all_deck_sets if s is not set(r["deck_card_names"])]
+        this_set = set(r["deck_card_names"])
+        others = [s for s in all_deck_sets if s != this_set]
         r["unique_cards"] = sorted(set(r["deck_card_names"]) - set.union(*others) if others else set(r["deck_card_names"]))
         r["shared_cards"] = sorted(shared_across_all)
         del r["deck_card_names"]  # Don't send the full set
