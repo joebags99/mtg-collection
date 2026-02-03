@@ -1099,6 +1099,7 @@ async def list_decks():
 async def create_deck(body: dict):
     name = body.get("name", "").strip()
     commander = body.get("commander", "").strip()
+    partner = body.get("partner", "").strip()
     cards_text = body.get("cards_text", "")
     if not name:
         raise HTTPException(status_code=400, detail="Deck name is required")
@@ -1125,6 +1126,7 @@ async def create_deck(body: dict):
         "id": deck_id,
         "name": name,
         "commander": commander,
+        "partner": partner,
         "cards": cards,
     }
     return _enrich_deck_response(deck_lists[deck_id])
@@ -1147,6 +1149,8 @@ async def update_deck(deck_id: str, body: dict):
         deck["name"] = body["name"].strip()
     if "commander" in body:
         deck["commander"] = body["commander"].strip()
+    if "partner" in body:
+        deck["partner"] = body["partner"].strip() if body["partner"] else ""
     if "cards_text" in body:
         cards: dict[str, int] = {}
         for line in body["cards_text"].strip().splitlines():
@@ -1332,18 +1336,37 @@ def _enrich_deck_response(deck: dict) -> dict:
     commanders = get_cached_commanders()
     cmd_lookup = {c["name_normalized"]: c for c in commanders}
     commander_name = deck.get("commander", "")
+    partner_name = deck.get("partner", "")
     cmd_data = cmd_lookup.get(normalize_card_name(commander_name), {}) if commander_name else {}
-    return {
+    partner_data = cmd_lookup.get(normalize_card_name(partner_name), {}) if partner_name else {}
+
+    # Combine color identities from both commanders
+    color_order = ["W", "U", "B", "R", "G"]
+    combined_colors = set(cmd_data.get("color_identity", []))
+    if partner_data:
+        combined_colors.update(partner_data.get("color_identity", []))
+    # Sort colors in WUBRG order
+    color_identity = [c for c in color_order if c in combined_colors]
+
+    result = {
         "id": deck["id"],
         "name": deck.get("name", ""),
         "commander": commander_name,
         "cards": deck.get("cards", {}),
         "card_count": sum(deck.get("cards", {}).values()),
-        "color_identity": cmd_data.get("color_identity", []),
+        "color_identity": color_identity,
         "image_uri": cmd_data.get("image_uri", ""),
         "art_crop": cmd_data.get("art_crop", ""),
         "partner_type": cmd_data.get("partner_type", ""),
     }
+
+    # Include partner info if present
+    if partner_name and partner_data:
+        result["partner"] = partner_name
+        result["partner_image_uri"] = partner_data.get("image_uri", "")
+        result["partner_color_identity"] = partner_data.get("color_identity", [])
+
+    return result
 
 
 def _get_compatible_partners(commander: dict) -> list[dict]:

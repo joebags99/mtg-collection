@@ -1898,6 +1898,12 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const matchColor = data.match_percentage >= 60 ? 'text-green-400' :
     data.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
 
+  // Compute combined color identity if partner selected
+  const colorOrder = ['W', 'U', 'B', 'R', 'G'];
+  const combinedColors = selectedPartner
+    ? colorOrder.filter(c => (commander.color_identity || []).includes(c) || (selectedPartner.color_identity || []).includes(c))
+    : commander.color_identity;
+
   // Compute available card types in recommendations for the type filter
   const allRecs = data.recommendations || [];
   const recTypes = [...new Set(allRecs.map(r => r.card_type || 'Other'))].sort();
@@ -1917,12 +1923,31 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
 
       {/* Header */}
       <div className="flex gap-6 items-start">
-        {commander.image_uri && (
+        {/* Commander image(s) - tucked layout when partner selected */}
+        {selectedPartner ? (
+          <div className="relative flex-shrink-0" style={{ width: '200px', height: '280px' }}>
+            <img
+              src={selectedPartner.image_uri}
+              alt={selectedPartner.name}
+              className="absolute w-40 rounded-lg shadow-lg"
+              style={{ top: 0, right: 0 }}
+            />
+            <img
+              src={commander.image_uri}
+              alt={commander.name}
+              className="absolute w-40 rounded-lg shadow-xl"
+              style={{ bottom: 0, left: 0, zIndex: 1 }}
+            />
+          </div>
+        ) : commander.image_uri ? (
           <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
-        )}
+        ) : null}
         <div className="space-y-3 flex-1">
-          <h2 className="text-3xl font-bold">{commander.name}</h2>
-          <ColorBadge colors={commander.color_identity} />
+          <h2 className="text-3xl font-bold">
+            {commander.name}
+            {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
+          </h2>
+          <ColorBadge colors={combinedColors} />
           <div className="flex items-baseline gap-4">
             <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
             <span className="text-gray-400">
@@ -2280,7 +2305,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
     // Create deck
     try {
       const deck = await apiPost('/api/decks', {
-        name: newName, commander: newCommander, cards_text: newCards,
+        name: newName, commander: newCommander, partner: newPartner?.name || '', cards_text: newCards,
       });
       const updated = { ...decks, [deck.id]: deck };
       setDecks(updated);
@@ -2438,14 +2463,34 @@ function MyDecks({ onDecksChanged, decksReady }) {
             </div>
           )}
           <div className="relative z-10 p-4 flex flex-col h-full">
-            {/* Commander image prominently displayed */}
+            {/* Commander image(s) prominently displayed */}
             <div className="flex justify-center mb-3">
-              {deck.image_uri && (
+              {deck.partner_image_uri ? (
+                // Tucked partner layout - partner behind, main in front
+                <div className="relative" style={{ width: '140px', height: '180px' }}>
+                  <img
+                    src={deck.partner_image_uri}
+                    alt={deck.partner}
+                    className="absolute w-28 rounded-lg shadow-lg"
+                    style={{ top: 0, right: 0, filter: `drop-shadow(0 0 6px ${glow})` }}
+                  />
+                  <img
+                    src={deck.image_uri}
+                    alt={deck.commander}
+                    className="absolute w-28 rounded-lg shadow-xl"
+                    style={{ bottom: 0, left: 0, filter: `drop-shadow(0 0 8px ${glow})`, zIndex: 1 }}
+                  />
+                </div>
+              ) : deck.image_uri ? (
                 <img src={deck.image_uri} alt={deck.commander} className="w-32 rounded-lg shadow-xl" style={{filter: `drop-shadow(0 0 8px ${glow})`}} />
-              )}
+              ) : null}
             </div>
             <h4 className="font-bold text-center text-sm">{deck.name}</h4>
-            {deck.commander && <p className="text-xs text-gray-400 text-center mt-0.5">{deck.commander}</p>}
+            {deck.commander && (
+              <p className="text-xs text-gray-400 text-center mt-0.5">
+                {deck.commander}{deck.partner ? ` + ${deck.partner}` : ''}
+              </p>
+            )}
             <div className="flex items-center justify-center gap-2 mt-1.5">
               {deck.color_identity && deck.color_identity.length > 0 && (
                 <ColorBadge colors={deck.color_identity} />
