@@ -552,12 +552,21 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
           <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
           <div className="flex items-center justify-between">
             <ColorBadge colors={commander.color_identity} />
-            {commander.missing_price > 0 && (
-              <span className="text-xs text-yellow-400">${commander.missing_price.toFixed(0)}</span>
+            {commander.num_decks > 0 && (
+              <span className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</span>
             )}
           </div>
-          {commander.num_decks > 0 && (
-            <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
+          {hasMatch && commander.missing_price > 0 && (
+            <div className="bg-gray-900/60 rounded px-2 py-1 flex items-center justify-between">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wide">To complete</span>
+              <span className={`text-sm font-bold ${
+                commander.missing_price < 50 ? 'text-green-400' :
+                commander.missing_price < 150 ? 'text-yellow-400' :
+                'text-red-400'
+              }`}>
+                ${commander.missing_price.toFixed(2)}
+              </span>
+            </div>
           )}
         </div>
       </div>
