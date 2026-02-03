@@ -13,6 +13,86 @@ const COLOR_MAP = {
 
 const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 
+// --- Mana Symbol Sprite Component ---
+// Maps mana symbols to positions in the Mana.svg sprite
+// SVG viewBox: -945 -210.002 1045 730.002 (width 1045, height 730)
+// Each symbol is ~100x100px centered at its coordinates
+const MANA_POSITIONS = {
+  // Row 1 (y=-160): Numbers 0-9
+  '0': { x: -895, y: -160 }, '1': { x: -790, y: -160 }, '2': { x: -685, y: -160 },
+  '3': { x: -580, y: -160 }, '4': { x: -475, y: -160 }, '5': { x: -370, y: -160 },
+  '6': { x: -265, y: -160 }, '7': { x: -160, y: -160 }, '8': { x: -55, y: -160 },
+  '9': { x: 50, y: -160 },
+  // Row 2 (y=-55): Numbers 10-20
+  '10': { x: 50, y: -55 }, '11': { x: -55, y: -55 }, '12': { x: -160, y: -55 },
+  '13': { x: -265, y: -55 }, '14': { x: -475, y: -55 }, '15': { x: -580, y: -55 },
+  '16': { x: -685, y: -55 }, '17': { x: -790, y: -55 }, '18': { x: -895, y: -55 },
+  '20': { x: -895, y: 50 },
+  // Row 3 (y=50): Colors and X
+  'X': { x: -790, y: 50 },
+  'W': { x: -475, y: 50 }, 'U': { x: -370, y: 50 }, 'B': { x: -265, y: 50 },
+  'R': { x: -160, y: 50 }, 'G': { x: -55, y: 50 },
+  'C': { x: 50, y: 50 }, // Colorless
+};
+
+function ManaSymbol({ symbol, size = 20 }) {
+  const pos = MANA_POSITIONS[symbol?.toUpperCase()];
+  if (!pos) {
+    // Fallback for unknown symbols - just show text
+    return <span className="inline-flex items-center justify-center text-xs font-bold" style={{ width: size, height: size }}>{symbol}</span>;
+  }
+
+  // SVG viewBox starts at (-945, -210.002), dimensions 1045x730
+  // Symbol center is at (pos.x, pos.y), each symbol is ~100x100
+  // Calculate position in pixels from top-left of SVG
+  const pxX = pos.x + 945; // Convert from SVG coords to pixels from left
+  const pxY = pos.y + 210; // Convert from SVG coords to pixels from top
+
+  // Scale factor: we want to show 100px symbol at 'size' pixels
+  const scale = size / 100;
+  const bgWidth = 1045 * scale;
+  const bgHeight = 730 * scale;
+
+  // Background position: offset to center the symbol
+  const bgX = -(pxX * scale - size / 2 + size / 2);
+  const bgY = -(pxY * scale - size / 2 + size / 2);
+
+  return (
+    <span
+      className="inline-block"
+      style={{
+        width: size,
+        height: size,
+        backgroundImage: `url(/assets/Mana.svg)`,
+        backgroundSize: `${bgWidth}px ${bgHeight}px`,
+        backgroundPosition: `${bgX}px ${bgY}px`,
+        backgroundRepeat: 'no-repeat',
+      }}
+      title={symbol}
+    />
+  );
+}
+
+// Parse mana cost string like "{2}{U}{U}" into array of symbols
+function parseManaSymbols(manaCost) {
+  if (!manaCost) return [];
+  const matches = manaCost.match(/\{([^}]+)\}/g);
+  if (!matches) return [];
+  return matches.map(m => m.replace(/[{}]/g, ''));
+}
+
+function ManaCost({ cost, size = 18 }) {
+  const symbols = parseManaSymbols(cost);
+  if (symbols.length === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {symbols.map((sym, i) => (
+        <ManaSymbol key={i} symbol={sym} size={size} />
+      ))}
+    </span>
+  );
+}
+
 function getColorGlow(colors) {
   if (!colors || colors.length === 0) return 'rgba(128,128,128,0.3)';
   const glowColors = {
@@ -1193,7 +1273,13 @@ function ManaCurve({ cards }) {
                 />
               </div>
               {/* CMC label */}
-              <span className="text-xs text-gray-500 mt-1">{cmc === 7 ? '7+' : cmc}</span>
+              <span className="mt-1 flex items-center justify-center">
+                {cmc === 7 ? (
+                  <span className="text-xs text-gray-500">7+</span>
+                ) : (
+                  <ManaSymbol symbol={String(cmc)} size={16} />
+                )}
+              </span>
             </div>
           );
         })}
@@ -1294,15 +1380,15 @@ function DeckStats({ cards }) {
             {['W', 'U', 'B', 'R', 'G'].filter(c => pipCounts[c] > 0).map(color => (
               <div
                 key={color}
-                className="flex-1 rounded-md py-1.5 text-center"
+                className="flex-1 rounded-md py-1.5 flex flex-col items-center justify-center"
                 style={{
                   backgroundColor: pipColors[color].bg,
                   color: pipColors[color].text,
                   flex: pipCounts[color],
                 }}
               >
-                <span className="text-sm font-bold">{pipCounts[color]}</span>
-                <p className="text-[10px] opacity-75">{color}</p>
+                <ManaSymbol symbol={color} size={20} />
+                <span className="text-sm font-bold mt-0.5">{pipCounts[color]}</span>
               </div>
             ))}
           </div>
@@ -2644,13 +2730,14 @@ function CollectionStats({ collectionCount }) {
                 {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
                   <div
                     key={color}
-                    className="rounded-lg py-3 text-center transition-all"
+                    className="rounded-lg py-3 flex flex-col items-center justify-center transition-all"
                     style={{
                       backgroundColor: pipColors[color].bg,
                       color: pipColors[color].text,
                       flex: stats.color_counts[color],
                     }}
                   >
+                    <ManaSymbol symbol={color} size={28} />
                     <span className="text-lg font-bold">{stats.color_counts[color]}</span>
                     <p className="text-[10px] opacity-75">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
                   </div>
@@ -2689,7 +2776,13 @@ function CollectionStats({ collectionCount }) {
                     className="w-full bg-blue-600 rounded-t transition-all duration-300"
                     style={{ height: `${Math.max(pct * 100, cmcCounts[i] > 0 ? 3 : 0)}%` }}
                   />
-                  <span className="text-xs text-gray-500 mt-1">{cmc === 7 ? '7+' : cmc}</span>
+                  <span className="mt-1 flex items-center justify-center">
+                    {cmc === 7 ? (
+                      <span className="text-xs text-gray-500">7+</span>
+                    ) : (
+                      <ManaSymbol symbol={String(cmc)} size={16} />
+                    )}
+                  </span>
                 </div>
               );
             })}
