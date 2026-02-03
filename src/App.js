@@ -13,6 +13,22 @@ const COLOR_MAP = {
 
 const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 
+function getColorGlow(colors) {
+  if (!colors || colors.length === 0) return 'rgba(128,128,128,0.3)';
+  const glowColors = {
+    W: 'rgba(249,250,244,0.35)',
+    U: 'rgba(14,104,171,0.45)',
+    B: 'rgba(100,80,120,0.4)',
+    R: 'rgba(211,32,41,0.45)',
+    G: 'rgba(0,115,62,0.45)',
+  };
+  if (colors.length === 1) return glowColors[colors[0]] || 'rgba(128,128,128,0.3)';
+  // Multi-color: blend first two for a gradient-like glow
+  const c1 = glowColors[colors[0]] || 'rgba(128,128,128,0.3)';
+  const c2 = glowColors[colors[1]] || 'rgba(128,128,128,0.3)';
+  return `${c1}`;
+}
+
 function ColorBadge({ colors }) {
   if (!colors || colors.length === 0) {
     return <span className="text-xs bg-gray-600 px-1.5 py-0.5 rounded">C</span>;
@@ -2019,70 +2035,75 @@ function MyDecks({ onDecksChanged, decksReady }) {
         <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
       )}
 
-      {Object.values(decks).map(deck => (
-        <div key={deck.id} className="relative bg-gray-800 rounded-lg overflow-hidden">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {Object.values(decks).map(deck => {
+        const glow = getColorGlow(deck.color_identity);
+        const glowStyle = {
+          boxShadow: `0 0 20px 2px ${glow}, inset 0 0 20px 0px ${glow}`,
+        };
+        return (
+        <div key={deck.id} className="relative bg-gray-800 rounded-xl overflow-hidden transition-all hover:scale-[1.02]" style={glowStyle}>
           {/* Commander art banner */}
           {deck.art_crop && (
             <div className="absolute inset-0 z-0">
-              <img src={deck.art_crop} alt="" className="w-full h-full object-cover opacity-15" />
-              <div className="absolute inset-0 bg-gradient-to-r from-gray-800/90 via-gray-800/70 to-gray-800/90" />
+              <img src={deck.art_crop} alt="" className="w-full h-full object-cover opacity-20" />
+              <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/80 to-gray-900/40" />
             </div>
           )}
-          <div className="relative z-10 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {deck.image_uri && (
-                  <img src={deck.image_uri} alt="" className="w-10 h-14 rounded object-cover flex-shrink-0 shadow-lg" />
-                )}
-                <div>
-                  <h4 className="font-semibold">{deck.name}</h4>
-                  {deck.commander && <p className="text-sm text-gray-300">{deck.commander}</p>}
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {deck.color_identity && deck.color_identity.length > 0 && (
-                      <ColorBadge colors={deck.color_identity} />
-                    )}
-                    <span className="text-xs text-gray-500">{deck.card_count || Object.keys(deck.cards || {}).length} cards</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleEdit(deck.id)}
-                  disabled={validating}
-                  className={`px-3 py-1 rounded text-sm ${
-                    editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
-                  }`}
-                >
-                  {editingId === deck.id ? (validating ? 'Validating...' : 'Save') : 'Edit'}
-                </button>
-                <button
-                  onClick={() => handleDelete(deck.id)}
-                  className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-sm"
-                >
-                  Delete
-                </button>
-              </div>
+          <div className="relative z-10 p-4 flex flex-col h-full">
+            {/* Commander image prominently displayed */}
+            <div className="flex justify-center mb-3">
+              {deck.image_uri && (
+                <img src={deck.image_uri} alt={deck.commander} className="w-32 rounded-lg shadow-xl" style={{filter: `drop-shadow(0 0 8px ${glow})`}} />
+              )}
+            </div>
+            <h4 className="font-bold text-center text-sm">{deck.name}</h4>
+            {deck.commander && <p className="text-xs text-gray-400 text-center mt-0.5">{deck.commander}</p>}
+            <div className="flex items-center justify-center gap-2 mt-1.5">
+              {deck.color_identity && deck.color_identity.length > 0 && (
+                <ColorBadge colors={deck.color_identity} />
+              )}
+              <span className="text-xs text-gray-500">{deck.card_count || 0} cards</span>
+            </div>
+            <div className="flex gap-2 justify-center mt-3">
+              <button
+                onClick={() => handleEdit(deck.id)}
+                disabled={validating}
+                className={`px-3 py-1 rounded text-xs ${
+                  editingId === deck.id ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
+                }`}
+              >
+                {editingId === deck.id ? (validating ? 'Validating...' : 'Save') : 'Edit'}
+              </button>
+              <button
+                onClick={() => handleDelete(deck.id)}
+                className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs"
+              >
+                Delete
+              </button>
             </div>
             {editingId === deck.id && (
-              <>
+              <div className="mt-3 space-y-2">
                 <textarea
                   value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
-                  rows={10}
-                  className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+                  rows={8}
+                  className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono focus:outline-none focus:border-blue-500"
                 />
                 {invalidCards.length > 0 && (
                   <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
-                    <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
-                    <ul className="text-xs text-red-300 space-y-0.5">
+                    <p className="text-xs text-red-400 font-medium">Unrecognized cards:</p>
+                    <ul className="text-[11px] text-red-300 space-y-0.5">
                       {invalidCards.map(name => <li key={name}>- {name}</li>)}
                     </ul>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>
-      ))}
+        );
+      })}
+      </div>
 
       {/* Legend */}
       {Object.values(decks).length > 0 && (
