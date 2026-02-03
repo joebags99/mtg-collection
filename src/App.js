@@ -1346,7 +1346,7 @@ function DeckStats({ cards }) {
             {['W', 'U', 'B', 'R', 'G'].filter(c => pipCounts[c] > 0).map(color => (
               <div
                 key={color}
-                className="flex-1 rounded-md py-3 flex items-center justify-center relative overflow-hidden"
+                className="flex-1 rounded-md py-3 flex items-center justify-center relative"
                 style={{
                   backgroundColor: pipColors[color].bg,
                   color: pipColors[color].text,
@@ -1354,12 +1354,19 @@ function DeckStats({ cards }) {
                   minWidth: '36px',
                 }}
               >
-                {/* Background icon at low opacity */}
-                <div className="absolute inset-0 flex items-center justify-center opacity-30">
-                  <ManaSymbol symbol={color} size={32} />
+                {/* Large background icon that overflows */}
+                <div
+                  className="absolute opacity-15 pointer-events-none"
+                  style={{
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                >
+                  <ManaSymbol symbol={color} size={56} />
                 </div>
                 {/* Count in foreground */}
-                <span className="text-lg font-bold relative z-10">{pipCounts[color]}</span>
+                <span className="text-lg font-bold relative z-10 drop-shadow-sm">{pipCounts[color]}</span>
               </div>
             ))}
           </div>
@@ -1545,16 +1552,28 @@ function DeckBuilder({ data, commander, onBack }) {
     </div>
   );
 
-  const renderStacksView = () => (
-    <div className="flex gap-2 overflow-x-auto pb-4">
-      {includedGroups.map(({ type, cards }) => (
-        <div key={type} className="flex-shrink-0" style={{ width: '180px' }}>
-          {/* Column header */}
+  const renderStacksView = () => {
+    // Pair columns vertically: shorter types stacked under taller types
+    const groupMap = {};
+    includedGroups.forEach(g => { groupMap[g.type] = g.cards; });
+
+    // Create pairs: [Creature/Instant], [Sorcery/Enchantment], [Artifact/Planeswalker], [Land/Other]
+    const pairs = [
+      ['Creature', 'Instant'],
+      ['Sorcery', 'Enchantment'],
+      ['Artifact', 'Planeswalker'],
+      ['Land', 'Other'],
+    ];
+
+    const renderColumn = (type) => {
+      const cards = groupMap[type];
+      if (!cards || cards.length === 0) return null;
+      return (
+        <div>
           <div className="text-xs font-semibold text-gray-400 border-b border-gray-700 pb-1 mb-1 flex justify-between">
             <span>{type}</span>
             <span>Qty: {cards.reduce((s, c) => s + c.qty, 0)}</span>
           </div>
-          {/* Stacked cards */}
           <div className="relative">
             {cards.map((card, idx) => (
               <StackCard
@@ -1569,9 +1588,20 @@ function DeckBuilder({ data, commander, onBack }) {
             ))}
           </div>
         </div>
-      ))}
-    </div>
-  );
+      );
+    };
+
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {pairs.map(([top, bottom]) => (
+          <div key={`${top}-${bottom}`} className="space-y-4">
+            {renderColumn(top)}
+            {renderColumn(bottom)}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -2703,7 +2733,7 @@ function CollectionStats({ collectionCount }) {
                 {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
                   <div
                     key={color}
-                    className="rounded-lg py-4 flex flex-col items-center justify-center transition-all relative overflow-hidden"
+                    className="rounded-lg py-4 flex flex-col items-center justify-center transition-all relative"
                     style={{
                       backgroundColor: pipColors[color].bg,
                       color: pipColors[color].text,
@@ -2711,12 +2741,19 @@ function CollectionStats({ collectionCount }) {
                       minWidth: '60px',
                     }}
                   >
-                    {/* Background icon at low opacity */}
-                    <div className="absolute inset-0 flex items-center justify-center opacity-20">
-                      <ManaSymbol symbol={color} size={56} />
+                    {/* Large background icon that overflows */}
+                    <div
+                      className="absolute opacity-15 pointer-events-none"
+                      style={{
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                      }}
+                    >
+                      <ManaSymbol symbol={color} size={80} />
                     </div>
                     {/* Content in foreground */}
-                    <span className="text-xl font-bold relative z-10">{stats.color_counts[color]}</span>
+                    <span className="text-xl font-bold relative z-10 drop-shadow-sm">{stats.color_counts[color]}</span>
                     <p className="text-[10px] opacity-75 relative z-10">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
                   </div>
                 ))}

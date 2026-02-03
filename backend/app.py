@@ -852,16 +852,21 @@ def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
 def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
     """Fetch card types from Scryfall collection endpoint for cards we can't classify locally."""
     result = {}
-    uncached = [n for n in card_names if n not in scryfall_type_cache]
+    # Normalize names for cache lookup
+    name_map = {normalize_card_name(n): n for n in card_names}  # normalized -> original
+    normalized_names = list(name_map.keys())
+
+    uncached = [n for n in normalized_names if n not in scryfall_type_cache]
     # Return cached results first
-    for n in card_names:
+    for n in normalized_names:
         if n in scryfall_type_cache:
             result[n] = scryfall_type_cache[n]
 
     # Batch fetch uncached cards from Scryfall
     for i in range(0, len(uncached), 75):
         batch = uncached[i:i+75]
-        identifiers = [{"name": n} for n in batch]
+        # Use original names for Scryfall API
+        identifiers = [{"name": name_map.get(n, n)} for n in batch]
         try:
             resp = requests.post(
                 "https://api.scryfall.com/cards/collection",
@@ -1530,8 +1535,11 @@ async def get_commander_detail(
     if unclassified_names:
         scryfall_types = fetch_card_types_bulk(unclassified_names)
         for card in all_cards:
-            if not card["card_type"] and card["name"] in scryfall_types:
-                card["card_type"] = scryfall_types[card["name"]]
+            if not card["card_type"]:
+                # Lookup by normalized name since fetch_card_types_bulk returns normalized keys
+                card_type = scryfall_types.get(card["name_normalized"], scryfall_types.get(card["name"]))
+                if card_type:
+                    card["card_type"] = card_type
 
     # Fetch mana data (cmc, mana_cost) for all cards
     all_card_names = [card["name"] for card in all_cards]
