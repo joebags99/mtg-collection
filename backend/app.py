@@ -1202,24 +1202,25 @@ async def get_collection_stats():
         return {"error": "No collection loaded", "total_unique": 0}
 
     card_names = list(collection.keys())
+    loop = asyncio.get_event_loop()
 
-    # Fetch types, mana, and prices in bulk - with error handling for timeouts
+    # Fetch types, mana, and prices in bulk - run in thread pool to avoid blocking
     # The bulk fetch functions handle batching (75 cards at a time) and caching internally
     # First load may be slow but subsequent loads will use cached data
     try:
-        types = fetch_card_types_bulk(card_names)
+        types = await loop.run_in_executor(None, fetch_card_types_bulk, card_names)
     except Exception as e:
         logger.error(f"Failed to fetch types: {e}")
         types = {}
 
     try:
-        mana = fetch_card_mana_bulk(card_names)
+        mana = await loop.run_in_executor(None, fetch_card_mana_bulk, card_names)
     except Exception as e:
         logger.error(f"Failed to fetch mana data: {e}")
         mana = {}
 
     try:
-        prices = fetch_prices_bulk(card_names)
+        prices = await loop.run_in_executor(None, fetch_prices_bulk, card_names)
     except Exception as e:
         logger.error(f"Failed to fetch prices: {e}")
         prices = {}
