@@ -7,6 +7,8 @@ import time
 import logging
 import unicodedata
 import sqlite3
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from datetime import datetime, timedelta
 
@@ -34,6 +36,9 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Thread pool for CPU-bound operations (bcrypt)
+password_executor = ThreadPoolExecutor(max_workers=2)
 
 # --- Environment config ---
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
@@ -100,14 +105,26 @@ def init_db():
 security = HTTPBearer(auto_error=False)
 
 
-def hash_password(password: str) -> str:
-    """Hash a password using bcrypt. Using rounds=8 for faster hashing."""
+def _hash_password_sync(password: str) -> str:
+    """Synchronous password hashing."""
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=8)).decode('utf-8')
 
 
-def verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against its hash."""
+def _verify_password_sync(password: str, password_hash: str) -> bool:
+    """Synchronous password verification."""
     return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
+
+async def hash_password(password: str) -> str:
+    """Hash a password using bcrypt in a thread pool (non-blocking)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(password_executor, _hash_password_sync, password)
+
+
+async def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash in a thread pool (non-blocking)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(password_executor, _verify_password_sync, password, password_hash)
 
 
 def create_token(user_id: int, username: str) -> str:
@@ -216,7 +233,7 @@ async def register(body: dict):
         raise HTTPException(status_code=400, detail="Username already taken")
 
     # Create user
-    password_hash = hash_password(password)
+    password_hash = await hash_password(password)
     cursor.execute(
         "INSERT INTO users (username, password_hash) VALUES (?, ?)",
         (username, password_hash)
@@ -244,7 +261,10 @@ async def login(body: dict):
     row = cursor.fetchone()
     conn.close()
 
-    if not row or not verify_password(password, row["password_hash"]):
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    if not await verify_password(password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = create_token(row["id"], row["username"])
