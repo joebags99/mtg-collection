@@ -700,24 +700,7 @@ async def restore_collection(body: dict):
 # --- Deck List Management ---
 @app.get("/api/decks")
 async def list_decks():
-    usage = get_cards_in_decks()
-    commanders = get_cached_commanders()
-    cmd_lookup = {c["name_normalized"]: c for c in commanders}
-    result = []
-    for deck_id, deck in deck_lists.items():
-        card_count = sum(deck.get("cards", {}).values())
-        commander_name = deck.get("commander", "")
-        cmd_data = cmd_lookup.get(normalize_card_name(commander_name), {}) if commander_name else {}
-        result.append({
-            "id": deck_id,
-            "name": deck.get("name", ""),
-            "commander": commander_name,
-            "card_count": card_count,
-            "color_identity": cmd_data.get("color_identity", []),
-            "image_uri": cmd_data.get("image_uri", ""),
-            "art_crop": cmd_data.get("art_crop", ""),
-            "partner_type": cmd_data.get("partner_type", ""),
-        })
+    result = [_enrich_deck_response(deck) for deck in deck_lists.values()]
     return {"decks": result}
 
 
@@ -753,14 +736,14 @@ async def create_deck(body: dict):
         "commander": commander,
         "cards": cards,
     }
-    return deck_lists[deck_id]
+    return _enrich_deck_response(deck_lists[deck_id])
 
 
 @app.get("/api/decks/{deck_id}")
 async def get_deck(deck_id: str):
     if deck_id not in deck_lists:
         raise HTTPException(status_code=404, detail="Deck not found")
-    return deck_lists[deck_id]
+    return _enrich_deck_response(deck_lists[deck_id])
 
 
 @app.put("/api/decks/{deck_id}")
@@ -788,7 +771,7 @@ async def update_deck(deck_id: str, body: dict):
                 card_name = normalize_card_name(line)
             cards[card_name] = cards.get(card_name, 0) + qty
         deck["cards"] = cards
-    return deck
+    return _enrich_deck_response(deck)
 
 
 @app.delete("/api/decks/{deck_id}")
@@ -860,6 +843,25 @@ async def search_commanders_autocomplete(q: str = ""):
             contains_matches.append(c)
     results = (prefix_matches + contains_matches)[:20]
     return {"results": results}
+
+
+def _enrich_deck_response(deck: dict) -> dict:
+    """Add commander metadata to a deck response."""
+    commanders = get_cached_commanders()
+    cmd_lookup = {c["name_normalized"]: c for c in commanders}
+    commander_name = deck.get("commander", "")
+    cmd_data = cmd_lookup.get(normalize_card_name(commander_name), {}) if commander_name else {}
+    return {
+        "id": deck["id"],
+        "name": deck.get("name", ""),
+        "commander": commander_name,
+        "cards": deck.get("cards", {}),
+        "card_count": sum(deck.get("cards", {}).values()),
+        "color_identity": cmd_data.get("color_identity", []),
+        "image_uri": cmd_data.get("image_uri", ""),
+        "art_crop": cmd_data.get("art_crop", ""),
+        "partner_type": cmd_data.get("partner_type", ""),
+    }
 
 
 def _get_compatible_partners(commander: dict) -> list[dict]:
