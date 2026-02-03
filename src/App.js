@@ -507,7 +507,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
   const hasMatch = commander.match_percentage !== undefined;
   return (
     <div
-      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative card-lift ${selected ? 'ring-2 ring-purple-500' : ''}`}
     >
       {selectable && (
         <button
@@ -751,7 +751,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
       )}
 
       {!loading && sortedResults.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">
           {sortedResults.map(cmd => (
             <CommanderCard
               key={cmd.name}
@@ -863,7 +863,7 @@ function CommanderSearch({ collectionCount, onSelectCommander, compareList, onTo
         <h3 className="text-sm font-medium text-gray-400">Popular Commanders</h3>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">
         {displayList.map(cmd => (
           <CommanderCard
             key={cmd.name}
@@ -2231,7 +2231,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
         <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 grid-stagger">
       {Object.values(decks).map(deck => {
         const glow = getColorGlow(deck.color_identity);
         const glowStyle = {
@@ -2392,21 +2392,21 @@ function CollectionStats({ collectionCount }) {
       <h2 className="text-2xl font-bold">Collection Statistics</h2>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-stagger">
         <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-blue-400">{stats.total_unique.toLocaleString()}</span>
+          <span className="text-3xl font-bold text-blue-400 number-pop inline-block">{stats.total_unique.toLocaleString()}</span>
           <p className="text-xs text-gray-500 mt-1">Unique Cards</p>
         </div>
         <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-green-400">{stats.total_cards.toLocaleString()}</span>
+          <span className="text-3xl font-bold text-green-400 number-pop inline-block">{stats.total_cards.toLocaleString()}</span>
           <p className="text-xs text-gray-500 mt-1">Total Cards</p>
         </div>
         <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-yellow-400">${stats.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          <span className="text-3xl font-bold text-yellow-400 number-pop inline-block">${stats.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           <p className="text-xs text-gray-500 mt-1">Est. Total Value</p>
         </div>
         <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-purple-400">{stats.total_in_decks}</span>
+          <span className="text-3xl font-bold text-purple-400 number-pop inline-block">{stats.total_in_decks}</span>
           <p className="text-xs text-gray-500 mt-1">Cards in Decks</p>
         </div>
       </div>
@@ -2416,7 +2416,7 @@ function CollectionStats({ collectionCount }) {
         <div className="bg-gray-800 rounded-lg p-5 space-y-3">
           <h3 className="text-sm font-semibold text-gray-300">Card Type Distribution</h3>
           {/* Visual stacked bar */}
-          <div className="flex rounded-full overflow-hidden h-4">
+          <div className="flex rounded-full overflow-hidden h-4 bar-animate">
             {typeOrder.filter(t => stats.type_counts[t]).map(type => (
               <div
                 key={type}
@@ -2705,29 +2705,35 @@ function App() {
         </div>
 
         {tab === 'detail' && selectedCommander && (
-          <CommanderDetail
-            commander={selectedCommander}
-            collectionCount={collectionCount}
-            onBack={() => setTab('recommend')}
-            onOpenDeckBuilder={handleOpenDeckBuilder}
-            excludeInDecks={excludeInDecks}
-          />
+          <div className="page-fade-in">
+            <CommanderDetail
+              commander={selectedCommander}
+              collectionCount={collectionCount}
+              onBack={() => setTab('recommend')}
+              onOpenDeckBuilder={handleOpenDeckBuilder}
+              excludeInDecks={excludeInDecks}
+            />
+          </div>
         )}
 
         {tab === 'deckbuilder' && selectedCommander && deckBuilderData && (
-          <DeckBuilder
-            data={deckBuilderData}
-            commander={selectedCommander}
-            onBack={() => setTab('detail')}
-          />
+          <div className="page-fade-in">
+            <DeckBuilder
+              data={deckBuilderData}
+              commander={selectedCommander}
+              onBack={() => setTab('detail')}
+            />
+          </div>
         )}
 
         {tab === 'compare' && compareList.length >= 2 && (
-          <CompareView
-            commanders={compareList}
-            onBack={() => setTab('recommend')}
-            onSelectCommander={handleSelectCommander}
-          />
+          <div className="page-fade-in">
+            <CompareView
+              commanders={compareList}
+              onBack={() => setTab('recommend')}
+              onSelectCommander={handleSelectCommander}
+            />
+          </div>
         )}
       </main>
     </div>
