@@ -405,35 +405,35 @@ function CommanderAutocomplete({ value, onChange, placeholder, className }) {
 }
 
 // --- Partner Picker ---
-function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
-  const [partners, setPartners] = useState([]);
-  const [partnerType, setPartnerType] = useState('');
+function PartnerPicker({ commanderName, onSelectPartner, selectedPartner, partnerData }) {
+  // partnerData can be passed from parent to avoid duplicate fetches
+  const [partners, setPartners] = useState(partnerData?.partners || []);
+  const [partnerType, setPartnerType] = useState(partnerData?.partner_type || '');
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const autoSelectedRef = useRef(false);
 
+  // Only fetch if partnerData wasn't provided
   useEffect(() => {
-    autoSelectedRef.current = false;
-  }, [commanderName]);
-
-  useEffect(() => {
+    if (partnerData) {
+      setPartnerType(partnerData.partner_type || '');
+      setPartners(partnerData.partners || []);
+      return;
+    }
     if (!commanderName) { setPartners([]); setPartnerType(''); return; }
     setLoading(true);
     apiGet(`/api/commander/${encodeURIComponent(commanderName)}/partners`)
       .then(data => {
         setPartnerType(data.partner_type || '');
         setPartners(data.partners || []);
-        // If partner_with or partner_variant with only one option, auto-select once
-        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1 && !autoSelectedRef.current) {
-          autoSelectedRef.current = true;
-          onSelectPartner(data.partners[0]);
-        }
       })
       .catch(() => { setPartners([]); setPartnerType(''); })
       .finally(() => setLoading(false));
-  }, [commanderName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [commanderName, partnerData]);
 
   if (!partnerType) return null;
+
+  // For locked partners (partner_with/variant with 1 option), don't show remove button
+  const isLockedPartner = (partnerType === 'partner_with' || partnerType === 'partner_variant') && partners.length === 1;
 
   const partnerLabel =
     partnerType === 'partner' ? 'Partner' :
@@ -453,7 +453,7 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
     <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold text-purple-400">{partnerLabel}</h4>
-        {selectedPartner && (
+        {selectedPartner && !isLockedPartner && (
           <button
             onClick={() => onSelectPartner(null)}
             className="text-xs text-gray-400 hover:text-red-400"
@@ -1822,46 +1822,68 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const [recFilter, setRecFilter] = useState('all');
   const [recTypeFilter, setRecTypeFilter] = useState('all');
   const [selectedPartner, setSelectedPartner] = useState(null);
-  const [partnerReady, setPartnerReady] = useState(false);
+  const [partnerData, setPartnerData] = useState(null);
+  const initialFetchDone = useRef(false);
+  const currentCommander = useRef(commander.name);
 
-  // First, check if this commander has a locked partner (partner_with or partner_variant with 1 option)
-  // This ensures we include the partner in the initial EDHREC fetch instead of fetching twice
+  // Reset state when commander changes
   useEffect(() => {
-    const checkLockedPartner = async () => {
-      // If commander doesn't have a partner type that could be locked, skip
-      if (!commander.partner_type || !['partner_with', 'partner_variant'].includes(commander.partner_type)) {
-        setPartnerReady(true);
-        return;
+    if (currentCommander.current !== commander.name) {
+      currentCommander.current = commander.name;
+      initialFetchDone.current = false;
+      setData(null);
+      setSelectedPartner(null);
+      setPartnerData(null);
+    }
+  }, [commander.name]);
+
+  // Fetch partner info and EDHREC data - runs once on mount
+  useEffect(() => {
+    if (initialFetchDone.current) return;
+    initialFetchDone.current = true;
+
+    const fetchInitial = async () => {
+      setLoading(true);
+      setError('');
+      let partner = null;
+
+      // Check for locked partner first
+      if (commander.partner_type && ['partner_with', 'partner_variant'].includes(commander.partner_type)) {
+        try {
+          const pData = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}/partners`);
+          setPartnerData(pData);
+          if ((pData.partner_type === 'partner_with' || pData.partner_type === 'partner_variant') && pData.partners?.length === 1) {
+            partner = pData.partners[0];
+            setSelectedPartner(partner);
+          }
+        } catch (e) {
+          // Ignore partner fetch errors
+        }
       }
 
+      // Now fetch EDHREC data (with partner if found)
       try {
-        const data = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}/partners`);
-        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1) {
-          setSelectedPartner(data.partners[0]);
-        }
-      } catch (e) {
-        // Ignore errors, just proceed without partner
+        const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+        if (partner) params.partner = partner.name;
+        const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
+        setData(d);
+      } catch (err) {
+        setError(err.message);
       }
-      setPartnerReady(true);
+      setLoading(false);
     };
 
-    setPartnerReady(false);
-    setSelectedPartner(null);
-    checkLockedPartner();
-  }, [commander.name, commander.partner_type]);
+    fetchInitial();
+  }, [commander.name, commander.partner_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchDetail = useCallback(async () => {
+  // Refetch when filters or partner selection changes (after initial load)
+  const fetchDetail = useCallback(async (partnerOverride) => {
     setLoading(true);
     setError('');
     try {
-      const params = {
-        budget: budget || null,
-        theme: theme || null,
-        exclude_in_decks: excludeInDecks || null,
-      };
-      if (selectedPartner) {
-        params.partner = selectedPartner.name;
-      }
+      const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+      const p = partnerOverride !== undefined ? partnerOverride : selectedPartner;
+      if (p) params.partner = p.name;
       const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
       setData(d);
     } catch (err) {
@@ -1870,12 +1892,23 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     setLoading(false);
   }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
 
-  // Only fetch EDHREC data after partner check is complete
+  // Refetch when filters change (but not on initial mount)
+  const prevFilters = useRef({ budget: '', theme: '' });
   useEffect(() => {
-    if (partnerReady) {
+    if (!initialFetchDone.current || !data) return;
+    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme) {
+      prevFilters.current = { budget, theme };
       fetchDetail();
     }
-  }, [partnerReady, fetchDetail]);
+  }, [budget, theme, data, fetchDetail]);
+
+  // Handle partner selection changes from PartnerPicker
+  const handlePartnerChange = useCallback((newPartner) => {
+    setSelectedPartner(newPartner);
+    if (initialFetchDone.current && data) {
+      fetchDetail(newPartner);
+    }
+  }, [data, fetchDetail]);
 
   const handleExport = (type) => {
     if (!data) return;
@@ -2003,8 +2036,9 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       {/* Partner Commander */}
       <PartnerPicker
         commanderName={commander.name}
-        onSelectPartner={setSelectedPartner}
+        onSelectPartner={handlePartnerChange}
         selectedPartner={selectedPartner}
+        partnerData={partnerData}
       />
 
       {/* Filters + Export + Deck Builder */}
