@@ -6,10 +6,17 @@ import re
 import time
 import logging
 import unicodedata
+import sqlite3
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
+from datetime import datetime, timedelta
 
 import requests
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+import bcrypt
+import jwt
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pyedhrec import EDHRec
 
@@ -30,10 +37,134 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Thread pool for CPU-bound operations (bcrypt)
+password_executor = ThreadPoolExecutor(max_workers=2)
+
 # --- Environment config ---
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 REDIS_URL = os.environ.get("REDIS_URL", "")
 RATE_LIMIT = os.environ.get("RATE_LIMIT", "30/minute")
+JWT_SECRET = os.environ.get("JWT_SECRET", "mtg-collection-secret-change-in-production")
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "mtg_collection.db")
+
+# --- Database setup ---
+def get_db():
+    """Get a database connection."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    """Initialize database tables."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Users table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # User collections - one per user, replaced on update
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_collections (
+            user_id INTEGER PRIMARY KEY,
+            cards_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    # User decks - multiple per user, updated in place
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_decks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            deck_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            commander TEXT NOT NULL,
+            cards_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, deck_id)
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+    logger.info(f"Database initialized at {DATABASE_PATH}")
+
+
+# --- Auth utilities ---
+security = HTTPBearer(auto_error=False)
+
+
+def _hash_password_sync(password: str) -> str:
+    """Synchronous password hashing."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=8)).decode('utf-8')
+
+
+def _verify_password_sync(password: str, password_hash: str) -> bool:
+    """Synchronous password verification."""
+    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
+
+async def hash_password(password: str) -> str:
+    """Hash a password using bcrypt in a thread pool (non-blocking)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(password_executor, _hash_password_sync, password)
+
+
+async def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash in a thread pool (non-blocking)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(password_executor, _verify_password_sync, password, password_hash)
+
+
+def create_token(user_id: int, username: str) -> str:
+    """Create a JWT token for a user."""
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "exp": datetime.utcnow() + timedelta(days=30)  # 30 day expiry
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def verify_token(token: str) -> Optional[dict]:
+    """Verify a JWT token and return the payload."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
+    """Dependency to get the current user from the Authorization header."""
+    if not credentials:
+        return None
+    payload = verify_token(credentials.credentials)
+    return payload
+
+
+async def require_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """Dependency that requires a valid user."""
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = verify_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload
+
 
 # --- Redis setup (optional) ---
 redis_client = None
@@ -70,6 +201,217 @@ def rate_limit(limit_string):
             return limiter.limit(limit_string)(func)
         return func
     return decorator
+
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+
+
+# --- Auth endpoints ---
+@app.post("/api/auth/register")
+async def register(body: dict):
+    """Register a new user."""
+    username = body.get("username", "").strip().lower()
+    password = body.get("password", "")
+
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if not password or len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+    if not username.isalnum():
+        raise HTTPException(status_code=400, detail="Username must be alphanumeric")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Check if username exists
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    # Create user
+    password_hash = await hash_password(password)
+    cursor.execute(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+        (username, password_hash)
+    )
+    conn.commit()
+    user_id = cursor.lastrowid
+    conn.close()
+
+    token = create_token(user_id, username)
+    return {"token": token, "user": {"id": user_id, "username": username}}
+
+
+@app.post("/api/auth/login")
+async def login(body: dict):
+    """Login and get a token."""
+    username = body.get("username", "").strip().lower()
+    password = body.get("password", "")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password required")
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    if not await verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = create_token(row["id"], row["username"])
+    return {"token": token, "user": {"id": row["id"], "username": row["username"]}}
+
+
+@app.get("/api/auth/me")
+async def get_me(user: dict = Depends(require_user)):
+    """Get current user info."""
+    return {"user": {"id": user["user_id"], "username": user["username"]}}
+
+
+# --- User data sync endpoints ---
+@app.post("/api/user/collection/save")
+async def save_user_collection(body: dict, user: dict = Depends(require_user)):
+    """Save user's collection to database. Replaces existing data."""
+    cards = body.get("cards", {})
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Upsert - replace if exists, insert if not
+    cursor.execute("""
+        INSERT INTO user_collections (user_id, cards_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            cards_json = excluded.cards_json,
+            updated_at = CURRENT_TIMESTAMP
+    """, (user_id, json.dumps(cards)))
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "count": len(cards)}
+
+
+@app.get("/api/user/collection")
+async def get_user_collection(user: dict = Depends(require_user)):
+    """Load user's collection from database."""
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT cards_json, updated_at FROM user_collections WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {"cards": {}, "count": 0}
+
+    cards = json.loads(row["cards_json"])
+    return {"cards": cards, "count": len(cards), "updated_at": row["updated_at"]}
+
+
+@app.post("/api/user/decks/save")
+async def save_user_decks(body: dict, user: dict = Depends(require_user)):
+    """Save user's decks to database. Replaces all existing decks."""
+    decks = body.get("decks", {})
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Delete all existing decks for this user
+    cursor.execute("DELETE FROM user_decks WHERE user_id = ?", (user_id,))
+
+    # Insert new decks
+    for deck_id, deck in decks.items():
+        cursor.execute("""
+            INSERT INTO user_decks (user_id, deck_id, name, commander, cards_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (
+            user_id,
+            deck_id,
+            deck.get("name", ""),
+            deck.get("commander", ""),
+            json.dumps(deck.get("cards", {}))
+        ))
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "count": len(decks)}
+
+
+@app.get("/api/user/decks")
+async def get_user_decks(user: dict = Depends(require_user)):
+    """Load user's decks from database."""
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT deck_id, name, commander, cards_json, updated_at
+        FROM user_decks WHERE user_id = ?
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    decks = {}
+    for row in rows:
+        decks[row["deck_id"]] = {
+            "id": row["deck_id"],
+            "name": row["name"],
+            "commander": row["commander"],
+            "cards": json.loads(row["cards_json"]),
+        }
+
+    return {"decks": decks, "count": len(decks)}
+
+
+@app.get("/api/user/data")
+async def get_all_user_data(user: dict = Depends(require_user)):
+    """Load all user data (collection + decks) in one call."""
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get collection
+    cursor.execute("SELECT cards_json FROM user_collections WHERE user_id = ?", (user_id,))
+    coll_row = cursor.fetchone()
+    cards = json.loads(coll_row["cards_json"]) if coll_row else {}
+
+    # Get decks
+    cursor.execute("""
+        SELECT deck_id, name, commander, cards_json
+        FROM user_decks WHERE user_id = ?
+    """, (user_id,))
+    deck_rows = cursor.fetchall()
+    conn.close()
+
+    decks = {}
+    for row in deck_rows:
+        decks[row["deck_id"]] = {
+            "id": row["deck_id"],
+            "name": row["name"],
+            "commander": row["commander"],
+            "cards": json.loads(row["cards_json"]),
+        }
+
+    return {
+        "collection": {"cards": cards, "count": len(cards)},
+        "decks": {"decks": decks, "count": len(decks)}
+    }
+
 
 edhrec = EDHRec()
 
@@ -462,18 +804,17 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
 
 
 scryfall_type_cache = {}
+scryfall_mana_cache = {}  # {card_name: {"cmc": float, "mana_cost": str}}
 
 
-def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
-    """Fetch card types from Scryfall collection endpoint for cards we can't classify locally."""
+def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
+    """Fetch cmc and mana_cost from Scryfall collection endpoint."""
     result = {}
-    uncached = [n for n in card_names if n not in scryfall_type_cache]
-    # Return cached results first
+    uncached = [n for n in card_names if n not in scryfall_mana_cache]
     for n in card_names:
-        if n in scryfall_type_cache:
-            result[n] = scryfall_type_cache[n]
+        if n in scryfall_mana_cache:
+            result[n] = scryfall_mana_cache[n]
 
-    # Batch fetch uncached cards from Scryfall
     for i in range(0, len(uncached), 75):
         batch = uncached[i:i+75]
         identifiers = [{"name": n} for n in batch]
@@ -481,15 +822,65 @@ def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
             resp = requests.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
-                timeout=15,
+                timeout=30,
             )
             if resp.status_code == 200:
                 for card in resp.json().get("data", []):
                     name = card.get("name", "")
+                    normalized = normalize_card_name(name)
+                    cmc = card.get("cmc", 0)
+                    mana_cost = card.get("mana_cost", "")
+                    type_line = card.get("type_line", "")
+                    # For DFCs, use front face mana cost
+                    if not mana_cost and card.get("card_faces"):
+                        mana_cost = card["card_faces"][0].get("mana_cost", "")
+                        cmc = card.get("cmc", 0)
+                    entry = {"cmc": cmc, "mana_cost": mana_cost}
+                    scryfall_mana_cache[normalized] = entry
+                    result[normalized] = entry
+                    # Also cache the type while we're here
+                    if normalized not in scryfall_type_cache:
+                        card_type = _parse_type_line(type_line)
+                        scryfall_type_cache[normalized] = card_type
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Scryfall mana fetch error: {e}")
+
+    return result
+
+
+def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
+    """Fetch card types from Scryfall collection endpoint for cards we can't classify locally."""
+    result = {}
+    # Normalize names for cache lookup
+    name_map = {normalize_card_name(n): n for n in card_names}  # normalized -> original
+    normalized_names = list(name_map.keys())
+
+    uncached = [n for n in normalized_names if n not in scryfall_type_cache]
+    # Return cached results first
+    for n in normalized_names:
+        if n in scryfall_type_cache:
+            result[n] = scryfall_type_cache[n]
+
+    # Batch fetch uncached cards from Scryfall
+    for i in range(0, len(uncached), 75):
+        batch = uncached[i:i+75]
+        # Use original names for Scryfall API
+        identifiers = [{"name": name_map.get(n, n)} for n in batch]
+        try:
+            resp = requests.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": identifiers},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                for card in resp.json().get("data", []):
+                    name = card.get("name", "")
+                    normalized = normalize_card_name(name)
                     type_line = card.get("type_line", "")
                     card_type = _parse_type_line(type_line)
-                    scryfall_type_cache[name] = card_type
-                    result[name] = card_type
+                    scryfall_type_cache[normalized] = card_type
+                    result[normalized] = card_type
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall type fetch error: {e}")
@@ -708,6 +1099,7 @@ async def list_decks():
 async def create_deck(body: dict):
     name = body.get("name", "").strip()
     commander = body.get("commander", "").strip()
+    partner = body.get("partner", "").strip()
     cards_text = body.get("cards_text", "")
     if not name:
         raise HTTPException(status_code=400, detail="Deck name is required")
@@ -734,6 +1126,7 @@ async def create_deck(body: dict):
         "id": deck_id,
         "name": name,
         "commander": commander,
+        "partner": partner,
         "cards": cards,
     }
     return _enrich_deck_response(deck_lists[deck_id])
@@ -756,6 +1149,8 @@ async def update_deck(deck_id: str, body: dict):
         deck["name"] = body["name"].strip()
     if "commander" in body:
         deck["commander"] = body["commander"].strip()
+    if "partner" in body:
+        deck["partner"] = body["partner"].strip() if body["partner"] else ""
     if "cards_text" in body:
         cards: dict[str, int] = {}
         for line in body["cards_text"].strip().splitlines():
@@ -809,6 +1204,97 @@ async def get_collection_availability():
     return result
 
 
+@app.get("/api/collection/stats")
+async def get_collection_stats():
+    """Get detailed statistics for the entire collection: prices, types, mana data."""
+    if not collection:
+        return {"error": "No collection loaded", "total_unique": 0}
+
+    card_names = list(collection.keys())
+    loop = asyncio.get_event_loop()
+
+    # Fetch types, mana, and prices in bulk - run in thread pool to avoid blocking
+    # The bulk fetch functions handle batching (75 cards at a time) and caching internally
+    # First load may be slow but subsequent loads will use cached data
+    try:
+        types = await loop.run_in_executor(None, fetch_card_types_bulk, card_names)
+    except Exception as e:
+        logger.error(f"Failed to fetch types: {e}")
+        types = {}
+
+    try:
+        mana = await loop.run_in_executor(None, fetch_card_mana_bulk, card_names)
+    except Exception as e:
+        logger.error(f"Failed to fetch mana data: {e}")
+        mana = {}
+
+    try:
+        prices = await loop.run_in_executor(None, fetch_prices_bulk, card_names)
+    except Exception as e:
+        logger.error(f"Failed to fetch prices: {e}")
+        prices = {}
+
+    cards = []
+    total_value = 0
+    type_counts = {}
+    color_counts = {"W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "C": 0}
+    rarity_counts = {}
+    cmc_distribution = {}
+
+    for name, qty in collection.items():
+        card_type = types.get(name, "Other")
+        mana_info = mana.get(name, {})
+        price = prices.get(name)
+        cmc = mana_info.get("cmc", 0)
+        mana_cost = mana_info.get("mana_cost", "")
+
+        card_entry = {
+            "name": name,
+            "qty": qty,
+            "card_type": card_type,
+            "cmc": cmc,
+            "mana_cost": mana_cost,
+            "price": price,
+        }
+        cards.append(card_entry)
+
+        if price:
+            total_value += price * qty
+
+        type_counts[card_type] = type_counts.get(card_type, 0) + qty
+
+        # Color identity from mana cost
+        has_color = False
+        for color in ["W", "U", "B", "R", "G"]:
+            if "{" + color + "}" in mana_cost or "/" + color in mana_cost or color + "/" in mana_cost:
+                color_counts[color] += qty
+                has_color = True
+        if not has_color and card_type != "Land":
+            color_counts["C"] += qty
+
+        cmc_bucket = str(min(int(cmc), 7)) if cmc else "0"
+        cmc_distribution[cmc_bucket] = cmc_distribution.get(cmc_bucket, 0) + qty
+
+    # Top 10 most valuable cards
+    priced = [c for c in cards if c["price"]]
+    priced.sort(key=lambda c: (c["price"] or 0), reverse=True)
+    top_valuable = priced[:10]
+
+    usage = get_cards_in_decks()
+    total_in_decks = sum(u.get("total_in_decks", 0) for u in usage.values())
+
+    return {
+        "total_unique": len(collection),
+        "total_cards": sum(collection.values()),
+        "total_value": round(total_value, 2),
+        "total_in_decks": total_in_decks,
+        "type_counts": type_counts,
+        "color_counts": color_counts,
+        "cmc_distribution": cmc_distribution,
+        "top_valuable": top_valuable,
+    }
+
+
 @app.get("/api/commanders")
 async def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
     commanders = get_cached_commanders()
@@ -850,18 +1336,37 @@ def _enrich_deck_response(deck: dict) -> dict:
     commanders = get_cached_commanders()
     cmd_lookup = {c["name_normalized"]: c for c in commanders}
     commander_name = deck.get("commander", "")
+    partner_name = deck.get("partner", "")
     cmd_data = cmd_lookup.get(normalize_card_name(commander_name), {}) if commander_name else {}
-    return {
+    partner_data = cmd_lookup.get(normalize_card_name(partner_name), {}) if partner_name else {}
+
+    # Combine color identities from both commanders
+    color_order = ["W", "U", "B", "R", "G"]
+    combined_colors = set(cmd_data.get("color_identity", []))
+    if partner_data:
+        combined_colors.update(partner_data.get("color_identity", []))
+    # Sort colors in WUBRG order
+    color_identity = [c for c in color_order if c in combined_colors]
+
+    result = {
         "id": deck["id"],
         "name": deck.get("name", ""),
         "commander": commander_name,
         "cards": deck.get("cards", {}),
         "card_count": sum(deck.get("cards", {}).values()),
-        "color_identity": cmd_data.get("color_identity", []),
+        "color_identity": color_identity,
         "image_uri": cmd_data.get("image_uri", ""),
         "art_crop": cmd_data.get("art_crop", ""),
         "partner_type": cmd_data.get("partner_type", ""),
     }
+
+    # Include partner info if present
+    if partner_name and partner_data:
+        result["partner"] = partner_name
+        result["partner_image_uri"] = partner_data.get("image_uri", "")
+        result["partner_color_identity"] = partner_data.get("color_identity", [])
+
+    return result
 
 
 def _get_compatible_partners(commander: dict) -> list[dict]:
@@ -1053,8 +1558,20 @@ async def get_commander_detail(
     if unclassified_names:
         scryfall_types = fetch_card_types_bulk(unclassified_names)
         for card in all_cards:
-            if not card["card_type"] and card["name"] in scryfall_types:
-                card["card_type"] = scryfall_types[card["name"]]
+            if not card["card_type"]:
+                # Lookup by normalized name since fetch_card_types_bulk returns normalized keys
+                card_type = scryfall_types.get(card["name_normalized"], scryfall_types.get(card["name"]))
+                if card_type:
+                    card["card_type"] = card_type
+
+    # Fetch mana data (cmc, mana_cost) for all cards
+    all_card_names = [card["name"] for card in all_cards]
+    mana_data = fetch_card_mana_bulk(all_card_names)
+    for card in all_cards:
+        # Lookup by normalized name since fetch_card_mana_bulk normalizes keys
+        minfo = mana_data.get(card["name_normalized"], mana_data.get(card["name"], {}))
+        card["cmc"] = minfo.get("cmc", 0)
+        card["mana_cost"] = minfo.get("mana_cost", "")
 
     # Split into owned/missing
     available = get_available_collection(exclude_in_decks)
@@ -1151,6 +1668,15 @@ async def get_commander_detail(
         for r in recommendations:
             if not r["card_type"] and r["name"] in rec_types:
                 r["card_type"] = rec_types[r["name"]]
+
+    # Fetch mana data (cmc, mana_cost) for recommendations
+    rec_names = [r["name"] for r in recommendations]
+    if rec_names:
+        rec_mana = fetch_card_mana_bulk(rec_names)
+        for r in recommendations:
+            minfo = rec_mana.get(r["name_normalized"], rec_mana.get(r["name"], {}))
+            r["cmc"] = minfo.get("cmc", 0)
+            r["mana_cost"] = minfo.get("mana_cost", "")
 
     # Sort recommendations by synergy descending
     recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)

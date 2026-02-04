@@ -13,6 +13,52 @@ const COLOR_MAP = {
 
 const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 
+// --- Mana Symbol Component ---
+// Uses individual SVG files from /assets/SVG/
+// Handles: numbers (0-20, 100), colors (W,U,B,R,G,C), hybrids (WU, BR, etc.),
+// phyrexian (WP, UP, etc.), 2-hybrids (2W, 2U, etc.), and special (X, T, Q, S)
+function ManaSymbol({ symbol, size = 20 }) {
+  if (!symbol) return null;
+
+  // Normalize the symbol for filename lookup
+  // Handle hybrid mana like "W/U" -> "WU", "2/W" -> "2W", "W/P" -> "WP"
+  let filename = symbol.toUpperCase().replace(/\//g, '');
+
+  return (
+    <img
+      src={`/assets/SVG/${filename}.svg`}
+      alt={symbol}
+      title={symbol}
+      style={{ width: size, height: size }}
+      className="inline-block"
+      onError={(e) => {
+        // Fallback: hide broken image and show text
+        e.target.style.display = 'none';
+      }}
+    />
+  );
+}
+
+// Parse mana cost string like "{2}{U}{U}" into array of symbols
+function parseManaSymbols(manaCost) {
+  if (!manaCost) return [];
+  const matches = manaCost.match(/\{([^}]+)\}/g);
+  if (!matches) return [];
+  return matches.map(m => m.replace(/[{}]/g, ''));
+}
+
+function ManaCost({ cost, size = 18 }) {
+  const symbols = parseManaSymbols(cost);
+  if (symbols.length === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {symbols.map((sym, i) => (
+        <ManaSymbol key={i} symbol={sym} size={size} />
+      ))}
+    </span>
+  );
+}
+
 function getColorGlow(colors) {
   if (!colors || colors.length === 0) return 'rgba(128,128,128,0.3)';
   const glowColors = {
@@ -119,6 +165,48 @@ function MatchBar({ percentage, size = 'sm' }) {
 // --- localStorage helpers ---
 const STORAGE_KEY = 'mtg_collection';
 const DECKS_STORAGE_KEY = 'mtg_decks';
+const AUTH_TOKEN_KEY = 'mtg_auth_token';
+const AUTH_USER_KEY = 'mtg_auth_user';
+
+function saveAuthToken(token) {
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch (e) {
+    console.error('Failed to save auth token:', e);
+  }
+}
+
+function loadAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch (e) {
+    console.error('Failed to load auth token:', e);
+  }
+  return null;
+}
+
+function saveAuthUser(user) {
+  try {
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+  } catch (e) {
+    console.error('Failed to save auth user:', e);
+  }
+}
+
+function loadAuthUser() {
+  try {
+    const data = localStorage.getItem(AUTH_USER_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load auth user:', e);
+  }
+  return null;
+}
+
+function clearAuth() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
 
 function saveCollection(cards) {
   try {
@@ -187,6 +275,37 @@ async function apiUpload(path, file) {
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(API + path, { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+// --- Auth API helpers ---
+async function apiAuthPost(path, body) {
+  const token = loadAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiAuthGet(path) {
+  const token = loadAuthToken();
+  const headers = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(API + path, { headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'API error');
@@ -286,35 +405,35 @@ function CommanderAutocomplete({ value, onChange, placeholder, className }) {
 }
 
 // --- Partner Picker ---
-function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
-  const [partners, setPartners] = useState([]);
-  const [partnerType, setPartnerType] = useState('');
+function PartnerPicker({ commanderName, onSelectPartner, selectedPartner, partnerData }) {
+  // partnerData can be passed from parent to avoid duplicate fetches
+  const [partners, setPartners] = useState(partnerData?.partners || []);
+  const [partnerType, setPartnerType] = useState(partnerData?.partner_type || '');
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const autoSelectedRef = useRef(false);
 
+  // Only fetch if partnerData wasn't provided
   useEffect(() => {
-    autoSelectedRef.current = false;
-  }, [commanderName]);
-
-  useEffect(() => {
+    if (partnerData) {
+      setPartnerType(partnerData.partner_type || '');
+      setPartners(partnerData.partners || []);
+      return;
+    }
     if (!commanderName) { setPartners([]); setPartnerType(''); return; }
     setLoading(true);
     apiGet(`/api/commander/${encodeURIComponent(commanderName)}/partners`)
       .then(data => {
         setPartnerType(data.partner_type || '');
         setPartners(data.partners || []);
-        // If partner_with or partner_variant with only one option, auto-select once
-        if ((data.partner_type === 'partner_with' || data.partner_type === 'partner_variant') && data.partners?.length === 1 && !autoSelectedRef.current) {
-          autoSelectedRef.current = true;
-          onSelectPartner(data.partners[0]);
-        }
       })
       .catch(() => { setPartners([]); setPartnerType(''); })
       .finally(() => setLoading(false));
-  }, [commanderName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [commanderName, partnerData]);
 
   if (!partnerType) return null;
+
+  // For locked partners (partner_with/variant with 1 option), don't show remove button
+  const isLockedPartner = (partnerType === 'partner_with' || partnerType === 'partner_variant') && partners.length === 1;
 
   const partnerLabel =
     partnerType === 'partner' ? 'Partner' :
@@ -334,7 +453,7 @@ function PartnerPicker({ commanderName, onSelectPartner, selectedPartner }) {
     <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold text-purple-400">{partnerLabel}</h4>
-        {selectedPartner && (
+        {selectedPartner && !isLockedPartner && (
           <button
             onClick={() => onSelectPartner(null)}
             className="text-xs text-gray-400 hover:text-red-400"
@@ -507,7 +626,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
   const hasMatch = commander.match_percentage !== undefined;
   return (
     <div
-      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative card-lift ${selected ? 'ring-2 ring-purple-500' : ''}`}
     >
       {selectable && (
         <button
@@ -552,12 +671,21 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
           <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
           <div className="flex items-center justify-between">
             <ColorBadge colors={commander.color_identity} />
-            {commander.missing_price > 0 && (
-              <span className="text-xs text-yellow-400">${commander.missing_price.toFixed(0)}</span>
+            {commander.num_decks > 0 && (
+              <span className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</span>
             )}
           </div>
-          {commander.num_decks > 0 && (
-            <p className="text-xs text-gray-500">{commander.num_decks.toLocaleString()} decks</p>
+          {hasMatch && commander.missing_price > 0 && (
+            <div className="bg-gray-900/60 rounded px-2 py-1 flex items-center justify-between">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wide">To complete</span>
+              <span className={`text-sm font-bold ${
+                commander.missing_price < 50 ? 'text-green-400' :
+                commander.missing_price < 150 ? 'text-yellow-400' :
+                'text-red-400'
+              }`}>
+                ${commander.missing_price.toFixed(2)}
+              </span>
+            </div>
           )}
         </div>
       </div>
@@ -742,7 +870,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
       )}
 
       {!loading && sortedResults.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">
           {sortedResults.map(cmd => (
             <CommanderCard
               key={cmd.name}
@@ -854,7 +982,7 @@ function CommanderSearch({ collectionCount, onSelectCommander, compareList, onTo
         <h3 className="text-sm font-medium text-gray-400">Popular Commanders</h3>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">
         {displayList.map(cmd => (
           <CommanderCard
             key={cmd.name}
@@ -1024,11 +1152,14 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
       >
         <span className="text-xs text-gray-500 w-4 text-center flex-shrink-0">{card.qty}</span>
         {card.owned ? (
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
         ) : (
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="Need to buy" />
         )}
         <span className="text-xs truncate flex-1">{card.name}</span>
+        {!card.owned && card.price > 0 && (
+          <span className="text-[10px] text-yellow-400 flex-shrink-0">${card.price.toFixed(2)}</span>
+        )}
         {canMultiple && (
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
             <button
@@ -1060,6 +1191,194 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
   );
 }
 
+function ManaCurve({ cards }) {
+  // Group included cards by CMC bucket (0, 1, 2, 3, 4, 5, 6, 7+)
+  const buckets = [0, 1, 2, 3, 4, 5, 6, 7];
+  const counts = buckets.map(() => ({ total: 0, creature: 0, nonCreature: 0 }));
+
+  for (const card of cards) {
+    // Skip lands from mana curve
+    if ((card.card_type || '').toLowerCase() === 'land') continue;
+    const cmc = Math.floor(card.cmc || 0);
+    const idx = Math.min(cmc, 7);
+    const qty = card.qty || 1;
+    counts[idx].total += qty;
+    if ((card.card_type || '').toLowerCase() === 'creature') {
+      counts[idx].creature += qty;
+    } else {
+      counts[idx].nonCreature += qty;
+    }
+  }
+
+  const maxCount = Math.max(...counts.map(c => c.total), 1);
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4">
+      <h4 className="text-sm font-semibold text-gray-300 mb-3">Mana Curve</h4>
+      <div className="flex items-end gap-1.5" style={{ height: '120px' }}>
+        {buckets.map((cmc, i) => {
+          const pct = counts[i].total / maxCount;
+          const creaturePct = counts[i].total > 0 ? counts[i].creature / counts[i].total : 0;
+          return (
+            <div key={cmc} className="flex-1 flex flex-col items-center h-full justify-end">
+              {/* Count label */}
+              <span className="text-xs text-gray-400 mb-1">
+                {counts[i].total > 0 ? counts[i].total : ''}
+              </span>
+              {/* Stacked bar */}
+              <div
+                className="w-full rounded-t relative overflow-hidden transition-all duration-300"
+                style={{ height: `${Math.max(pct * 100, counts[i].total > 0 ? 4 : 0)}%`, minHeight: counts[i].total > 0 ? '4px' : '0' }}
+              >
+                {/* Creature portion (brighter blue) */}
+                <div
+                  className="absolute bottom-0 w-full bg-blue-500"
+                  style={{ height: `${creaturePct * 100}%` }}
+                />
+                {/* Non-creature portion (darker blue) */}
+                <div
+                  className="absolute top-0 w-full bg-blue-800"
+                  style={{ height: `${(1 - creaturePct) * 100}%` }}
+                />
+              </div>
+              {/* CMC label */}
+              <span className="mt-1 flex items-center justify-center">
+                {cmc === 7 ? (
+                  <span className="text-xs text-gray-500">7+</span>
+                ) : (
+                  <ManaSymbol symbol={String(cmc)} size={16} />
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-4 mt-2 justify-center">
+        <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="w-3 h-2 bg-blue-500 rounded-sm inline-block" /> Creatures
+        </span>
+        <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="w-3 h-2 bg-blue-800 rounded-sm inline-block" /> Non-Creatures
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DeckStats({ cards }) {
+  // Type counts
+  const typeCounts = {};
+  let totalCards = 0;
+  let totalCmc = 0;
+  let nonLandCount = 0;
+
+  // Color pip counts from mana_cost strings like "{2}{U}{B}"
+  const pipCounts = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+
+  for (const card of cards) {
+    const qty = card.qty || 1;
+    const type = card.card_type || 'Other';
+    typeCounts[type] = (typeCounts[type] || 0) + qty;
+    totalCards += qty;
+
+    if (type.toLowerCase() !== 'land') {
+      totalCmc += (card.cmc || 0) * qty;
+      nonLandCount += qty;
+    }
+
+    // Count color pips
+    const cost = card.mana_cost || '';
+    for (const color of ['W', 'U', 'B', 'R', 'G']) {
+      const matches = cost.match(new RegExp(`\\{[^}]*${color}[^}]*\\}`, 'g'));
+      if (matches) pipCounts[color] += matches.length * qty;
+    }
+  }
+
+  const avgCmc = nonLandCount > 0 ? (totalCmc / nonLandCount).toFixed(2) : '0.00';
+  const totalPips = Object.values(pipCounts).reduce((a, b) => a + b, 0);
+
+  const typeOrder = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+  const sortedTypes = typeOrder.filter(t => typeCounts[t] > 0);
+
+  const typeColors = {
+    Creature: 'bg-green-600', Instant: 'bg-blue-500', Sorcery: 'bg-red-500',
+    Enchantment: 'bg-purple-500', Artifact: 'bg-yellow-600', Planeswalker: 'bg-orange-500',
+    Land: 'bg-amber-800', Other: 'bg-gray-500',
+  };
+
+  const pipColors = {
+    W: { bg: '#f9faf4', text: '#333' },
+    U: { bg: '#0e68ab', text: '#fff' },
+    B: { bg: '#2b2b2b', text: '#ccc' },
+    R: { bg: '#d32029', text: '#fff' },
+    G: { bg: '#00733e', text: '#fff' },
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+      <h4 className="text-sm font-semibold text-gray-300">Deck Statistics</h4>
+
+      {/* Average CMC */}
+      <div className="text-center">
+        <span className="text-3xl font-bold text-blue-400">{avgCmc}</span>
+        <p className="text-xs text-gray-500 mt-0.5">Avg. Mana Value</p>
+      </div>
+
+      {/* Type breakdown */}
+      <div className="space-y-1.5">
+        <p className="text-xs text-gray-400 font-medium">Card Types</p>
+        {sortedTypes.map(type => (
+          <div key={type} className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 w-24 truncate">{type}</span>
+            <div className="flex-1 bg-gray-700 rounded-full h-2">
+              <div
+                className={`${typeColors[type] || 'bg-gray-500'} h-2 rounded-full transition-all duration-300`}
+                style={{ width: `${(typeCounts[type] / totalCards) * 100}%` }}
+              />
+            </div>
+            <span className="text-xs text-gray-400 w-6 text-right">{typeCounts[type]}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Color pip distribution */}
+      {totalPips > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-gray-400 font-medium">Color Pips ({totalPips})</p>
+          <div className="flex gap-1">
+            {['W', 'U', 'B', 'R', 'G'].filter(c => pipCounts[c] > 0).map(color => (
+              <div
+                key={color}
+                className="flex-1 rounded-md py-3 flex items-center justify-center relative"
+                style={{
+                  backgroundColor: pipColors[color].bg,
+                  color: pipColors[color].text,
+                  flex: pipCounts[color],
+                  minWidth: '36px',
+                }}
+              >
+                {/* Large background icon that overflows */}
+                <div
+                  className="absolute opacity-15 pointer-events-none"
+                  style={{
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                >
+                  <ManaSymbol symbol={color} size={56} />
+                </div>
+                {/* Count in foreground */}
+                <span className="text-lg font-bold relative z-10 drop-shadow-sm">{pipCounts[color]}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
@@ -1078,6 +1397,8 @@ function DeckBuilder({ data, commander, onBack }) {
         card_type: c.card_type || 'Other',
         owned: c.owned,
         synergy: c.synergy,
+        cmc: c.cmc || 0,
+        mana_cost: c.mana_cost || '',
         included: false,
         isRecommendation: true,
         qty: 1,
@@ -1089,6 +1410,13 @@ function DeckBuilder({ data, commander, onBack }) {
   const includedCards = deck.filter(c => c.included);
   const excludedCards = deck.filter(c => !c.included);
   const deckSize = includedCards.reduce((sum, c) => sum + c.qty, 0);
+
+  // Calculate owned vs needed and price
+  const ownedCount = includedCards.filter(c => c.owned).reduce((sum, c) => sum + c.qty, 0);
+  const neededCount = includedCards.filter(c => !c.owned).reduce((sum, c) => sum + c.qty, 0);
+  const priceToComplete = includedCards
+    .filter(c => !c.owned && c.price)
+    .reduce((sum, c) => sum + (c.price * c.qty), 0);
 
   const toggle = (name) => {
     setDeck(prev => prev.map(c =>
@@ -1234,16 +1562,36 @@ function DeckBuilder({ data, commander, onBack }) {
     </div>
   );
 
-  const renderStacksView = () => (
-    <div className="flex gap-2 overflow-x-auto pb-4">
-      {includedGroups.map(({ type, cards }) => (
-        <div key={type} className="flex-shrink-0" style={{ width: '180px' }}>
-          {/* Column header */}
+  const renderStacksView = () => {
+    // Smart column pairing: minimize total height by grouping shorter lists together
+    const groupMap = {};
+    includedGroups.forEach(g => { groupMap[g.type] = g.cards; });
+
+    // Get types sorted by card count (descending)
+    const typesWithCounts = includedGroups
+      .map(g => ({ type: g.type, count: g.cards.length }))
+      .sort((a, b) => b.count - a.count);
+
+    // Bin-packing: distribute types into 4 columns to minimize max height
+    const columns = [[], [], [], []];
+    const columnHeights = [0, 0, 0, 0];
+
+    for (const { type, count } of typesWithCounts) {
+      // Find column with smallest height
+      const minIdx = columnHeights.indexOf(Math.min(...columnHeights));
+      columns[minIdx].push(type);
+      columnHeights[minIdx] += count;
+    }
+
+    const renderColumn = (type) => {
+      const cards = groupMap[type];
+      if (!cards || cards.length === 0) return null;
+      return (
+        <div>
           <div className="text-xs font-semibold text-gray-400 border-b border-gray-700 pb-1 mb-1 flex justify-between">
             <span>{type}</span>
             <span>Qty: {cards.reduce((s, c) => s + c.qty, 0)}</span>
           </div>
-          {/* Stacked cards */}
           <div className="relative">
             {cards.map((card, idx) => (
               <StackCard
@@ -1258,9 +1606,19 @@ function DeckBuilder({ data, commander, onBack }) {
             ))}
           </div>
         </div>
-      ))}
-    </div>
-  );
+      );
+    };
+
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {columns.map((types, colIdx) => (
+          <div key={colIdx} className="space-y-4">
+            {types.map(type => renderColumn(type))}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -1268,9 +1626,21 @@ function DeckBuilder({ data, commander, onBack }) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
-          <p className={`text-sm mt-1 ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
-            {deckSize}/100 cards (including commander)
-          </p>
+          <div className="flex items-center gap-4 mt-1 flex-wrap">
+            <p className={`text-sm ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
+              {deckSize}/100 cards
+            </p>
+            <p className="text-sm">
+              <span className="text-green-400">{ownedCount} owned</span>
+              <span className="text-gray-500 mx-1">|</span>
+              <span className="text-red-400">{neededCount} needed</span>
+            </p>
+            {priceToComplete > 0 && (
+              <p className="text-sm text-yellow-400">
+                ~${priceToComplete.toFixed(2)} to complete
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* View mode toggle */}
@@ -1312,6 +1682,14 @@ function DeckBuilder({ data, commander, onBack }) {
           />
         </div>
       )}
+
+      {/* Deck Stats Panel */}
+      <div className="grid md:grid-cols-3 gap-4">
+        <div className="md:col-span-2">
+          <ManaCurve cards={includedCards} />
+        </div>
+        <DeckStats cards={includedCards} />
+      </div>
 
       {viewMode === 'list' && renderListView()}
       {viewMode === 'gallery' && renderGalleryView()}
@@ -1444,19 +1822,68 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const [recFilter, setRecFilter] = useState('all');
   const [recTypeFilter, setRecTypeFilter] = useState('all');
   const [selectedPartner, setSelectedPartner] = useState(null);
+  const [partnerData, setPartnerData] = useState(null);
+  const initialFetchDone = useRef(false);
+  const currentCommander = useRef(commander.name);
 
-  const fetchDetail = useCallback(async () => {
+  // Reset state when commander changes
+  useEffect(() => {
+    if (currentCommander.current !== commander.name) {
+      currentCommander.current = commander.name;
+      initialFetchDone.current = false;
+      setData(null);
+      setSelectedPartner(null);
+      setPartnerData(null);
+    }
+  }, [commander.name]);
+
+  // Fetch partner info and EDHREC data - runs once on mount
+  useEffect(() => {
+    if (initialFetchDone.current) return;
+    initialFetchDone.current = true;
+
+    const fetchInitial = async () => {
+      setLoading(true);
+      setError('');
+      let partner = null;
+
+      // Check for locked partner first
+      if (commander.partner_type && ['partner_with', 'partner_variant'].includes(commander.partner_type)) {
+        try {
+          const pData = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}/partners`);
+          setPartnerData(pData);
+          if ((pData.partner_type === 'partner_with' || pData.partner_type === 'partner_variant') && pData.partners?.length === 1) {
+            partner = pData.partners[0];
+            setSelectedPartner(partner);
+          }
+        } catch (e) {
+          // Ignore partner fetch errors
+        }
+      }
+
+      // Now fetch EDHREC data (with partner if found)
+      try {
+        const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+        if (partner) params.partner = partner.name;
+        const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
+        setData(d);
+      } catch (err) {
+        setError(err.message);
+      }
+      setLoading(false);
+    };
+
+    fetchInitial();
+  }, [commander.name, commander.partner_type]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refetch when filters or partner selection changes (after initial load)
+  const fetchDetail = useCallback(async (partnerOverride) => {
     setLoading(true);
     setError('');
     try {
-      const params = {
-        budget: budget || null,
-        theme: theme || null,
-        exclude_in_decks: excludeInDecks || null,
-      };
-      if (selectedPartner) {
-        params.partner = selectedPartner.name;
-      }
+      const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+      const p = partnerOverride !== undefined ? partnerOverride : selectedPartner;
+      if (p) params.partner = p.name;
       const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
       setData(d);
     } catch (err) {
@@ -1465,7 +1892,23 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     setLoading(false);
   }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
 
-  useEffect(() => { fetchDetail(); }, [fetchDetail]);
+  // Refetch when filters change (but not on initial mount)
+  const prevFilters = useRef({ budget: '', theme: '' });
+  useEffect(() => {
+    if (!initialFetchDone.current || !data) return;
+    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme) {
+      prevFilters.current = { budget, theme };
+      fetchDetail();
+    }
+  }, [budget, theme, data, fetchDetail]);
+
+  // Handle partner selection changes from PartnerPicker
+  const handlePartnerChange = useCallback((newPartner) => {
+    setSelectedPartner(newPartner);
+    if (initialFetchDone.current && data) {
+      fetchDetail(newPartner);
+    }
+  }, [data, fetchDetail]);
 
   const handleExport = (type) => {
     if (!data) return;
@@ -1520,6 +1963,12 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const matchColor = data.match_percentage >= 60 ? 'text-green-400' :
     data.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
 
+  // Compute combined color identity if partner selected
+  const colorOrder = ['W', 'U', 'B', 'R', 'G'];
+  const combinedColors = selectedPartner
+    ? colorOrder.filter(c => (commander.color_identity || []).includes(c) || (selectedPartner.color_identity || []).includes(c))
+    : commander.color_identity;
+
   // Compute available card types in recommendations for the type filter
   const allRecs = data.recommendations || [];
   const recTypes = [...new Set(allRecs.map(r => r.card_type || 'Other'))].sort();
@@ -1539,12 +1988,31 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
 
       {/* Header */}
       <div className="flex gap-6 items-start">
-        {commander.image_uri && (
+        {/* Commander image(s) - tucked layout when partner selected */}
+        {selectedPartner ? (
+          <div className="relative flex-shrink-0" style={{ width: '200px', height: '280px' }}>
+            <img
+              src={selectedPartner.image_uri}
+              alt={selectedPartner.name}
+              className="absolute w-40 rounded-lg shadow-lg"
+              style={{ top: 0, right: 0 }}
+            />
+            <img
+              src={commander.image_uri}
+              alt={commander.name}
+              className="absolute w-40 rounded-lg shadow-xl"
+              style={{ bottom: 0, left: 0, zIndex: 1 }}
+            />
+          </div>
+        ) : commander.image_uri ? (
           <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
-        )}
+        ) : null}
         <div className="space-y-3 flex-1">
-          <h2 className="text-3xl font-bold">{commander.name}</h2>
-          <ColorBadge colors={commander.color_identity} />
+          <h2 className="text-3xl font-bold">
+            {commander.name}
+            {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
+          </h2>
+          <ColorBadge colors={combinedColors} />
           <div className="flex items-baseline gap-4">
             <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
             <span className="text-gray-400">
@@ -1568,8 +2036,9 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       {/* Partner Commander */}
       <PartnerPicker
         commanderName={commander.name}
-        onSelectPartner={setSelectedPartner}
+        onSelectPartner={handlePartnerChange}
         selectedPartner={selectedPartner}
+        partnerData={partnerData}
       />
 
       {/* Filters + Export + Deck Builder */}
@@ -1902,7 +2371,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
     // Create deck
     try {
       const deck = await apiPost('/api/decks', {
-        name: newName, commander: newCommander, cards_text: newCards,
+        name: newName, commander: newCommander, partner: newPartner?.name || '', cards_text: newCards,
       });
       const updated = { ...decks, [deck.id]: deck };
       setDecks(updated);
@@ -2044,7 +2513,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
         <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 grid-stagger">
       {Object.values(decks).map(deck => {
         const glow = getColorGlow(deck.color_identity);
         const glowStyle = {
@@ -2060,14 +2529,34 @@ function MyDecks({ onDecksChanged, decksReady }) {
             </div>
           )}
           <div className="relative z-10 p-4 flex flex-col h-full">
-            {/* Commander image prominently displayed */}
+            {/* Commander image(s) prominently displayed */}
             <div className="flex justify-center mb-3">
-              {deck.image_uri && (
+              {deck.partner_image_uri ? (
+                // Tucked partner layout - partner behind, main in front
+                <div className="relative" style={{ width: '140px', height: '180px' }}>
+                  <img
+                    src={deck.partner_image_uri}
+                    alt={deck.partner}
+                    className="absolute w-28 rounded-lg shadow-lg"
+                    style={{ top: 0, right: 0, filter: `drop-shadow(0 0 6px ${glow})` }}
+                  />
+                  <img
+                    src={deck.image_uri}
+                    alt={deck.commander}
+                    className="absolute w-28 rounded-lg shadow-xl"
+                    style={{ bottom: 0, left: 0, filter: `drop-shadow(0 0 8px ${glow})`, zIndex: 1 }}
+                  />
+                </div>
+              ) : deck.image_uri ? (
                 <img src={deck.image_uri} alt={deck.commander} className="w-32 rounded-lg shadow-xl" style={{filter: `drop-shadow(0 0 8px ${glow})`}} />
-              )}
+              ) : null}
             </div>
             <h4 className="font-bold text-center text-sm">{deck.name}</h4>
-            {deck.commander && <p className="text-xs text-gray-400 text-center mt-0.5">{deck.commander}</p>}
+            {deck.commander && (
+              <p className="text-xs text-gray-400 text-center mt-0.5">
+                {deck.commander}{deck.partner ? ` + ${deck.partner}` : ''}
+              </p>
+            )}
             <div className="flex items-center justify-center gap-2 mt-1.5">
               {deck.color_identity && deck.color_identity.length > 0 && (
                 <ColorBadge colors={deck.color_identity} />
@@ -2130,6 +2619,377 @@ function MyDecks({ onDecksChanged, decksReady }) {
   );
 }
 
+// --- Auth Modal ---
+function AuthModal({ isOpen, onClose, onLogin }) {
+  const [mode, setMode] = useState('login'); // 'login' or 'register'
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const data = await apiPost(endpoint, { username, password });
+
+      // Save auth data
+      saveAuthToken(data.token);
+      saveAuthUser(data.user);
+
+      // Notify parent and close
+      onLogin(data.user, data.token);
+      onClose();
+      setLoading(false);
+    } catch (err) {
+      console.error('Auth error:', err);
+      setError(err.message || 'Something went wrong. Check if the backend is running.');
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-sm space-y-4 page-fade-in">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">
+            {mode === 'login' ? 'Login' : 'Create Account'}
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">&times;</button>
+        </div>
+
+        <p className="text-sm text-gray-400">
+          {mode === 'login'
+            ? 'Login to sync your collection and decks across devices.'
+            : 'Create an account to save your collection and decks to the cloud.'}
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="Enter username"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              required
+              minLength={3}
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Enter password"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              required
+              minLength={4}
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-900/50 border border-red-700 rounded p-2 text-red-300 text-sm">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium transition-colors"
+          >
+            {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create Account'}
+          </button>
+        </form>
+
+        <div className="text-center text-sm text-gray-500">
+          {mode === 'login' ? (
+            <>
+              Don't have an account?{' '}
+              <button onClick={() => { setMode('register'); setError(''); }} className="text-blue-400 hover:underline">
+                Create one
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{' '}
+              <button onClick={() => { setMode('login'); setError(''); }} className="text-blue-400 hover:underline">
+                Login
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Collection Statistics ---
+
+function CollectionStats({ collectionCount }) {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadStats = () => {
+    setLoading(true);
+    setError('');
+    apiGet('/api/collection/stats')
+      .then(data => { setStats(data); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  };
+
+  if (collectionCount === 0) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <p className="text-gray-500 text-center py-12">Upload a collection to see your stats.</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <div className="text-center py-12">
+          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-gray-400">Analyzing your collection...</p>
+          <p className="text-xs text-gray-500 mt-1">Fetching prices and card data from Scryfall</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+        <button onClick={loadStats} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <div className="text-center py-12 space-y-4">
+          <p className="text-gray-400">
+            Analyze your {collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.
+          </p>
+          <p className="text-xs text-gray-500">
+            This fetches data from Scryfall and may take a moment for large collections.
+          </p>
+          <button
+            onClick={loadStats}
+            className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors"
+          >
+            Load Statistics
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const typeOrder = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+  const typeColors = {
+    Creature: '#22c55e', Instant: '#3b82f6', Sorcery: '#ef4444',
+    Enchantment: '#a855f7', Artifact: '#eab308', Planeswalker: '#f97316',
+    Land: '#92400e', Other: '#6b7280',
+  };
+  const pipColors = {
+    W: { bg: '#f9faf4', text: '#333' },
+    U: { bg: '#0e68ab', text: '#fff' },
+    B: { bg: '#2b2b2b', text: '#ccc' },
+    R: { bg: '#d32029', text: '#fff' },
+    G: { bg: '#00733e', text: '#fff' },
+    C: { bg: '#6b7280', text: '#fff' },
+  };
+
+  const totalTyped = Object.values(stats.type_counts).reduce((a, b) => a + b, 0);
+  const totalPips = Object.values(stats.color_counts).reduce((a, b) => a + b, 0);
+  const cmcBuckets = [0, 1, 2, 3, 4, 5, 6, 7];
+  const cmcCounts = cmcBuckets.map(b => stats.cmc_distribution[String(b)] || 0);
+  const maxCmc = Math.max(...cmcCounts, 1);
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Collection Statistics</h2>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-stagger">
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-blue-400 number-pop inline-block">{stats.total_unique.toLocaleString()}</span>
+          <p className="text-xs text-gray-500 mt-1">Unique Cards</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-green-400 number-pop inline-block">{stats.total_cards.toLocaleString()}</span>
+          <p className="text-xs text-gray-500 mt-1">Total Cards</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-yellow-400 number-pop inline-block">${stats.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          <p className="text-xs text-gray-500 mt-1">Est. Total Value</p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-purple-400 number-pop inline-block">{stats.total_in_decks}</span>
+          <p className="text-xs text-gray-500 mt-1">Cards in Decks</p>
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Type Distribution */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Card Type Distribution</h3>
+          {/* Visual stacked bar */}
+          <div className="flex rounded-full overflow-hidden h-4 bar-animate">
+            {typeOrder.filter(t => stats.type_counts[t]).map(type => (
+              <div
+                key={type}
+                style={{
+                  width: `${(stats.type_counts[type] / totalTyped) * 100}%`,
+                  backgroundColor: typeColors[type],
+                }}
+                title={`${type}: ${stats.type_counts[type]}`}
+              />
+            ))}
+          </div>
+          {/* Legend */}
+          <div className="space-y-1.5">
+            {typeOrder.filter(t => stats.type_counts[t]).map(type => (
+              <div key={type} className="flex items-center gap-2">
+                <span
+                  className="w-3 h-3 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: typeColors[type] }}
+                />
+                <span className="text-xs text-gray-400 flex-1">{type}</span>
+                <span className="text-xs text-gray-300 font-medium">{stats.type_counts[type]}</span>
+                <span className="text-xs text-gray-500 w-10 text-right">
+                  {((stats.type_counts[type] / totalTyped) * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Color Distribution */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Color Distribution</h3>
+          {totalPips > 0 && (
+            <>
+              {/* Visual blocks */}
+              <div className="flex gap-2">
+                {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
+                  <div
+                    key={color}
+                    className="rounded-lg py-4 flex flex-col items-center justify-center transition-all relative"
+                    style={{
+                      backgroundColor: pipColors[color].bg,
+                      color: pipColors[color].text,
+                      flex: stats.color_counts[color],
+                      minWidth: '60px',
+                    }}
+                  >
+                    {/* Large background icon that overflows */}
+                    <div
+                      className="absolute opacity-15 pointer-events-none"
+                      style={{
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                      }}
+                    >
+                      <ManaSymbol symbol={color} size={80} />
+                    </div>
+                    {/* Content in foreground */}
+                    <span className="text-xl font-bold relative z-10 drop-shadow-sm">{stats.color_counts[color]}</span>
+                    <p className="text-[10px] opacity-75 relative z-10">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Percentage bar */}
+              <div className="flex rounded-full overflow-hidden h-3">
+                {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
+                  <div
+                    key={color}
+                    style={{
+                      width: `${(stats.color_counts[color] / totalPips) * 100}%`,
+                      backgroundColor: pipColors[color].bg,
+                    }}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Mana Curve */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Collection Mana Curve</h3>
+          <div className="flex items-end gap-2" style={{ height: '140px' }}>
+            {cmcBuckets.map((cmc, i) => {
+              const pct = cmcCounts[i] / maxCmc;
+              return (
+                <div key={cmc} className="flex-1 flex flex-col items-center h-full justify-end">
+                  <span className="text-xs text-gray-400 mb-1">
+                    {cmcCounts[i] > 0 ? cmcCounts[i] : ''}
+                  </span>
+                  <div
+                    className="w-full bg-blue-600 rounded-t transition-all duration-300"
+                    style={{ height: `${Math.max(pct * 100, cmcCounts[i] > 0 ? 3 : 0)}%` }}
+                  />
+                  <span className="mt-1 flex items-center justify-center">
+                    {cmc === 7 ? (
+                      <span className="text-xs text-gray-500">7+</span>
+                    ) : (
+                      <ManaSymbol symbol={String(cmc)} size={16} />
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Most Valuable */}
+        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-300">Most Valuable Cards</h3>
+          <div className="divide-y divide-gray-700">
+            {stats.top_valuable.map((card, i) => (
+              <div key={card.name} className="flex items-center justify-between py-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600 w-5">{i + 1}.</span>
+                  <CardName name={card.name} className="text-sm" />
+                  {card.qty > 1 && <span className="text-xs text-gray-500">x{card.qty}</span>}
+                </div>
+                <span className="text-sm font-medium text-yellow-400">${card.price.toFixed(2)}</span>
+              </div>
+            ))}
+            {stats.top_valuable.length === 0 && (
+              <p className="text-gray-500 text-sm py-4">No price data available</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Main App ---
 
 function App() {
@@ -2141,6 +3001,87 @@ function App() {
   const [excludeInDecks, setExcludeInDecks] = useState(false);
   const [deckCount, setDeckCount] = useState(0);
   const [decksReady, setDecksReady] = useState(false);
+
+  // Auth state
+  const [user, setUser] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(''); // '', 'syncing', 'synced', 'error'
+
+  // Check for existing auth on mount
+  useEffect(() => {
+    const savedUser = loadAuthUser();
+    const savedToken = loadAuthToken();
+    if (savedUser && savedToken) {
+      // Verify token is still valid
+      apiAuthGet('/api/auth/me')
+        .then(data => setUser(data.user))
+        .catch(() => {
+          clearAuth();
+          setUser(null);
+        });
+    }
+  }, []);
+
+  // Sync to server when logged in and data changes
+  const syncToServer = useCallback(async () => {
+    if (!user) return;
+
+    setSyncStatus('syncing');
+    try {
+      const collection = loadCollection() || {};
+      const decks = loadDecks() || {};
+
+      await Promise.all([
+        apiAuthPost('/api/user/collection/save', { cards: collection }),
+        apiAuthPost('/api/user/decks/save', { decks }),
+      ]);
+
+      setSyncStatus('synced');
+      setTimeout(() => setSyncStatus(''), 2000);
+    } catch (err) {
+      console.error('Sync failed:', err);
+      setSyncStatus('error');
+      setTimeout(() => setSyncStatus(''), 3000);
+    }
+  }, [user]);
+
+  // Handle login - load user data from server
+  const handleLogin = async (loggedInUser, token) => {
+    setUser(loggedInUser);
+
+    try {
+      // Load user data from server
+      const data = await apiAuthGet('/api/user/data');
+
+      // If server has data, use it; otherwise sync local data to server
+      if (data.collection.count > 0 || data.decks.count > 0) {
+        // Server has data - restore it locally
+        if (data.collection.count > 0) {
+          saveCollection(data.collection.cards);
+          await apiPost('/api/collection/restore', { cards: data.collection.cards });
+          setCollectionCount(data.collection.count);
+        }
+        if (data.decks.count > 0) {
+          saveDecks(data.decks.decks);
+          await apiPost('/api/decks/restore', { decks: data.decks.decks });
+          setDeckCount(data.decks.count);
+        }
+        if (data.collection.count > 0) setTab('recommend');
+      } else {
+        // Server is empty - sync local data up
+        await syncToServer();
+      }
+    } catch (err) {
+      console.error('Failed to load user data:', err);
+    }
+  };
+
+  // Handle logout
+  const handleLogout = () => {
+    clearAuth();
+    setUser(null);
+    setSyncStatus('');
+  };
 
   // Restore collection and decks from localStorage on startup
   useEffect(() => {
@@ -2173,7 +3114,11 @@ function App() {
 
   const handleUploaded = (data) => {
     setCollectionCount(data.count);
-    if (data.cards) saveCollection(data.cards);
+    if (data.cards) {
+      saveCollection(data.cards);
+      // Auto-sync to server if logged in
+      if (user) syncToServer();
+    }
   };
 
   const handleSelectCommander = (cmd) => {
@@ -2198,6 +3143,8 @@ function App() {
   const handleDecksChanged = () => {
     apiGet('/api/decks').then(data => {
       setDeckCount((data.decks || []).length);
+      // Auto-sync to server if logged in
+      if (user) syncToServer();
     }).catch(() => {});
   };
 
@@ -2206,19 +3153,68 @@ function App() {
     { id: 'recommend', label: 'Recommendations' },
     { id: 'search', label: 'Search' },
     { id: 'mydecks', label: `My Decks${deckCount ? ` (${deckCount})` : ''}` },
+    { id: 'stats', label: 'Stats' },
   ];
 
   return (
     <div className="min-h-screen">
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onLogin={handleLogin}
+      />
+
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
-          {collectionCount > 0 && (
-            <span className="text-sm text-gray-400">
-              Collection: {collectionCount} unique cards
-            </span>
-          )}
+          <div className="flex items-center gap-4">
+            {collectionCount > 0 && (
+              <span className="text-sm text-gray-400">
+                {collectionCount} cards
+              </span>
+            )}
+            {/* Sync status */}
+            {user && syncStatus && (
+              <span className={`text-xs px-2 py-1 rounded ${
+                syncStatus === 'syncing' ? 'bg-blue-900/50 text-blue-400' :
+                syncStatus === 'synced' ? 'bg-green-900/50 text-green-400' :
+                'bg-red-900/50 text-red-400'
+              }`}>
+                {syncStatus === 'syncing' ? 'Syncing...' :
+                 syncStatus === 'synced' ? 'Saved!' : 'Sync failed'}
+              </span>
+            )}
+            {/* Auth buttons */}
+            {user ? (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-400">
+                  <span className="text-green-400">●</span> {user.username}
+                </span>
+                <button
+                  onClick={syncToServer}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                  title="Sync to cloud"
+                >
+                  Sync
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-gray-400 hover:text-red-400"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-sm font-medium transition-colors"
+              >
+                Login / Sign Up
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -2297,30 +3293,42 @@ function App() {
           <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
         </div>
 
+        {tab === 'stats' && (
+          <div className="page-fade-in">
+            <CollectionStats collectionCount={collectionCount} />
+          </div>
+        )}
+
         {tab === 'detail' && selectedCommander && (
-          <CommanderDetail
-            commander={selectedCommander}
-            collectionCount={collectionCount}
-            onBack={() => setTab('recommend')}
-            onOpenDeckBuilder={handleOpenDeckBuilder}
-            excludeInDecks={excludeInDecks}
-          />
+          <div className="page-fade-in">
+            <CommanderDetail
+              commander={selectedCommander}
+              collectionCount={collectionCount}
+              onBack={() => setTab('recommend')}
+              onOpenDeckBuilder={handleOpenDeckBuilder}
+              excludeInDecks={excludeInDecks}
+            />
+          </div>
         )}
 
         {tab === 'deckbuilder' && selectedCommander && deckBuilderData && (
-          <DeckBuilder
-            data={deckBuilderData}
-            commander={selectedCommander}
-            onBack={() => setTab('detail')}
-          />
+          <div className="page-fade-in">
+            <DeckBuilder
+              data={deckBuilderData}
+              commander={selectedCommander}
+              onBack={() => setTab('detail')}
+            />
+          </div>
         )}
 
         {tab === 'compare' && compareList.length >= 2 && (
-          <CompareView
-            commanders={compareList}
-            onBack={() => setTab('recommend')}
-            onSelectCommander={handleSelectCommander}
-          />
+          <div className="page-fade-in">
+            <CompareView
+              commanders={compareList}
+              onBack={() => setTab('recommend')}
+              onSelectCommander={handleSelectCommander}
+            />
+          </div>
         )}
       </main>
     </div>
