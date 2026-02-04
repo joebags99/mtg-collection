@@ -79,3 +79,111 @@ nav button {
 .bar-animate {
   animation: barFill 0.6s ease-out;
 }
+
+/* Commander backdrop blur effect */
+.commander-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 400px;
+  background-size: cover;
+  background-position: center top;
+  filter: blur(60px) saturate(1.5);
+  opacity: 0.25;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%);
+  pointer-events: none;
+  z-index: 0;
+  animation: backdropFadeIn 0.6s ease-out;
+}
+
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+    filter: blur(80px) saturate(1);
+  }
+  to {
+    opacity: 0.25;
+    filter: blur(60px) saturate(1.5);
+  }
+}
+
+/* Section header styling */
+.section-header {
+  position: relative;
+  padding-left: 12px;
+}
+
+.section-header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 70%;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, var(--accent-color, #3b82f6), transparent);
+}
+
+/* Card type section styling for deck builder */
+.card-type-section {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-type-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(to right, var(--section-color, #4b5563), transparent);
+}
+
+/* Enhanced deck card with subtle glow */
+.deck-card-enhanced {
+  transition: transform 0.2s ease, box-shadow 0.3s ease;
+}
+
+.deck-card-enhanced:hover {
+  transform: translateY(-2px);
+}
+
+/* Owned/Missing indicator shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.owned-indicator {
+  background: linear-gradient(90deg, #22c55e 0%, #4ade80 50%, #22c55e 100%);
+  background-size: 200% 100%;
+}
+
+.missing-indicator {
+  background: linear-gradient(90deg, #ef4444 0%, #f87171 50%, #ef4444 100%);
+  background-size: 200% 100%;
+}
+
+/* Stats card enhancement */
+.stats-card {
+  background: linear-gradient(135deg, rgba(31, 41, 55, 1) 0%, rgba(17, 24, 39, 1) 100%);
+  border: 1px solid rgba(75, 85, 99, 0.5);
+}
+
+.stats-card:hover {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+/* Type header colors by MTG card type */
+.type-creature { --section-color: #22c55e; }
+.type-instant { --section-color: #3b82f6; }
+.type-sorcery { --section-color: #ef4444; }
+.type-artifact { --section-color: #a1a1aa; }
+.type-enchantment { --section-color: #a855f7; }
+.type-planeswalker { --section-color: #f97316; }
+.type-land { --section-color: #a16207; }
+.type-other { --section-color: #6b7280; }

@@ -83,6 +83,48 @@ function getColorGlow(colors) {
   return `rgba(${Math.round(avg[0]/n)},${Math.round(avg[1]/n)},${Math.round(avg[2]/n)},0.4)`;
 }
 
+// --- Section Header with accent bar ---
+function SectionHeader({ children, color = 'blue', size = 'md', count, className = '' }) {
+  const colorMap = {
+    blue: '#3b82f6',
+    green: '#22c55e',
+    red: '#ef4444',
+    purple: '#a855f7',
+    yellow: '#eab308',
+    gray: '#6b7280',
+    orange: '#f97316',
+  };
+  const sizeClasses = {
+    sm: 'text-sm font-medium',
+    md: 'text-lg font-semibold',
+    lg: 'text-xl font-bold',
+  };
+  return (
+    <h3
+      className={`section-header ${sizeClasses[size]} ${className}`}
+      style={{ '--accent-color': colorMap[color] || color }}
+    >
+      {children}
+      {count !== undefined && (
+        <span className="text-gray-500 font-normal ml-2">({count})</span>
+      )}
+    </h3>
+  );
+}
+
+// --- Card Type Section Header ---
+function TypeSectionHeader({ type, count, className = '' }) {
+  const typeClass = `type-${type.toLowerCase().replace(/\s+/g, '-')}`;
+  return (
+    <div className={`card-type-section pt-3 pb-2 ${typeClass} ${className}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-300">{type}</span>
+        <span className="text-xs text-gray-500">{count}</span>
+      </div>
+    </div>
+  );
+}
+
 function ColorBadge({ colors }) {
   if (!colors || colors.length === 0) {
     return <span className="text-xs bg-gray-600 px-1.5 py-0.5 rounded">C</span>;
@@ -1019,18 +1061,18 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
     <div className="grid md:grid-cols-2 gap-6">
       {showOwned && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-green-400">
-            Owned Cards ({ownedCards.length})
-          </h3>
+          <SectionHeader color="green" count={ownedCards.length}>
+            Owned Cards
+          </SectionHeader>
           {ownedGroups.length === 0 && (
             <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
           )}
           {ownedGroups.map(({ type, cards }) => (
             <div key={type}>
-              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <TypeSectionHeader type={type} count={cards.length} />
               <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
                 {cards.map(card => (
-                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" />
@@ -1053,23 +1095,25 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
 
       {showMissing && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-red-400">
-            Missing Cards ({missingCards.length})
+          <div className="flex items-baseline gap-2">
+            <SectionHeader color="red" count={missingCards.length}>
+              Missing Cards
+            </SectionHeader>
             {totalMissingPrice > 0 && (
-              <span className="text-sm font-normal text-yellow-400 ml-2">
+              <span className="text-sm text-yellow-400">
                 ~${totalMissingPrice.toFixed(2)}
               </span>
             )}
-          </h3>
+          </div>
           {missingGroups.length === 0 && (
             <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
           )}
           {missingGroups.map(({ type, cards }) => (
             <div key={type}>
-              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <TypeSectionHeader type={type} count={cards.length} />
               <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
                 {cards.map(card => (
-                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" />
@@ -1445,15 +1489,13 @@ function DeckBuilder({ data, commander, onBack }) {
   const renderListView = () => (
     <div className="grid md:grid-cols-3 gap-6">
       <div className="md:col-span-2 space-y-4">
-        <h3 className="text-lg font-semibold text-green-400">In Deck ({deckSize})</h3>
+        <SectionHeader color="green" count={deckSize}>In Deck</SectionHeader>
         {includedGroups.map(({ type, cards }) => (
           <div key={type}>
-            <h4 className="text-sm font-medium text-gray-400 mb-1">
-              {type} ({cards.reduce((s, c) => s + c.qty, 0)})
-            </h4>
+            <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} />
             <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
               {cards.map(card => (
-                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group deck-card-enhanced hover:bg-gray-700/50">
                   <div className="flex items-center gap-2">
                     {card.owned ? (
                       <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
@@ -1461,7 +1503,7 @@ function DeckBuilder({ data, commander, onBack }) {
                       <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
                     )}
                     <CardName name={card.name} className="text-sm" />
-                    {card.isRecommendation && <span className="text-xs text-purple-400">rec</span>}
+                    {card.isRecommendation && <span className="text-xs text-purple-400 bg-purple-900/30 px-1.5 py-0.5 rounded">rec</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     {canHaveMultiple(card.name) ? (
@@ -1494,7 +1536,7 @@ function DeckBuilder({ data, commander, onBack }) {
       </div>
 
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-400">Removed / Available ({excludedCards.length})</h3>
+        <SectionHeader color="gray" count={excludedCards.length}>Removed / Available</SectionHeader>
         <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
           {excludedCards.map(card => (
             <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
@@ -1526,9 +1568,7 @@ function DeckBuilder({ data, commander, onBack }) {
     <div className="space-y-6">
       {includedGroups.map(({ type, cards }) => (
         <div key={type}>
-          <h4 className="text-sm font-medium text-gray-400 mb-2">
-            {type} ({cards.reduce((s, c) => s + c.qty, 0)})
-          </h4>
+          <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} className="mb-2" />
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8 gap-2">
             {cards.map(card => (
               <div key={card.name} className="relative group">
@@ -1588,10 +1628,7 @@ function DeckBuilder({ data, commander, onBack }) {
       if (!cards || cards.length === 0) return null;
       return (
         <div>
-          <div className="text-xs font-semibold text-gray-400 border-b border-gray-700 pb-1 mb-1 flex justify-between">
-            <span>{type}</span>
-            <span>Qty: {cards.reduce((s, c) => s + c.qty, 0)}</span>
-          </div>
+          <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} className="mb-1" />
           <div className="relative">
             {cards.map((card, idx) => (
               <StackCard
@@ -1620,31 +1657,60 @@ function DeckBuilder({ data, commander, onBack }) {
     );
   };
 
+  const colorGlow = getColorGlow(commander.color_identity);
+
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
-          <div className="flex items-center gap-4 mt-1 flex-wrap">
-            <p className={`text-sm ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
-              {deckSize}/100 cards
-            </p>
-            <p className="text-sm">
-              <span className="text-green-400">{ownedCount} owned</span>
-              <span className="text-gray-500 mx-1">|</span>
-              <span className="text-red-400">{neededCount} needed</span>
-            </p>
-            {priceToComplete > 0 && (
-              <p className="text-sm text-yellow-400">
-                ~${priceToComplete.toFixed(2)} to complete
-              </p>
-            )}
+
+      {/* Enhanced header with color glow */}
+      <div
+        className="bg-gray-800/80 rounded-xl p-4 flex items-center justify-between flex-wrap gap-4"
+        style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 4px 20px ${colorGlow}` }}
+      >
+        <div className="flex items-center gap-4">
+          {commander.image_uri && (
+            <img
+              src={commander.image_uri}
+              alt={commander.name}
+              className="w-16 h-auto rounded-lg shadow-lg hidden sm:block"
+              style={{ boxShadow: `0 4px 12px ${colorGlow}` }}
+            />
+          )}
+          <div>
+            <h2 className="text-2xl font-bold flex items-center gap-3">
+              Deck Builder
+              <ColorBadge colors={commander.color_identity} />
+            </h2>
+            <p className="text-gray-400 text-sm">{commander.name}</p>
           </div>
         </div>
+
+        {/* Stats pills */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+            deckSize === 100 ? 'bg-green-900/50 text-green-400 border border-green-700' :
+            deckSize > 100 ? 'bg-red-900/50 text-red-400 border border-red-700' :
+            'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
+          }`}>
+            {deckSize}/100 cards
+          </div>
+          <div className="px-3 py-1.5 rounded-lg text-sm bg-gray-700/50 border border-gray-600">
+            <span className="text-green-400 font-medium">{ownedCount}</span>
+            <span className="text-gray-500 mx-1">/</span>
+            <span className="text-red-400 font-medium">{neededCount}</span>
+            <span className="text-gray-500 ml-1 text-xs">own/need</span>
+          </div>
+          {priceToComplete > 0 && (
+            <div className="px-3 py-1.5 rounded-lg text-sm bg-yellow-900/30 text-yellow-400 border border-yellow-700/50">
+              ~${priceToComplete.toFixed(2)}
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center gap-3">
           {/* View mode toggle */}
-          <div className="flex bg-gray-800 rounded overflow-hidden">
+          <div className="flex bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
             {[
               { id: 'list', label: 'List' },
               { id: 'gallery', label: 'Gallery' },
@@ -1654,14 +1720,14 @@ function DeckBuilder({ data, commander, onBack }) {
                 key={v.id}
                 onClick={() => setViewMode(v.id)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`}
               >
                 {v.label}
               </button>
             ))}
           </div>
-          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-medium">
+          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
         </div>
@@ -1982,56 +2048,73 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   else if (recSort === 'synergy_asc') filteredRecs.sort((a, b) => (a.synergy || 0) - (b.synergy || 0));
   else if (recSort === 'inclusion_desc') filteredRecs.sort((a, b) => (b.inclusion || 0) - (a.inclusion || 0));
 
-  return (
-    <div className="space-y-6">
-      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+  // Get the backdrop image - prefer art_crop for wider aspect ratio
+  const backdropImage = commander.art_crop || commander.image_uri;
 
-      {/* Header */}
-      <div className="flex gap-6 items-start">
-        {/* Commander image(s) - tucked layout when partner selected */}
-        {selectedPartner ? (
-          <div className="relative flex-shrink-0" style={{ width: '200px', height: '280px' }}>
-            <img
-              src={selectedPartner.image_uri}
-              alt={selectedPartner.name}
-              className="absolute w-40 rounded-lg shadow-lg"
-              style={{ top: 0, right: 0 }}
-            />
+  return (
+    <div className="relative">
+      {/* Commander backdrop blur effect */}
+      {backdropImage && (
+        <div
+          className="commander-backdrop"
+          style={{ backgroundImage: `url(${backdropImage})` }}
+        />
+      )}
+
+      <div className="relative z-10 space-y-6">
+        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+
+        {/* Header */}
+        <div className="flex gap-6 items-start">
+          {/* Commander image(s) - tucked layout when partner selected */}
+          {selectedPartner ? (
+            <div className="relative flex-shrink-0" style={{ width: '200px', height: '280px' }}>
+              <img
+                src={selectedPartner.image_uri}
+                alt={selectedPartner.name}
+                className="absolute w-40 rounded-lg shadow-lg"
+                style={{ top: 0, right: 0 }}
+              />
+              <img
+                src={commander.image_uri}
+                alt={commander.name}
+                className="absolute w-40 rounded-lg shadow-xl"
+                style={{ bottom: 0, left: 0, zIndex: 1 }}
+              />
+            </div>
+          ) : commander.image_uri ? (
             <img
               src={commander.image_uri}
               alt={commander.name}
-              className="absolute w-40 rounded-lg shadow-xl"
-              style={{ bottom: 0, left: 0, zIndex: 1 }}
+              className="w-48 rounded-lg shadow-lg flex-shrink-0"
+              style={{ boxShadow: `0 8px 32px ${getColorGlow(commander.color_identity)}` }}
             />
-          </div>
-        ) : commander.image_uri ? (
-          <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
-        ) : null}
-        <div className="space-y-3 flex-1">
-          <h2 className="text-3xl font-bold">
-            {commander.name}
-            {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
-          </h2>
-          <ColorBadge colors={combinedColors} />
-          <div className="flex items-baseline gap-4">
-            <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
-            <span className="text-gray-400">
-              {data.owned_count}/{data.total_cards} cards owned
-            </span>
-          </div>
-          <MatchBar percentage={data.match_percentage} size="lg" />
-          <div className="flex gap-4 text-sm">
-            {data.num_decks > 0 && (
-              <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
-            )}
-            {data.total_missing_price > 0 && (
-              <span className="text-yellow-400">
-                ~${data.total_missing_price.toFixed(2)} to complete
+          ) : null}
+          <div className="space-y-3 flex-1">
+            <h2 className="text-3xl font-bold">
+              {commander.name}
+              {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
+            </h2>
+            <ColorBadge colors={combinedColors} />
+            <div className="flex items-baseline gap-4">
+              <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
+              <span className="text-gray-400">
+                {data.owned_count}/{data.total_cards} cards owned
               </span>
-            )}
+            </div>
+            <MatchBar percentage={data.match_percentage} size="lg" />
+            <div className="flex gap-4 text-sm">
+              {data.num_decks > 0 && (
+                <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
+              )}
+              {data.total_missing_price > 0 && (
+                <span className="text-yellow-400">
+                  ~${data.total_missing_price.toFixed(2)} to complete
+                </span>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Partner Commander */}
       <PartnerPicker
@@ -2160,10 +2243,10 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       {/* Possible Recommendations */}
       {allRecs.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-purple-400">
-            Possible Recommendations ({filteredRecs.length})
-          </h3>
-          <p className="text-xs text-gray-400">
+          <SectionHeader color="purple" count={filteredRecs.length}>
+            Possible Recommendations
+          </SectionHeader>
+          <p className="text-xs text-gray-400 ml-3">
             Cards with high synergy for this commander that aren't in the average deck.
           </p>
           <div className="flex flex-wrap gap-3 items-center">
@@ -2240,6 +2323,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
