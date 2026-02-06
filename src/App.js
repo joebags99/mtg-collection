@@ -83,65 +83,112 @@ function getColorGlow(colors) {
   return `rgba(${Math.round(avg[0]/n)},${Math.round(avg[1]/n)},${Math.round(avg[2]/n)},0.4)`;
 }
 
-// --- Page Hero Header with commander art ---
-function PageHero({ title, subtitle, commanders = [], stats = [], children, colorIdentity = [] }) {
-  const glowColors = {
-    W: 'rgba(249, 250, 244, 0.2)',
-    U: 'rgba(14, 104, 171, 0.25)',
-    B: 'rgba(100, 80, 120, 0.25)',
-    R: 'rgba(211, 32, 41, 0.2)',
-    G: 'rgba(0, 115, 62, 0.2)',
+// --- Ambient Background with floating particles and orbs ---
+function AmbientBackground({ colors = [] }) {
+  const colorValues = {
+    W: '#f9faf4',
+    U: '#0e68ab',
+    B: '#6b5080',
+    R: '#d32029',
+    G: '#00733e',
   };
 
-  // Get glow colors from color identity or commanders
-  const colors = colorIdentity.length > 0 ? colorIdentity :
-    commanders.length > 0 ? (commanders[0]?.color_identity || []) : [];
-  const glow1 = colors[0] ? glowColors[colors[0]] : 'rgba(59, 130, 246, 0.15)';
-  const glow2 = colors[1] ? glowColors[colors[1]] : 'rgba(139, 92, 246, 0.1)';
+  const activeColors = colors.length > 0
+    ? colors.map(c => colorValues[c] || '#3b82f6')
+    : ['#3b82f6', '#8b5cf6'];
 
-  // Get the best art image - prefer art_crop for wider aspect
-  const heroArt = commanders.length > 0 ? (commanders[0]?.art_crop || commanders[0]?.image_uri) : null;
+  const particles = Array.from({ length: 12 }, (_, i) => ({
+    id: i,
+    color: activeColors[i % activeColors.length],
+    size: 3 + Math.random() * 6,
+    left: Math.random() * 100,
+    delay: Math.random() * 25,
+    duration: 20 + Math.random() * 15,
+  }));
+
+  const orbs = activeColors.slice(0, 2).map((color, i) => ({
+    color,
+    size: 250 + i * 100,
+    left: i === 0 ? '5%' : '75%',
+    top: i === 0 ? '10%' : '50%',
+    delay: i * 5,
+  }));
 
   return (
-    <div
-      className="page-hero p-6 mb-6"
-      style={{ '--hero-glow': glow1, '--hero-glow-2': glow2 }}
-    >
-      {/* Subtle blurred art backdrop */}
-      {heroArt && (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+      {orbs.map((orb, i) => (
         <div
-          className="absolute top-0 right-0 bottom-0 w-1/2 overflow-hidden"
+          key={`orb-${i}`}
+          className="ambient-orb"
           style={{
-            maskImage: 'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.5) 100%)',
-            WebkitMaskImage: 'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.5) 100%)'
+            width: orb.size,
+            height: orb.size,
+            left: orb.left,
+            top: orb.top,
+            background: `radial-gradient(circle, ${orb.color}30 0%, transparent 70%)`,
+            animationDelay: `${orb.delay}s`,
           }}
-        >
-          <img
-            src={heroArt}
-            alt=""
-            className="w-full h-full object-cover"
-            style={{ filter: 'blur(2px) saturate(1.3)', opacity: 0.4 }}
-          />
-        </div>
-      )}
+        />
+      ))}
+      {particles.map(p => (
+        <div
+          key={`particle-${p.id}`}
+          className="mana-particle"
+          style={{
+            width: p.size,
+            height: p.size,
+            left: `${p.left}%`,
+            backgroundColor: p.color,
+            boxShadow: `0 0 ${p.size}px ${p.color}80`,
+            animationDelay: `${p.delay}s`,
+            animationDuration: `${p.duration}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
-      <div className="relative z-10">
-        <h1 className="text-3xl font-bold mb-2">{title}</h1>
-        {subtitle && <p className="text-gray-400 max-w-xl">{subtitle}</p>}
+// --- Page Header (compact, sleek with glowing underline) ---
+function PageHero({ title, subtitle, commanders = [], stats = [], children, colorIdentity = [] }) {
+  const colors = colorIdentity.length > 0 ? colorIdentity :
+    commanders.length > 0 ? (commanders[0]?.color_identity || []) : [];
+
+  const glowColor = colors.length > 0 ? getColorGlow(colors) : 'rgba(59, 130, 246, 0.6)';
+
+  return (
+    <div className="relative mb-8" style={{ zIndex: 1 }}>
+      <AmbientBackground colors={colors} />
+
+      <div className="flex items-start justify-between gap-6 mb-4 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <h1
+            className="text-3xl font-black tracking-tight glow-underline inline-block pb-2"
+            style={{ '--glow-color': glowColor }}
+          >
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="text-gray-400 mt-2 max-w-2xl text-sm leading-relaxed">{subtitle}</p>
+          )}
+        </div>
 
         {stats.length > 0 && (
-          <div className="flex gap-4 mt-4">
+          <div className="flex gap-2 flex-wrap">
             {stats.map((stat, i) => (
-              <div key={i} className="stat-highlight rounded-lg px-4 py-2">
-                <div className="text-2xl font-bold number-pop">{stat.value}</div>
-                <div className="text-xs text-gray-400">{stat.label}</div>
+              <div
+                key={i}
+                className="glass-panel rounded-xl px-4 py-2 text-center min-w-[80px]"
+              >
+                <div className="text-lg font-bold text-white">{stat.value}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider">{stat.label}</div>
               </div>
             ))}
           </div>
         )}
-
-        {children}
       </div>
+
+      {children}
     </div>
   );
 }
@@ -733,11 +780,11 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
 
   return (
     <div
-      className={`card-glow rounded-lg overflow-hidden cursor-pointer transition-all relative card-lift ${selected ? 'ring-2 ring-purple-500' : ''}`}
+      className={`card-3d holo-shine rounded-xl overflow-hidden cursor-pointer relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
       style={{
         '--card-glow-color': colorGlow,
-        boxShadow: `0 4px 20px ${colorGlow}, inset 0 1px 0 rgba(255,255,255,0.05)`,
-        background: 'linear-gradient(135deg, rgba(31, 41, 55, 1) 0%, rgba(17, 24, 39, 1) 100%)'
+        boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
+        background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)'
       }}
     >
       {selectable && (
