@@ -83,6 +83,69 @@ function getColorGlow(colors) {
   return `rgba(${Math.round(avg[0]/n)},${Math.round(avg[1]/n)},${Math.round(avg[2]/n)},0.4)`;
 }
 
+// --- Page Hero Header with commander art ---
+function PageHero({ title, subtitle, commanders = [], stats = [], children, colorIdentity = [] }) {
+  const glowColors = {
+    W: 'rgba(249, 250, 244, 0.2)',
+    U: 'rgba(14, 104, 171, 0.25)',
+    B: 'rgba(100, 80, 120, 0.25)',
+    R: 'rgba(211, 32, 41, 0.2)',
+    G: 'rgba(0, 115, 62, 0.2)',
+  };
+
+  // Get glow colors from color identity or commanders
+  const colors = colorIdentity.length > 0 ? colorIdentity :
+    commanders.length > 0 ? (commanders[0]?.color_identity || []) : [];
+  const glow1 = colors[0] ? glowColors[colors[0]] : 'rgba(59, 130, 246, 0.15)';
+  const glow2 = colors[1] ? glowColors[colors[1]] : 'rgba(139, 92, 246, 0.1)';
+
+  return (
+    <div
+      className="page-hero p-6 mb-6"
+      style={{ '--hero-glow': glow1, '--hero-glow-2': glow2 }}
+    >
+      {/* Commander art strip on the right */}
+      {commanders.length > 0 && commanders[0]?.image_uri && (
+        <div className="hero-art-strip">
+          <div className="flex h-full">
+            {commanders.slice(0, 3).map((cmd, i) => (
+              <img
+                key={cmd.name}
+                src={cmd.art_crop || cmd.image_uri}
+                alt=""
+                className="h-full w-auto object-cover"
+                style={{
+                  marginLeft: i > 0 ? '-30%' : 0,
+                  zIndex: 3 - i,
+                  opacity: 1 - (i * 0.2)
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="relative z-10">
+        <h1 className="text-3xl font-bold mb-2">{title}</h1>
+        {subtitle && <p className="text-gray-400 max-w-xl">{subtitle}</p>}
+
+        {stats.length > 0 && (
+          <div className="flex gap-4 mt-4">
+            {stats.map((stat, i) => (
+              <div key={i} className="stat-highlight rounded-lg px-4 py-2">
+                <div className="text-2xl font-bold number-pop">{stat.value}</div>
+                <div className="text-xs text-gray-400">{stat.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // --- Section Header with accent bar ---
 function SectionHeader({ children, color = 'blue', size = 'md', count, className = '' }) {
   const colorMap = {
@@ -666,15 +729,22 @@ function CollectionUpload({ onUploaded, collectionCount }) {
 
 function CommanderCard({ commander, onClick, selectable, selected, onToggleCompare }) {
   const hasMatch = commander.match_percentage !== undefined;
+  const colorGlow = getColorGlow(commander.color_identity);
+
   return (
     <div
-      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative card-lift ${selected ? 'ring-2 ring-purple-500' : ''}`}
+      className={`card-glow rounded-lg overflow-hidden cursor-pointer transition-all relative card-lift ${selected ? 'ring-2 ring-purple-500' : ''}`}
+      style={{
+        '--card-glow-color': colorGlow,
+        boxShadow: `0 4px 20px ${colorGlow}, inset 0 1px 0 rgba(255,255,255,0.05)`,
+        background: 'linear-gradient(135deg, rgba(31, 41, 55, 1) 0%, rgba(17, 24, 39, 1) 100%)'
+      }}
     >
       {selectable && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
-          className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all ${
-            selected ? 'bg-purple-500 border-purple-500 text-white' : 'bg-gray-900/70 border-gray-400 text-gray-400 hover:border-purple-400'
+          className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all backdrop-blur-sm ${
+            selected ? 'bg-purple-500 border-purple-500 text-white scale-110' : 'bg-gray-900/80 border-gray-400 text-gray-400 hover:border-purple-400 hover:scale-105'
           }`}
           title={selected ? 'Remove from comparison' : 'Add to comparison'}
         >
@@ -691,12 +761,12 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
               loading="lazy"
             />
             {hasMatch && (
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-2 pt-6">
-                <div className="flex items-center justify-between">
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-2 pb-2 pt-8">
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-gray-300">
                     {commander.owned_count}/{commander.total_cards}
                   </span>
-                  <span className={`text-sm font-bold ${
+                  <span className={`text-lg font-bold ${
                     commander.match_percentage >= 60 ? 'text-green-400' :
                     commander.match_percentage >= 40 ? 'text-yellow-400' :
                     'text-gray-400'
@@ -718,7 +788,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
             )}
           </div>
           {hasMatch && commander.missing_price > 0 && (
-            <div className="bg-gray-900/60 rounded px-2 py-1 flex items-center justify-between">
+            <div className="bg-gray-900/80 rounded px-2 py-1.5 flex items-center justify-between border border-gray-700/50">
               <span className="text-[10px] text-gray-500 uppercase tracking-wide">To complete</span>
               <span className={`text-sm font-bold ${
                 commander.missing_price < 50 ? 'text-green-400' :
@@ -805,16 +875,24 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
   const sortedResults = sortResults(results, sortBy);
   const compareNames = new Set(compareList.map(c => c.name));
 
+  // Get top 3 commanders for the hero display
+  const topCommanders = sortedResults.slice(0, 3);
+
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Commander Recommendations</h2>
-      <p className="text-gray-400">
-        Based on your collection of {collectionCount} cards, ranked by how many cards
-        you already own in each commander's average EDHREC deck.
-      </p>
+      <PageHero
+        title="Commander Recommendations"
+        subtitle={`Based on your collection of ${collectionCount.toLocaleString()} cards, ranked by how many cards you already own in each commander's average EDHREC deck.`}
+        commanders={topCommanders}
+        stats={fetched ? [
+          { value: results.length, label: 'Commanders Found' },
+          { value: `${Math.max(...results.map(r => r.match_percentage || 0))}%`, label: 'Best Match' },
+          { value: `$${Math.min(...results.filter(r => r.missing_price).map(r => r.missing_price || 999)).toFixed(0)}`, label: 'Cheapest Build' }
+        ] : []}
+      />
 
       {/* Filters */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-4 space-y-4 border border-gray-700/50">
         <div className="flex flex-wrap gap-4 items-end">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Search</label>
@@ -1800,38 +1878,77 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
-      <h2 className="text-2xl font-bold">Commander Comparison</h2>
 
-      {/* Summary cards */}
-      <div className={`grid gap-4 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+      {/* Hero header with all commanders */}
+      <PageHero
+        title="Commander Comparison"
+        subtitle={`Comparing ${data.commanders.length} commanders side by side`}
+        commanders={commanders}
+        stats={[
+          { value: data.shared_count, label: 'Shared Cards' },
+          { value: `${Math.max(...data.commanders.map(c => c.match_percentage))}%`, label: 'Best Match' }
+        ]}
+      />
+
+      {/* Summary cards with color glows */}
+      <div className={`grid gap-6 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
         {data.commanders.map((cmd, i) => {
           const matchColor = cmd.match_percentage >= 60 ? 'text-green-400' :
             cmd.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
           const orig = commanders[i];
+          const colorGlow = getColorGlow(orig?.color_identity);
           return (
-            <div key={cmd.name} className="bg-gray-800 rounded-lg p-4 space-y-3">
+            <div
+              key={cmd.name}
+              className="relative rounded-xl p-5 space-y-4 overflow-hidden"
+              style={{
+                background: 'linear-gradient(135deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)',
+                boxShadow: `0 8px 32px ${colorGlow}, inset 0 1px 0 rgba(255,255,255,0.05)`
+              }}
+            >
+              {/* Background art */}
               {orig?.image_uri && (
-                <img src={orig.image_uri} alt={cmd.name} className="w-32 rounded-lg mx-auto" />
+                <div className="commander-card-art-bg">
+                  <img src={orig.art_crop || orig.image_uri} alt="" />
+                </div>
               )}
-              <h3
-                className="font-bold text-center cursor-pointer hover:text-blue-400"
-                onClick={() => onSelectCommander(orig || { name: cmd.name })}
-              >
-                {cmd.name}
-              </h3>
-              <div className="text-center">
-                <span className={`text-3xl font-bold ${matchColor}`}>{cmd.match_percentage}%</span>
-                <p className="text-xs text-gray-400 mt-1">{cmd.owned_count}/{cmd.total_cards} owned</p>
-              </div>
-              <MatchBar percentage={cmd.match_percentage} size="lg" />
-              <div className="text-center text-sm">
-                {cmd.missing_price > 0 && (
-                  <span className="text-yellow-400">~${cmd.missing_price.toFixed(2)} to complete</span>
+
+              <div className="relative z-10">
+                {orig?.image_uri && (
+                  <img
+                    src={orig.image_uri}
+                    alt={cmd.name}
+                    className="w-36 rounded-lg mx-auto showcase-card"
+                    style={{ boxShadow: `0 8px 24px ${colorGlow}` }}
+                  />
                 )}
-              </div>
-              <div className="text-center text-xs text-gray-500 space-y-1">
-                <p>{cmd.unique_cards.length} unique cards</p>
-                {cmd.num_decks > 0 && <p>{cmd.num_decks.toLocaleString()} decks</p>}
+                <h3
+                  className="font-bold text-center cursor-pointer hover:text-blue-400 mt-3 text-lg"
+                  onClick={() => onSelectCommander(orig || { name: cmd.name })}
+                >
+                  {cmd.name}
+                </h3>
+                <div className="flex justify-center mt-2">
+                  <ColorBadge colors={orig?.color_identity} />
+                </div>
+                <div className="text-center mt-4">
+                  <span className={`text-4xl font-bold ${matchColor}`}>{cmd.match_percentage}%</span>
+                  <p className="text-xs text-gray-400 mt-1">{cmd.owned_count}/{cmd.total_cards} owned</p>
+                </div>
+                <div className="mt-3">
+                  <MatchBar percentage={cmd.match_percentage} size="lg" />
+                </div>
+                <div className="text-center text-sm mt-3">
+                  {cmd.missing_price > 0 && (
+                    <span className="bg-yellow-900/50 text-yellow-400 px-3 py-1 rounded-full text-xs">
+                      ~${cmd.missing_price.toFixed(2)} to complete
+                    </span>
+                  )}
+                </div>
+                <div className="text-center text-xs text-gray-500 mt-3 space-y-1">
+                  <p>{cmd.unique_cards.length} unique cards</p>
+                  {cmd.num_decks > 0 && <p>{cmd.num_decks.toLocaleString()} decks on EDHREC</p>}
+                </div>
               </div>
             </div>
           );
@@ -1839,10 +1956,10 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
       </div>
 
       {/* Shared cards */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
-        <h3 className="font-semibold text-blue-400">
-          Shared Across All ({data.shared_count} cards)
-        </h3>
+      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-5 space-y-3 border border-gray-700/50">
+        <SectionHeader color="blue" count={data.shared_count}>
+          Shared Across All
+        </SectionHeader>
         <p className="text-xs text-gray-400">Cards that appear in every commander's average deck.</p>
         <div className="flex flex-wrap gap-2">
           {(data.commanders[0]?.shared_cards || []).map(name => (
@@ -2528,17 +2645,24 @@ function MyDecks({ onDecksChanged, decksReady }) {
     }
   };
 
+  const deckList = Object.values(decks);
+  const totalCards = deckList.reduce((sum, d) => sum + (d.card_count || 0), 0);
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <h2 className="text-2xl font-bold">My Decks</h2>
-      <p className="text-gray-400">
-        Add your existing deck lists here. Cards committed to decks can be excluded from
-        recommendations so you only see what's actually available.
-      </p>
+    <div className="max-w-4xl mx-auto space-y-6">
+      <PageHero
+        title="My Decks"
+        subtitle="Add your existing deck lists here. Cards committed to decks can be excluded from recommendations so you only see what's actually available."
+        commanders={deckList.filter(d => d.image_uri).slice(0, 3)}
+        stats={deckList.length > 0 ? [
+          { value: deckList.length, label: 'Decks' },
+          { value: totalCards, label: 'Total Cards' }
+        ] : []}
+      />
 
       {/* Add new deck */}
-      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
-        <h3 className="font-semibold text-lg">Add Deck</h3>
+      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-6 space-y-4 border border-gray-700/50">
+        <SectionHeader color="blue">Add New Deck</SectionHeader>
         <div className="flex gap-3">
           <div className="flex-1">
             <label className="block text-xs text-gray-400 mb-1">Deck Name *</label>
@@ -2870,21 +2994,39 @@ function CollectionStats({ collectionCount }) {
   if (!stats) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
-        <div className="text-center py-12 space-y-4">
-          <p className="text-gray-400">
-            Analyze your {collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.
-          </p>
-          <p className="text-xs text-gray-500">
+        <PageHero
+          title="Collection Statistics"
+          subtitle={`Analyze your ${collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.`}
+          colorIdentity={['U', 'R']}
+        >
+          <div className="flex items-center gap-6 mt-6">
+            {/* Decorative mana orbs */}
+            <div className="flex gap-2">
+              {['W', 'U', 'B', 'R', 'G'].map(c => (
+                <div
+                  key={c}
+                  className="mana-orb opacity-50"
+                  style={{
+                    backgroundColor: COLOR_MAP[c]?.bg,
+                    color: COLOR_MAP[c]?.text,
+                    '--orb-color': getColorGlow([c])
+                  }}
+                >
+                  {c}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={loadStats}
+              className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors animated-border"
+            >
+              Load Statistics
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">
             This fetches data from Scryfall and may take a moment for large collections.
           </p>
-          <button
-            onClick={loadStats}
-            className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors"
-          >
-            Load Statistics
-          </button>
-        </div>
+        </PageHero>
       </div>
     );
   }
@@ -2912,27 +3054,17 @@ function CollectionStats({ collectionCount }) {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Collection Statistics</h2>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-stagger">
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-blue-400 number-pop inline-block">{stats.total_unique.toLocaleString()}</span>
-          <p className="text-xs text-gray-500 mt-1">Unique Cards</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-green-400 number-pop inline-block">{stats.total_cards.toLocaleString()}</span>
-          <p className="text-xs text-gray-500 mt-1">Total Cards</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-yellow-400 number-pop inline-block">${stats.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          <p className="text-xs text-gray-500 mt-1">Est. Total Value</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-purple-400 number-pop inline-block">{stats.total_in_decks}</span>
-          <p className="text-xs text-gray-500 mt-1">Cards in Decks</p>
-        </div>
-      </div>
+      <PageHero
+        title="Collection Statistics"
+        subtitle="Your collection at a glance"
+        colorIdentity={['W', 'U', 'B', 'R', 'G']}
+        stats={[
+          { value: stats.total_unique.toLocaleString(), label: 'Unique Cards' },
+          { value: stats.total_cards.toLocaleString(), label: 'Total Cards' },
+          { value: `$${stats.total_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, label: 'Est. Value' },
+          { value: stats.total_in_decks, label: 'In Decks' }
+        ]}
+      />
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Type Distribution */}
