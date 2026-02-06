@@ -99,29 +99,29 @@ function PageHero({ title, subtitle, commanders = [], stats = [], children, colo
   const glow1 = colors[0] ? glowColors[colors[0]] : 'rgba(59, 130, 246, 0.15)';
   const glow2 = colors[1] ? glowColors[colors[1]] : 'rgba(139, 92, 246, 0.1)';
 
+  // Get the best art image - prefer art_crop for wider aspect
+  const heroArt = commanders.length > 0 ? (commanders[0]?.art_crop || commanders[0]?.image_uri) : null;
+
   return (
     <div
       className="page-hero p-6 mb-6"
       style={{ '--hero-glow': glow1, '--hero-glow-2': glow2 }}
     >
-      {/* Commander art strip on the right */}
-      {commanders.length > 0 && commanders[0]?.image_uri && (
-        <div className="hero-art-strip">
-          <div className="flex h-full">
-            {commanders.slice(0, 3).map((cmd, i) => (
-              <img
-                key={cmd.name}
-                src={cmd.art_crop || cmd.image_uri}
-                alt=""
-                className="h-full w-auto object-cover"
-                style={{
-                  marginLeft: i > 0 ? '-30%' : 0,
-                  zIndex: 3 - i,
-                  opacity: 1 - (i * 0.2)
-                }}
-              />
-            ))}
-          </div>
+      {/* Subtle blurred art backdrop */}
+      {heroArt && (
+        <div
+          className="absolute top-0 right-0 bottom-0 w-1/2 overflow-hidden"
+          style={{
+            maskImage: 'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.5) 100%)',
+            WebkitMaskImage: 'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.5) 100%)'
+          }}
+        >
+          <img
+            src={heroArt}
+            alt=""
+            className="w-full h-full object-cover"
+            style={{ filter: 'blur(2px) saturate(1.3)', opacity: 0.4 }}
+          />
         </div>
       )}
 
