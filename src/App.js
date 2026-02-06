@@ -1752,7 +1752,7 @@ function DeckBuilder({ data, commander, onBack }) {
       const cards = groupMap[type];
       if (!cards || cards.length === 0) return null;
       return (
-        <div>
+        <div key={type}>
           <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} className="mb-1" />
           <div className="relative">
             {cards.map((card, idx) => (
