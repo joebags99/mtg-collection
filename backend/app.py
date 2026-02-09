@@ -1787,13 +1787,15 @@ async def compare_commanders(request: Request, body: dict):
         raise HTTPException(status_code=400, detail="Provide 2-3 commander names")
 
     loop = asyncio.get_event_loop()
+    collection_set = set(collection.keys())  # Convert dict keys to set for operations
     results = []
     for name in names:
         front_face = name.split("//")[0].strip()
         # Run blocking EDHREC fetch in thread pool
         data = await loop.run_in_executor(None, get_commander_avg_deck, front_face)
         deck_cards = set(data.get("deck_card_names", []))
-        owned_count = len(deck_cards & collection)
+        owned_cards = deck_cards & collection_set
+        owned_count = len(owned_cards)
         total = len(deck_cards)
 
         missing_names = [
@@ -1819,8 +1821,8 @@ async def compare_commanders(request: Request, body: dict):
             "match_percentage": round(owned_count / max(total, 1) * 100, 1),
             "missing_price": round(total_price, 2),
             "deck_card_names": list(deck_cards),
-            "owned_cards": sorted(deck_cards & collection),
-            "missing_cards": sorted(deck_cards - collection),
+            "owned_cards": sorted(owned_cards),
+            "missing_cards": sorted(deck_cards - collection_set),
         })
 
     # Compute overlap/unique
