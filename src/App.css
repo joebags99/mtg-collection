@@ -254,14 +254,19 @@ nav button {
    3D CARD EFFECTS
    ============================================ */
 
+/* Wrapper provides perspective context */
+.card-3d-wrapper {
+  perspective: 1000px;
+}
+
 .card-3d {
   transform-style: preserve-3d;
-  perspective: 1000px;
-  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease;
+  will-change: transform;
 }
 
 .card-3d:hover {
-  transform: rotateY(-5deg) rotateX(5deg) translateY(-8px) scale(1.02);
+  transform: perspective(1000px) rotateY(-5deg) rotateX(5deg) translateY(-8px) scale(1.02);
 }
 
 .card-3d::before {
@@ -293,13 +298,13 @@ nav button {
 
 .holo-shine {
   position: relative;
-  overflow: hidden;
 }
 
 .holo-shine::after {
   content: '';
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   background: linear-gradient(
     105deg,
     transparent 40%,
@@ -311,6 +316,7 @@ nav button {
   background-size: 200% 100%;
   animation: holoShine 3s ease-in-out infinite;
   pointer-events: none;
+  overflow: hidden;
 }
 
 /* ============================================

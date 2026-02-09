@@ -779,34 +779,35 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
   const colorGlow = getColorGlow(commander.color_identity);
 
   return (
-    <div
-      className={`card-3d holo-shine rounded-xl overflow-hidden cursor-pointer relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
-      style={{
-        '--card-glow-color': colorGlow,
-        boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
-        background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)'
-      }}
-    >
-      {selectable && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
-          className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all backdrop-blur-sm ${
-            selected ? 'bg-purple-500 border-purple-500 text-white scale-110' : 'bg-gray-900/80 border-gray-400 text-gray-400 hover:border-purple-400 hover:scale-105'
-          }`}
-          title={selected ? 'Remove from comparison' : 'Add to comparison'}
-        >
-          {selected ? '✓' : '+'}
-        </button>
-      )}
-      <div onClick={() => onClick?.(commander)}>
-        {commander.image_uri && (
-          <div className="relative">
-            <img
-              src={commander.image_uri}
-              alt={commander.name}
-              className="w-full aspect-[5/7] object-cover"
-              loading="lazy"
-            />
+    <div className="card-3d-wrapper">
+      <div
+        className={`card-3d holo-shine rounded-xl cursor-pointer relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+        style={{
+          '--card-glow-color': colorGlow,
+          boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
+          background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)'
+        }}
+      >
+        {selectable && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
+            className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all backdrop-blur-sm ${
+              selected ? 'bg-purple-500 border-purple-500 text-white scale-110' : 'bg-gray-900/80 border-gray-400 text-gray-400 hover:border-purple-400 hover:scale-105'
+            }`}
+            title={selected ? 'Remove from comparison' : 'Add to comparison'}
+          >
+            {selected ? '✓' : '+'}
+          </button>
+        )}
+        <div onClick={() => onClick?.(commander)} className="overflow-hidden rounded-xl">
+          {commander.image_uri && (
+            <div className="relative">
+              <img
+                src={commander.image_uri}
+                alt={commander.name}
+                className="w-full aspect-[5/7] object-cover"
+                loading="lazy"
+              />
             {hasMatch && (
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-2 pb-2 pt-8">
                 <div className="flex items-center justify-between mb-1">
@@ -846,6 +847,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
               </span>
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>
