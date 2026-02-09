@@ -2053,6 +2053,16 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
 }
 
 // --- Commander Detail with progressive loading ---
+// Default deck composition values
+const DEFAULT_COMPOSITION = {
+  lands: 38,
+  ramp: 10,
+  cardDraw: 10,
+  removal: 8,
+  synergy: 20,
+  utility: 13
+};
+
 function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder, excludeInDecks }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2069,6 +2079,21 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const [partnerData, setPartnerData] = useState(null);
   const initialFetchDone = useRef(false);
   const currentCommander = useRef(commander.name);
+
+  // Deck composition settings
+  const [showCompositionSettings, setShowCompositionSettings] = useState(false);
+  const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
+  const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
+  const [priorities, setPriorities] = useState({
+    preferOwned: true,
+    budgetConscious: false,
+    includeStaples: true
+  });
+  const [tempPriorities, setTempPriorities] = useState({
+    preferOwned: true,
+    budgetConscious: false,
+    includeStaples: true
+  });
 
   // Reset state when commander changes
   useEffect(() => {
@@ -2269,11 +2294,39 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
             />
           ) : null}
           <div className="space-y-3 flex-1">
-            <h2 className="text-3xl font-bold">
-              {commander.name}
-              {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
-            </h2>
-            <ColorBadge colors={combinedColors} />
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-3xl font-bold">
+                  {commander.name}
+                  {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
+                </h2>
+                <ColorBadge colors={combinedColors} />
+              </div>
+              <div className="flex items-center gap-3">
+                <a
+                  href={`https://edhrec.com/commanders/${commander.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-gray-300 transition-colors"
+                >
+                  EDHREC
+                </a>
+                <button
+                  onClick={() => {
+                    setTempComposition(composition);
+                    setTempPriorities(priorities);
+                    setShowCompositionSettings(true);
+                  }}
+                  className="p-2 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                  title="Deck Composition Settings"
+                >
+                  <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div className="flex items-baseline gap-4">
               <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
               <span className="text-gray-400">
@@ -2498,6 +2551,119 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
             {filteredRecs.length === 0 && (
               <p className="px-3 py-4 text-gray-500 text-sm">No recommendations match the current filters.</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Deck Composition Settings Modal */}
+      {showCompositionSettings && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-6">Deck Composition Settings</h3>
+
+              {/* Category Sliders */}
+              <div className="space-y-5 mb-6">
+                {[
+                  { key: 'lands', label: 'Lands', icon: '🏔️', min: 30, max: 45 },
+                  { key: 'ramp', label: 'Ramp', icon: '⚡', min: 5, max: 20 },
+                  { key: 'cardDraw', label: 'Card Draw', icon: '📚', min: 5, max: 20 },
+                  { key: 'removal', label: 'Removal', icon: '💀', min: 3, max: 15 },
+                  { key: 'synergy', label: 'Synergy', icon: '✨', min: 10, max: 40 },
+                  { key: 'utility', label: 'Utility', icon: '🔧', min: 5, max: 25 },
+                ].map(({ key, label, icon, min, max }) => (
+                  <div key={key}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-gray-300 flex items-center gap-2">
+                        <span>{icon}</span> {label}
+                      </span>
+                      <span className="text-white font-medium w-8 text-right">{tempComposition[key]}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      value={tempComposition[key]}
+                      onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
+                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                      style={{
+                        background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Total Counter */}
+              <div className="bg-gray-900 rounded-lg p-3 mb-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">Total allocated:</span>
+                  <span className={`font-bold ${
+                    Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
+                      ? 'text-green-400'
+                      : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
+                        ? 'text-red-400'
+                        : 'text-yellow-400'
+                  }`}>
+                    {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
+              </div>
+
+              {/* Priority Toggles */}
+              <div className="mb-6">
+                <h4 className="text-sm font-medium text-gray-400 mb-3">Priorities</h4>
+                <div className="space-y-3">
+                  {[
+                    { key: 'preferOwned', label: 'Prefer cards I own' },
+                    { key: 'budgetConscious', label: 'Budget conscious' },
+                    { key: 'includeStaples', label: 'Include format staples' },
+                  ].map(({ key, label }) => (
+                    <label key={key} className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={tempPriorities[key]}
+                        onChange={(e) => setTempPriorities(prev => ({ ...prev, [key]: e.target.checked }))}
+                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-yellow-500 focus:ring-yellow-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-gray-300">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-gray-700">
+                <button
+                  onClick={() => {
+                    setTempComposition(DEFAULT_COMPOSITION);
+                    setTempPriorities({ preferOwned: true, budgetConscious: false, includeStaples: true });
+                  }}
+                  className="text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Reset to Defaults
+                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowCompositionSettings(false)}
+                    className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      setComposition(tempComposition);
+                      setPriorities(tempPriorities);
+                      setShowCompositionSettings(false);
+                    }}
+                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -3267,6 +3433,333 @@ function CollectionStats({ collectionCount }) {
   );
 }
 
+// --- About Page ---
+function AboutPage() {
+  return (
+    <div className="page-fade-in max-w-4xl mx-auto">
+      <AmbientBackground colorIdentity={['W', 'U', 'B', 'R', 'G']} />
+
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold text-amber-200 mb-2">About MTG Commander Recommender</h1>
+        <p className="text-gray-400">Turn your card collection into your next Commander deck</p>
+        <div className="h-px bg-gradient-to-r from-amber-500/50 to-transparent mt-4" />
+      </div>
+
+      <div className="space-y-8">
+        <section>
+          <h2 className="text-2xl font-bold text-amber-300 mb-4">What is MTG Commander Recommender?</h2>
+          <p className="text-gray-300 leading-relaxed mb-4">
+            MTG Commander Recommender is a free tool designed for Magic: The Gathering players who want to build
+            Commander (EDH) decks using cards they already own.
+          </p>
+          <p className="text-gray-300 leading-relaxed mb-4">
+            Instead of browsing decklists and buying singles, MTG Commander Recommender analyzes your existing
+            collection and recommends commanders that synergize with the cards you have. It's the perfect solution
+            for players looking to:
+          </p>
+          <ul className="list-disc list-inside text-gray-300 space-y-2 ml-4">
+            <li>Build new decks without buying more cards</li>
+            <li>Find unexpected commanders that match their collection</li>
+            <li>Discover synergies they didn't know existed</li>
+            <li>Make the most of their bulk collection</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold text-amber-300 mb-4">How It Works</h2>
+
+          <div className="space-y-6">
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 1: Export Your Collection</h3>
+              <p className="text-gray-300">
+                Export your card collection from popular tools like Archidekt, Moxfield, Manabox, or Dragon Shield.
+                MTG Commander Recommender supports CSV exports and simple card lists.
+              </p>
+            </div>
+
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 2: Paste and Analyze</h3>
+              <p className="text-gray-300">
+                Paste your collection into MTG Commander Recommender. The algorithm compares your cards against
+                the synergy data for over 1,500 commanders.
+              </p>
+            </div>
+
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 3: Get Recommendations</h3>
+              <p className="text-gray-300">
+                See which commanders you can build with your existing cards. View match percentages, estimated
+                costs to complete, and detailed decklists.
+              </p>
+            </div>
+
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 4: Build Your Deck</h3>
+              <p className="text-gray-300">
+                Use the deck builder to customize your deck, adjust card counts, and export your final list
+                to your favorite deck building platform.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold text-amber-300 mb-4">Data Sources</h2>
+          <p className="text-gray-300 leading-relaxed">
+            MTG Commander Recommender uses data from <a href="https://edhrec.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">EDHREC</a> for
+            average decklists and synergy scores, and <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Scryfall</a> for
+            card data and pricing information.
+          </p>
+        </section>
+
+        <section className="glass-panel rounded-xl p-6 text-center">
+          <h2 className="text-xl font-bold text-white mb-2">Ready to Start?</h2>
+          <p className="text-gray-300 mb-4">
+            Upload your collection and discover which commanders are waiting to be built!
+          </p>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// --- Guides Page ---
+function GuidesPage({ onNavigate }) {
+  const [selectedGuide, setSelectedGuide] = useState(null);
+
+  const guides = [
+    {
+      id: 'recommendations',
+      title: 'Reading Your Commander Recommendations',
+      description: 'Learn how to interpret the metrics and choose the best commander for your collection. Understand Match Percentage, synergy scores, and how to evaluate your options.',
+      readTime: '5 min read',
+      content: (
+        <div className="space-y-6">
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Understanding Match Percentage</h3>
+            <p className="text-gray-300 mb-4">
+              The match percentage shows how many cards from the average EDHREC decklist you already own.
+              A higher percentage means you can build the deck with fewer purchases.
+            </p>
+            <ul className="list-disc list-inside text-gray-300 space-y-2 ml-4">
+              <li><span className="text-green-400">60%+</span> - Excellent match, very few cards needed</li>
+              <li><span className="text-yellow-400">40-59%</span> - Good match, moderate investment needed</li>
+              <li><span className="text-gray-400">Below 40%</span> - Lower match, more cards to acquire</li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Cost to Complete</h3>
+            <p className="text-gray-300 mb-4">
+              This shows the estimated cost of cards you're missing based on current Scryfall prices.
+              Use this to find budget-friendly options or identify expensive staples you might want to proxy.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Filtering and Sorting</h3>
+            <p className="text-gray-300 mb-4">
+              Use the color filters to narrow down by color identity. Sort by match percentage to find
+              your best options, or by price to find the cheapest decks to complete.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Comparing Commanders</h3>
+            <p className="text-gray-300">
+              Can't decide between commanders? Use the compare feature to see them side by side.
+              Select 2-3 commanders and compare their card overlap, unique cards, and completion costs.
+            </p>
+          </section>
+        </div>
+      )
+    },
+    {
+      id: 'exporting',
+      title: 'Exporting Your Collection: Step-by-Step Guide',
+      description: 'Detailed instructions for exporting your card collection from popular platforms like Archidekt, Moxfield, Manabox, and Dragon Shield Scanner.',
+      readTime: '7 min read',
+      content: (
+        <div className="space-y-6">
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Moxfield</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Go to your collection page on Moxfield</li>
+              <li>Click the "Export" button (download icon)</li>
+              <li>Select "CSV" format</li>
+              <li>Copy the contents or download the file</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Archidekt</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Navigate to your collection</li>
+              <li>Click "Export" in the menu</li>
+              <li>Choose "Text" or "CSV" format</li>
+              <li>Copy the exported list</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Manabox</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Open Manabox app and go to your collection</li>
+              <li>Tap the share/export button</li>
+              <li>Select "Export as CSV" or "Plain text"</li>
+              <li>Copy or share the exported list</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Dragon Shield Scanner</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Open Dragon Shield app</li>
+              <li>Go to your collection folder</li>
+              <li>Tap "Export" or the share icon</li>
+              <li>Choose CSV or text format</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Simple Card List</h3>
+            <p className="text-gray-300 mb-4">
+              You can also paste a simple list with one card per line. Quantities are optional:
+            </p>
+            <pre className="bg-gray-800 rounded p-4 text-sm text-gray-300 font-mono">
+{`4 Lightning Bolt
+2 Counterspell
+Sol Ring
+Arcane Signet`}
+            </pre>
+          </section>
+        </div>
+      )
+    },
+    {
+      id: 'deckbuilder',
+      title: 'Using the Deck Builder',
+      description: 'Learn how to customize your deck, adjust card counts, add lands, and export your finished decklist.',
+      readTime: '4 min read',
+      content: (
+        <div className="space-y-6">
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Starting a Build</h3>
+            <p className="text-gray-300 mb-4">
+              From the commander detail page, click "Open in Deck Builder" to start customizing your deck.
+              The builder will pre-populate with the average decklist, highlighting cards you own.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Adding and Removing Cards</h3>
+            <p className="text-gray-300 mb-4">
+              Click cards to toggle them in/out of your deck. The card counter at the top shows your
+              current total. Commander decks need exactly 100 cards (including your commander).
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">View Modes</h3>
+            <p className="text-gray-300 mb-4">
+              Switch between Grid view (visual) and Stacks view (organized by type) to see your deck
+              from different perspectives. Use the mana curve chart to balance your deck's costs.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Exporting Your Deck</h3>
+            <p className="text-gray-300">
+              When you're done, use the Export button to copy your decklist. You can import this into
+              Moxfield, Archidekt, or any other deck building platform.
+            </p>
+          </section>
+        </div>
+      )
+    }
+  ];
+
+  if (selectedGuide) {
+    const guide = guides.find(g => g.id === selectedGuide);
+    return (
+      <div className="page-fade-in max-w-4xl mx-auto">
+        <AmbientBackground colorIdentity={['U', 'G']} />
+
+        <button
+          onClick={() => setSelectedGuide(null)}
+          className="text-blue-400 hover:text-blue-300 mb-6 flex items-center gap-2"
+        >
+          <span>←</span> Back to Guides
+        </button>
+
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-amber-200 mb-2">{guide.title}</h1>
+          <p className="text-gray-500 text-sm">{guide.readTime}</p>
+        </div>
+
+        <div className="glass-panel rounded-xl p-6">
+          {guide.content}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-fade-in max-w-5xl mx-auto">
+      <AmbientBackground colorIdentity={['U', 'G']} />
+
+      {/* Hero Section */}
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold text-amber-200 mb-4">Commander Deck Building Guides</h1>
+        <p className="text-gray-400 max-w-2xl mx-auto">
+          Learn everything you need to know about building Commander decks,
+          understanding your recommendations, and making the most of MTG Commander Recommender.
+        </p>
+      </div>
+
+      {/* Guide Cards */}
+      <div className="grid md:grid-cols-2 gap-6 mb-12">
+        {guides.map(guide => (
+          <button
+            key={guide.id}
+            onClick={() => setSelectedGuide(guide.id)}
+            className="glass-panel rounded-xl p-6 text-left hover:bg-gray-800/50 transition-colors group"
+          >
+            <h2 className="text-xl font-bold text-white mb-3 group-hover:text-amber-200 transition-colors">
+              {guide.title}
+            </h2>
+            <p className="text-gray-400 text-sm mb-4 leading-relaxed">
+              {guide.description}
+            </p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500">{guide.readTime}</span>
+              <span className="text-blue-400 text-sm group-hover:translate-x-1 transition-transform">
+                Read →
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Help Section */}
+      <div className="glass-panel rounded-xl p-8 text-center">
+        <h2 className="text-2xl font-bold text-white mb-3">Need More Help?</h2>
+        <p className="text-gray-400">
+          Have questions that aren't covered in our guides?{' '}
+          <button onClick={() => onNavigate('about')} className="text-blue-400 hover:underline">
+            Visit our About page
+          </button>{' '}
+          to learn more about MTG Commander Recommender.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // --- Main App ---
 
 function App() {
@@ -3445,7 +3938,27 @@ function App() {
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
+          <div className="flex items-center gap-8">
+            <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
+            <nav className="flex items-center gap-6">
+              <button
+                onClick={() => setTab('guides')}
+                className={`text-sm font-medium transition-colors ${
+                  tab === 'guides' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                Guides
+              </button>
+              <button
+                onClick={() => setTab('about')}
+                className={`text-sm font-medium transition-colors ${
+                  tab === 'about' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                About
+              </button>
+            </nav>
+          </div>
           <div className="flex items-center gap-4">
             {collectionCount > 0 && (
               <span className="text-sm text-gray-400">
@@ -3605,6 +4118,18 @@ function App() {
               onBack={() => setTab('recommend')}
               onSelectCommander={handleSelectCommander}
             />
+          </div>
+        )}
+
+        {tab === 'about' && (
+          <div className="page-fade-in">
+            <AboutPage />
+          </div>
+        )}
+
+        {tab === 'guides' && (
+          <div className="page-fade-in">
+            <GuidesPage onNavigate={setTab} />
           </div>
         )}
       </main>
