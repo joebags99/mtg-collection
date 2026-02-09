@@ -402,7 +402,13 @@ async function apiGet(path, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== null && v !== undefined && v !== '') url.searchParams.set(k, v);
   });
-  const res = await fetch(url);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (networkErr) {
+    console.error(`Network error calling ${path}:`, networkErr);
+    throw new Error(`Network error: Cannot reach server at ${API}. Is the backend running?`);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'API error');
@@ -411,11 +417,17 @@ async function apiGet(path, params = {}) {
 }
 
 async function apiPost(path, body) {
-  const res = await fetch(API + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    console.error(`Network error calling ${path}:`, networkErr);
+    throw new Error(`Network error: Cannot reach server at ${API}. Is the backend running?`);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'API error');
