@@ -791,11 +791,9 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
   const colorGlow = getColorGlow(commander.color_identity);
 
   return (
-    <div className="card-3d-wrapper">
       <div
-        className={`card-3d holo-shine rounded-xl cursor-pointer relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+        className={`rounded-xl cursor-pointer relative transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${selected ? 'ring-2 ring-purple-500' : ''}`}
         style={{
-          '--card-glow-color': colorGlow,
           boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
           background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)'
         }}
@@ -862,7 +860,6 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
         </div>
         </div>
       </div>
-    </div>
   );
 }
 
