@@ -804,6 +804,7 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
 
 
 scryfall_type_cache = {}
+scryfall_oracle_cache = {}  # {normalized_name: oracle_text_string}
 scryfall_mana_cache = {}  # {card_name: {"cmc": float, "mana_cost": str}}
 
 
@@ -838,10 +839,15 @@ def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
                     entry = {"cmc": cmc, "mana_cost": mana_cost}
                     scryfall_mana_cache[normalized] = entry
                     result[normalized] = entry
-                    # Also cache the type while we're here
+                    # Also cache the type and oracle text while we're here
                     if normalized not in scryfall_type_cache:
                         card_type = _parse_type_line(type_line)
                         scryfall_type_cache[normalized] = card_type
+                    if normalized not in scryfall_oracle_cache:
+                        oracle = card.get("oracle_text", "")
+                        if not oracle and card.get("card_faces"):
+                            oracle = card["card_faces"][0].get("oracle_text", "")
+                        scryfall_oracle_cache[normalized] = oracle
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall mana fetch error: {e}")
@@ -881,6 +887,11 @@ def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
                     card_type = _parse_type_line(type_line)
                     scryfall_type_cache[normalized] = card_type
                     result[normalized] = card_type
+                    # Also cache oracle text for functional classification
+                    oracle = card.get("oracle_text", "")
+                    if not oracle and "card_faces" in card:
+                        oracle = card["card_faces"][0].get("oracle_text", "")
+                    scryfall_oracle_cache[normalized] = oracle
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall type fetch error: {e}")
@@ -928,6 +939,96 @@ def classify_card_type(card_name: str, type_data: dict) -> str:
             if card.get("name_normalized") == normalized:
                 return type_name
     return ""
+
+
+def classify_functional_category(
+    card_name_normalized: str,
+    card_type: str,
+    type_data: dict,
+) -> str:
+    """Classify a card into a functional deck-building category using card type,
+    EDHREC source lists, and oracle text analysis.
+
+    Categories: lands, ramp, cardDraw, removal, synergy, utility
+    """
+    # 1. Lands are straightforward
+    if card_type == "Land":
+        return "lands"
+
+    # 2. Check EDHREC mana artifacts list -> ramp
+    mana_art_names = {c.get("name_normalized") for c in type_data.get("top_mana_artifacts", [])}
+    if card_name_normalized in mana_art_names:
+        return "ramp"
+
+    # 3. Use oracle text for functional classification
+    oracle = scryfall_oracle_cache.get(card_name_normalized, "").lower()
+
+    # Ramp: produces mana or fetches lands
+    ramp_patterns = [
+        "add {",                          # Mana production
+        "add one mana",
+        "add two mana",
+        "add three mana",
+        "adds one mana",
+        "search your library for a basic land",
+        "search your library for a land",
+        "put that card onto the battlefield",  # land fetch to battlefield
+    ]
+    if any(p in oracle for p in ramp_patterns):
+        # Exclude cards that are primarily something else (e.g. Solemn Simulacrum draws too)
+        # but ramp is the primary function if it fetches/produces mana
+        return "ramp"
+
+    # Card draw: draws cards
+    draw_patterns = [
+        "draw a card",
+        "draw cards",
+        "draw two",
+        "draw three",
+        "draws a card",
+        "draw x card",
+        "draw that many",
+    ]
+    # Exclude "when ~ dies, draw" type secondary effects for creatures
+    # by checking if draw is a primary ability (appears early in oracle text)
+    if any(p in oracle for p in draw_patterns):
+        # If it's a noncreature spell or the draw is the main effect, classify as cardDraw
+        if card_type in ("Instant", "Sorcery", "Enchantment"):
+            return "cardDraw"
+        # For creatures/artifacts, only classify as draw if oracle text leads with draw
+        first_ability = oracle.split("\n")[0] if oracle else ""
+        if any(p in first_ability for p in draw_patterns):
+            return "cardDraw"
+
+    # Removal: destroys, exiles, counters, or bounces
+    removal_patterns = [
+        "destroy target",
+        "destroy all",
+        "exile target",
+        "exile all",
+        "counter target spell",
+        "return target",    # bounce
+        "deals damage to any target",
+        "deals damage to target",
+        "fight",            # creature-based removal
+        "-x/-x",
+        "gets -",
+    ]
+    if any(p in oracle for p in removal_patterns):
+        if card_type in ("Instant", "Sorcery"):
+            return "removal"
+        # For permanents, check if removal is their primary purpose
+        first_ability = oracle.split("\n")[0] if oracle else ""
+        if any(p in first_ability for p in removal_patterns):
+            return "removal"
+
+    # High synergy cards (from EDHREC synergy list) -> synergy
+    synergy_names = {c.get("name_normalized") for c in type_data.get("high_synergy", [])}
+    if card_name_normalized in synergy_names:
+        return "synergy"
+
+    # Default: utility
+    return "utility"
 
 
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
@@ -1510,8 +1611,29 @@ async def get_commander_detail(
     include_prices: bool = True,
     exclude_in_decks: bool = False,
     partner: Optional[str] = None,
+    # Deck composition targets (JSON-encoded)
+    composition: Optional[str] = None,
+    # Priority flags (JSON-encoded)
+    priorities: Optional[str] = None,
 ):
     """Get commander average deck from EDHREC, compare with collection, categorize by type."""
+    # Parse composition targets
+    default_composition = {"lands": 38, "ramp": 10, "cardDraw": 10, "removal": 8, "synergy": 20, "utility": 13}
+    comp_targets = default_composition
+    if composition:
+        try:
+            comp_targets = {**default_composition, **json.loads(composition)}
+        except (ValueError, TypeError):
+            pass
+
+    # Parse priority flags
+    default_priorities = {"preferOwned": True, "budgetConscious": False, "includeStaples": True}
+    priority_flags = default_priorities
+    if priorities:
+        try:
+            priority_flags = {**default_priorities, **json.loads(priorities)}
+        except (ValueError, TypeError):
+            pass
     # For DFCs, use only the front face name for EDHREC lookups
     front_face = commander_name.split("//")[0].strip()
 
@@ -1678,8 +1800,81 @@ async def get_commander_detail(
             r["cmc"] = minfo.get("cmc", 0)
             r["mana_cost"] = minfo.get("mana_cost", "")
 
-    # Sort recommendations by synergy descending
-    recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
+    # Fetch prices for non-owned recommendations (for budget priority)
+    if priority_flags.get("budgetConscious"):
+        unpriced_rec_names = [r["name"] for r in recommendations if not r.get("owned")]
+        if unpriced_rec_names:
+            rec_prices = fetch_prices_bulk(unpriced_rec_names)
+            for r in recommendations:
+                if not r.get("owned") and not r.get("price"):
+                    r["price"] = rec_prices.get(r["name_normalized"], 0)
+
+    # --- Functional category classification ---
+    # Apply to owned + missing (the average deck cards)
+    for card in owned + missing:
+        card["functional_category"] = classify_functional_category(
+            card["name_normalized"], card["card_type"], type_data,
+        )
+
+    # Apply to recommendations
+    for r in recommendations:
+        r["functional_category"] = classify_functional_category(
+            r["name_normalized"], r.get("card_type", ""), type_data,
+        )
+
+    # --- Composition analysis: actual counts vs targets ---
+    category_counts = {k: 0 for k in comp_targets}
+    for card in owned + missing:
+        cat = card.get("functional_category", "utility")
+        if cat in category_counts:
+            category_counts[cat] += 1
+
+    composition_analysis = {}
+    for cat, target in comp_targets.items():
+        actual = category_counts.get(cat, 0)
+        composition_analysis[cat] = {
+            "target": target,
+            "actual": actual,
+            "diff": actual - target,
+        }
+
+    # --- Reorder recommendations based on composition gaps + priorities ---
+    # Categories where the deck is short get a boost
+    category_need = {}
+    for cat, info in composition_analysis.items():
+        # Negative diff means we need more of this category
+        category_need[cat] = max(0, -info["diff"])
+
+    max_need = max(category_need.values()) if category_need else 1
+
+    for r in recommendations:
+        score = r.get("synergy", 0)
+        cat = r.get("functional_category", "utility")
+        # Boost score for categories the deck is short on (up to +0.5 bonus)
+        need = category_need.get(cat, 0)
+        if max_need > 0:
+            score += 0.5 * (need / max_need)
+        # Priority: prefer owned cards
+        if priority_flags.get("preferOwned") and r.get("owned"):
+            score += 0.3
+        # Priority: budget conscious (penalize expensive cards)
+        if priority_flags.get("budgetConscious"):
+            price = r.get("price", 0) or 0
+            if price > 20:
+                score -= 0.3
+            elif price > 10:
+                score -= 0.15
+        # Priority: include format staples (boost high-inclusion cards)
+        if priority_flags.get("includeStaples"):
+            inclusion = r.get("inclusion", 0)
+            if inclusion and inclusion > 40:
+                score += 0.15
+        r["_sort_score"] = score
+
+    recommendations.sort(key=lambda r: r.get("_sort_score", 0), reverse=True)
+    # Clean up internal sort key
+    for r in recommendations:
+        r.pop("_sort_score", None)
 
     return {
         "commander": data["commander"],
@@ -1693,6 +1888,7 @@ async def get_commander_detail(
         "owned_cards": owned,
         "missing_cards": missing,
         "recommendations": recommendations,
+        "composition_analysis": composition_analysis,
         "error": data.get("error"),
     }
 

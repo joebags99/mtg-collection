@@ -2129,7 +2129,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
 
       // Now fetch EDHREC data (with partner if found)
       try {
-        const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+        const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null, composition: JSON.stringify(composition), priorities: JSON.stringify(priorities) };
         if (partner) params.partner = partner.name;
         const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
         setData(d);
@@ -2147,7 +2147,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     setLoading(true);
     setError('');
     try {
-      const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+      const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null, composition: JSON.stringify(composition), priorities: JSON.stringify(priorities) };
       const p = partnerOverride !== undefined ? partnerOverride : selectedPartner;
       if (p) params.partner = p.name;
       const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
@@ -2156,17 +2156,20 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       setError(err.message);
     }
     setLoading(false);
-  }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
+  }, [commander.name, budget, theme, excludeInDecks, selectedPartner, composition, priorities]);
 
-  // Refetch when filters change (but not on initial mount)
-  const prevFilters = useRef({ budget: '', theme: '' });
+  // Refetch when filters or composition settings change (but not on initial mount)
+  const prevFilters = useRef({ budget: '', theme: '', composition: JSON.stringify(DEFAULT_COMPOSITION), priorities: JSON.stringify({ preferOwned: true, budgetConscious: false, includeStaples: true }) });
   useEffect(() => {
     if (!initialFetchDone.current || !data) return;
-    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme) {
-      prevFilters.current = { budget, theme };
+    const compStr = JSON.stringify(composition);
+    const prioStr = JSON.stringify(priorities);
+    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme
+        || prevFilters.current.composition !== compStr || prevFilters.current.priorities !== prioStr) {
+      prevFilters.current = { budget, theme, composition: compStr, priorities: prioStr };
       fetchDetail();
     }
-  }, [budget, theme, data, fetchDetail]);
+  }, [budget, theme, composition, priorities, data, fetchDetail]);
 
   // Handle partner selection changes from PartnerPicker
   const handlePartnerChange = useCallback((newPartner) => {
