@@ -83,6 +83,158 @@ function getColorGlow(colors) {
   return `rgba(${Math.round(avg[0]/n)},${Math.round(avg[1]/n)},${Math.round(avg[2]/n)},0.4)`;
 }
 
+// --- Ambient Background with floating particles and orbs ---
+function AmbientBackground({ colors = [] }) {
+  const colorValues = {
+    W: '#f9faf4',
+    U: '#0e68ab',
+    B: '#6b5080',
+    R: '#d32029',
+    G: '#00733e',
+  };
+
+  const activeColors = colors.length > 0
+    ? colors.map(c => colorValues[c] || '#3b82f6')
+    : ['#3b82f6', '#8b5cf6'];
+
+  const particles = Array.from({ length: 12 }, (_, i) => ({
+    id: i,
+    color: activeColors[i % activeColors.length],
+    size: 3 + Math.random() * 6,
+    left: Math.random() * 100,
+    delay: Math.random() * 25,
+    duration: 20 + Math.random() * 15,
+  }));
+
+  const orbs = activeColors.slice(0, 2).map((color, i) => ({
+    color,
+    size: 250 + i * 100,
+    left: i === 0 ? '5%' : '75%',
+    top: i === 0 ? '10%' : '50%',
+    delay: i * 5,
+  }));
+
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+      {orbs.map((orb, i) => (
+        <div
+          key={`orb-${i}`}
+          className="ambient-orb"
+          style={{
+            width: orb.size,
+            height: orb.size,
+            left: orb.left,
+            top: orb.top,
+            background: `radial-gradient(circle, ${orb.color}30 0%, transparent 70%)`,
+            animationDelay: `${orb.delay}s`,
+          }}
+        />
+      ))}
+      {particles.map(p => (
+        <div
+          key={`particle-${p.id}`}
+          className="mana-particle"
+          style={{
+            width: p.size,
+            height: p.size,
+            left: `${p.left}%`,
+            backgroundColor: p.color,
+            boxShadow: `0 0 ${p.size}px ${p.color}80`,
+            animationDelay: `${p.delay}s`,
+            animationDuration: `${p.duration}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// --- Page Header (compact, sleek with glowing underline) ---
+function PageHero({ title, subtitle, commanders = [], stats = [], children, colorIdentity = [] }) {
+  const colors = colorIdentity.length > 0 ? colorIdentity :
+    commanders.length > 0 ? (commanders[0]?.color_identity || []) : [];
+
+  const glowColor = colors.length > 0 ? getColorGlow(colors) : 'rgba(59, 130, 246, 0.6)';
+
+  return (
+    <div className="relative mb-8" style={{ zIndex: 1 }}>
+      <AmbientBackground colors={colors} />
+
+      <div className="flex items-start justify-between gap-6 mb-4 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <h1
+            className="text-3xl font-black tracking-tight glow-underline inline-block pb-2"
+            style={{ '--glow-color': glowColor }}
+          >
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="text-gray-400 mt-2 max-w-2xl text-sm leading-relaxed">{subtitle}</p>
+          )}
+        </div>
+
+        {stats.length > 0 && (
+          <div className="flex gap-2 flex-wrap">
+            {stats.map((stat, i) => (
+              <div
+                key={i}
+                className="glass-panel rounded-xl px-4 py-2 text-center min-w-[80px]"
+              >
+                <div className="text-lg font-bold text-white">{stat.value}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider">{stat.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {children}
+    </div>
+  );
+}
+
+// --- Section Header with accent bar ---
+function SectionHeader({ children, color = 'blue', size = 'md', count, className = '' }) {
+  const colorMap = {
+    blue: '#3b82f6',
+    green: '#22c55e',
+    red: '#ef4444',
+    purple: '#a855f7',
+    yellow: '#eab308',
+    gray: '#6b7280',
+    orange: '#f97316',
+  };
+  const sizeClasses = {
+    sm: 'text-sm font-medium',
+    md: 'text-lg font-semibold',
+    lg: 'text-xl font-bold',
+  };
+  return (
+    <h3
+      className={`section-header ${sizeClasses[size]} ${className}`}
+      style={{ '--accent-color': colorMap[color] || color }}
+    >
+      {children}
+      {count !== undefined && (
+        <span className="text-gray-500 font-normal ml-2">({count})</span>
+      )}
+    </h3>
+  );
+}
+
+// --- Card Type Section Header ---
+function TypeSectionHeader({ type, count, className = '' }) {
+  const typeClass = `type-${type.toLowerCase().replace(/\s+/g, '-')}`;
+  return (
+    <div className={`card-type-section pt-3 pb-2 ${typeClass} ${className}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-300">{type}</span>
+        <span className="text-xs text-gray-500">{count}</span>
+      </div>
+    </div>
+  );
+}
+
 function ColorBadge({ colors }) {
   if (!colors || colors.length === 0) {
     return <span className="text-xs bg-gray-600 px-1.5 py-0.5 rounded">C</span>;
@@ -250,7 +402,13 @@ async function apiGet(path, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== null && v !== undefined && v !== '') url.searchParams.set(k, v);
   });
-  const res = await fetch(url);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (networkErr) {
+    console.error(`Network error calling ${path}:`, networkErr);
+    throw new Error(`Network error: Cannot reach server at ${API}. Is the backend running?`);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'API error');
@@ -259,11 +417,17 @@ async function apiGet(path, params = {}) {
 }
 
 async function apiPost(path, body) {
-  const res = await fetch(API + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    console.error(`Network error calling ${path}:`, networkErr);
+    throw new Error(`Network error: Cannot reach server at ${API}. Is the backend running?`);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'API error');
@@ -624,37 +788,45 @@ function CollectionUpload({ onUploaded, collectionCount }) {
 
 function CommanderCard({ commander, onClick, selectable, selected, onToggleCompare }) {
   const hasMatch = commander.match_percentage !== undefined;
+  const colorGlow = getColorGlow(commander.color_identity);
+
   return (
-    <div
-      className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative card-lift ${selected ? 'ring-2 ring-purple-500' : ''}`}
-    >
-      {selectable && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
-          className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all ${
-            selected ? 'bg-purple-500 border-purple-500 text-white' : 'bg-gray-900/70 border-gray-400 text-gray-400 hover:border-purple-400'
-          }`}
-          title={selected ? 'Remove from comparison' : 'Add to comparison'}
-        >
-          {selected ? '✓' : '+'}
-        </button>
-      )}
-      <div onClick={() => onClick?.(commander)}>
-        {commander.image_uri && (
-          <div className="relative">
-            <img
-              src={commander.image_uri}
-              alt={commander.name}
-              className="w-full aspect-[5/7] object-cover"
-              loading="lazy"
-            />
+    <div className="card-3d-wrapper">
+      <div
+        className={`card-3d holo-shine rounded-xl cursor-pointer relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+        style={{
+          '--card-glow-color': colorGlow,
+          boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
+          background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)'
+        }}
+      >
+        {selectable && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
+            className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all backdrop-blur-sm ${
+              selected ? 'bg-purple-500 border-purple-500 text-white scale-110' : 'bg-gray-900/80 border-gray-400 text-gray-400 hover:border-purple-400 hover:scale-105'
+            }`}
+            title={selected ? 'Remove from comparison' : 'Add to comparison'}
+          >
+            {selected ? '✓' : '+'}
+          </button>
+        )}
+        <div onClick={() => onClick?.(commander)} className="overflow-hidden rounded-xl">
+          {commander.image_uri && (
+            <div className="relative">
+              <img
+                src={commander.image_uri}
+                alt={commander.name}
+                className="w-full aspect-[5/7] object-cover"
+                loading="lazy"
+              />
             {hasMatch && (
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-2 pt-6">
-                <div className="flex items-center justify-between">
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-2 pb-2 pt-8">
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-gray-300">
                     {commander.owned_count}/{commander.total_cards}
                   </span>
-                  <span className={`text-sm font-bold ${
+                  <span className={`text-lg font-bold ${
                     commander.match_percentage >= 60 ? 'text-green-400' :
                     commander.match_percentage >= 40 ? 'text-yellow-400' :
                     'text-gray-400'
@@ -676,7 +848,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
             )}
           </div>
           {hasMatch && commander.missing_price > 0 && (
-            <div className="bg-gray-900/60 rounded px-2 py-1 flex items-center justify-between">
+            <div className="bg-gray-900/80 rounded px-2 py-1.5 flex items-center justify-between border border-gray-700/50">
               <span className="text-[10px] text-gray-500 uppercase tracking-wide">To complete</span>
               <span className={`text-sm font-bold ${
                 commander.missing_price < 50 ? 'text-green-400' :
@@ -687,6 +859,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
               </span>
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>
@@ -763,16 +936,24 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
   const sortedResults = sortResults(results, sortBy);
   const compareNames = new Set(compareList.map(c => c.name));
 
+  // Get top 3 commanders for the hero display
+  const topCommanders = sortedResults.slice(0, 3);
+
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Commander Recommendations</h2>
-      <p className="text-gray-400">
-        Based on your collection of {collectionCount} cards, ranked by how many cards
-        you already own in each commander's average EDHREC deck.
-      </p>
+      <PageHero
+        title="Commander Recommendations"
+        subtitle={`Based on your collection of ${collectionCount.toLocaleString()} cards, ranked by how many cards you already own in each commander's average EDHREC deck.`}
+        commanders={topCommanders}
+        stats={fetched ? [
+          { value: results.length, label: 'Commanders Found' },
+          { value: `${Math.max(...results.map(r => r.match_percentage || 0))}%`, label: 'Best Match' },
+          { value: `$${Math.min(...results.filter(r => r.missing_price).map(r => r.missing_price || 999)).toFixed(0)}`, label: 'Cheapest Build' }
+        ] : []}
+      />
 
       {/* Filters */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-4 space-y-4 border border-gray-700/50">
         <div className="flex flex-wrap gap-4 items-end">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Search</label>
@@ -1019,18 +1200,18 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
     <div className="grid md:grid-cols-2 gap-6">
       {showOwned && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-green-400">
-            Owned Cards ({ownedCards.length})
-          </h3>
+          <SectionHeader color="green" count={ownedCards.length}>
+            Owned Cards
+          </SectionHeader>
           {ownedGroups.length === 0 && (
             <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
           )}
           {ownedGroups.map(({ type, cards }) => (
             <div key={type}>
-              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <TypeSectionHeader type={type} count={cards.length} />
               <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
                 {cards.map(card => (
-                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" />
@@ -1053,23 +1234,25 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
 
       {showMissing && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-red-400">
-            Missing Cards ({missingCards.length})
+          <div className="flex items-baseline gap-2">
+            <SectionHeader color="red" count={missingCards.length}>
+              Missing Cards
+            </SectionHeader>
             {totalMissingPrice > 0 && (
-              <span className="text-sm font-normal text-yellow-400 ml-2">
+              <span className="text-sm text-yellow-400">
                 ~${totalMissingPrice.toFixed(2)}
               </span>
             )}
-          </h3>
+          </div>
           {missingGroups.length === 0 && (
             <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
           )}
           {missingGroups.map(({ type, cards }) => (
             <div key={type}>
-              <h4 className="text-sm font-medium text-gray-400 mb-1">{type} ({cards.length})</h4>
+              <TypeSectionHeader type={type} count={cards.length} />
               <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
                 {cards.map(card => (
-                  <div key={card.name} className="px-3 py-2 flex justify-between items-center">
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" />
@@ -1445,15 +1628,13 @@ function DeckBuilder({ data, commander, onBack }) {
   const renderListView = () => (
     <div className="grid md:grid-cols-3 gap-6">
       <div className="md:col-span-2 space-y-4">
-        <h3 className="text-lg font-semibold text-green-400">In Deck ({deckSize})</h3>
+        <SectionHeader color="green" count={deckSize}>In Deck</SectionHeader>
         {includedGroups.map(({ type, cards }) => (
           <div key={type}>
-            <h4 className="text-sm font-medium text-gray-400 mb-1">
-              {type} ({cards.reduce((s, c) => s + c.qty, 0)})
-            </h4>
+            <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} />
             <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
               {cards.map(card => (
-                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
+                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group deck-card-enhanced hover:bg-gray-700/50">
                   <div className="flex items-center gap-2">
                     {card.owned ? (
                       <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
@@ -1461,7 +1642,7 @@ function DeckBuilder({ data, commander, onBack }) {
                       <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
                     )}
                     <CardName name={card.name} className="text-sm" />
-                    {card.isRecommendation && <span className="text-xs text-purple-400">rec</span>}
+                    {card.isRecommendation && <span className="text-xs text-purple-400 bg-purple-900/30 px-1.5 py-0.5 rounded">rec</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     {canHaveMultiple(card.name) ? (
@@ -1494,7 +1675,7 @@ function DeckBuilder({ data, commander, onBack }) {
       </div>
 
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-400">Removed / Available ({excludedCards.length})</h3>
+        <SectionHeader color="gray" count={excludedCards.length}>Removed / Available</SectionHeader>
         <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
           {excludedCards.map(card => (
             <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
@@ -1526,9 +1707,7 @@ function DeckBuilder({ data, commander, onBack }) {
     <div className="space-y-6">
       {includedGroups.map(({ type, cards }) => (
         <div key={type}>
-          <h4 className="text-sm font-medium text-gray-400 mb-2">
-            {type} ({cards.reduce((s, c) => s + c.qty, 0)})
-          </h4>
+          <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} className="mb-2" />
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8 gap-2">
             {cards.map(card => (
               <div key={card.name} className="relative group">
@@ -1587,11 +1766,8 @@ function DeckBuilder({ data, commander, onBack }) {
       const cards = groupMap[type];
       if (!cards || cards.length === 0) return null;
       return (
-        <div>
-          <div className="text-xs font-semibold text-gray-400 border-b border-gray-700 pb-1 mb-1 flex justify-between">
-            <span>{type}</span>
-            <span>Qty: {cards.reduce((s, c) => s + c.qty, 0)}</span>
-          </div>
+        <div key={type}>
+          <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} className="mb-1" />
           <div className="relative">
             {cards.map((card, idx) => (
               <StackCard
@@ -1620,31 +1796,60 @@ function DeckBuilder({ data, commander, onBack }) {
     );
   };
 
+  const colorGlow = getColorGlow(commander.color_identity);
+
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-2xl font-bold">Deck Builder: {commander.name}</h2>
-          <div className="flex items-center gap-4 mt-1 flex-wrap">
-            <p className={`text-sm ${deckSize === 100 ? 'text-green-400' : deckSize > 100 ? 'text-red-400' : 'text-yellow-400'}`}>
-              {deckSize}/100 cards
-            </p>
-            <p className="text-sm">
-              <span className="text-green-400">{ownedCount} owned</span>
-              <span className="text-gray-500 mx-1">|</span>
-              <span className="text-red-400">{neededCount} needed</span>
-            </p>
-            {priceToComplete > 0 && (
-              <p className="text-sm text-yellow-400">
-                ~${priceToComplete.toFixed(2)} to complete
-              </p>
-            )}
+
+      {/* Enhanced header with color glow */}
+      <div
+        className="bg-gray-800/80 rounded-xl p-4 flex items-center justify-between flex-wrap gap-4"
+        style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 4px 20px ${colorGlow}` }}
+      >
+        <div className="flex items-center gap-4">
+          {commander.image_uri && (
+            <img
+              src={commander.image_uri}
+              alt={commander.name}
+              className="w-16 h-auto rounded-lg shadow-lg hidden sm:block"
+              style={{ boxShadow: `0 4px 12px ${colorGlow}` }}
+            />
+          )}
+          <div>
+            <h2 className="text-2xl font-bold flex items-center gap-3">
+              Deck Builder
+              <ColorBadge colors={commander.color_identity} />
+            </h2>
+            <p className="text-gray-400 text-sm">{commander.name}</p>
           </div>
         </div>
+
+        {/* Stats pills */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+            deckSize === 100 ? 'bg-green-900/50 text-green-400 border border-green-700' :
+            deckSize > 100 ? 'bg-red-900/50 text-red-400 border border-red-700' :
+            'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
+          }`}>
+            {deckSize}/100 cards
+          </div>
+          <div className="px-3 py-1.5 rounded-lg text-sm bg-gray-700/50 border border-gray-600">
+            <span className="text-green-400 font-medium">{ownedCount}</span>
+            <span className="text-gray-500 mx-1">/</span>
+            <span className="text-red-400 font-medium">{neededCount}</span>
+            <span className="text-gray-500 ml-1 text-xs">own/need</span>
+          </div>
+          {priceToComplete > 0 && (
+            <div className="px-3 py-1.5 rounded-lg text-sm bg-yellow-900/30 text-yellow-400 border border-yellow-700/50">
+              ~${priceToComplete.toFixed(2)}
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center gap-3">
           {/* View mode toggle */}
-          <div className="flex bg-gray-800 rounded overflow-hidden">
+          <div className="flex bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
             {[
               { id: 'list', label: 'List' },
               { id: 'gallery', label: 'Gallery' },
@@ -1654,14 +1859,14 @@ function DeckBuilder({ data, commander, onBack }) {
                 key={v.id}
                 onClick={() => setViewMode(v.id)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`}
               >
                 {v.label}
               </button>
             ))}
           </div>
-          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-medium">
+          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
         </div>
@@ -1734,38 +1939,77 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
-      <h2 className="text-2xl font-bold">Commander Comparison</h2>
 
-      {/* Summary cards */}
-      <div className={`grid gap-4 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+      {/* Hero header with all commanders */}
+      <PageHero
+        title="Commander Comparison"
+        subtitle={`Comparing ${data.commanders.length} commanders side by side`}
+        commanders={commanders}
+        stats={[
+          { value: data.shared_count, label: 'Shared Cards' },
+          { value: `${Math.max(...data.commanders.map(c => c.match_percentage))}%`, label: 'Best Match' }
+        ]}
+      />
+
+      {/* Summary cards with color glows */}
+      <div className={`grid gap-6 ${data.commanders.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
         {data.commanders.map((cmd, i) => {
           const matchColor = cmd.match_percentage >= 60 ? 'text-green-400' :
             cmd.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
           const orig = commanders[i];
+          const colorGlow = getColorGlow(orig?.color_identity);
           return (
-            <div key={cmd.name} className="bg-gray-800 rounded-lg p-4 space-y-3">
+            <div
+              key={cmd.name}
+              className="relative rounded-xl p-5 space-y-4 overflow-hidden"
+              style={{
+                background: 'linear-gradient(135deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)',
+                boxShadow: `0 8px 32px ${colorGlow}, inset 0 1px 0 rgba(255,255,255,0.05)`
+              }}
+            >
+              {/* Background art */}
               {orig?.image_uri && (
-                <img src={orig.image_uri} alt={cmd.name} className="w-32 rounded-lg mx-auto" />
+                <div className="commander-card-art-bg">
+                  <img src={orig.art_crop || orig.image_uri} alt="" />
+                </div>
               )}
-              <h3
-                className="font-bold text-center cursor-pointer hover:text-blue-400"
-                onClick={() => onSelectCommander(orig || { name: cmd.name })}
-              >
-                {cmd.name}
-              </h3>
-              <div className="text-center">
-                <span className={`text-3xl font-bold ${matchColor}`}>{cmd.match_percentage}%</span>
-                <p className="text-xs text-gray-400 mt-1">{cmd.owned_count}/{cmd.total_cards} owned</p>
-              </div>
-              <MatchBar percentage={cmd.match_percentage} size="lg" />
-              <div className="text-center text-sm">
-                {cmd.missing_price > 0 && (
-                  <span className="text-yellow-400">~${cmd.missing_price.toFixed(2)} to complete</span>
+
+              <div className="relative z-10">
+                {orig?.image_uri && (
+                  <img
+                    src={orig.image_uri}
+                    alt={cmd.name}
+                    className="w-36 rounded-lg mx-auto showcase-card"
+                    style={{ boxShadow: `0 8px 24px ${colorGlow}` }}
+                  />
                 )}
-              </div>
-              <div className="text-center text-xs text-gray-500 space-y-1">
-                <p>{cmd.unique_cards.length} unique cards</p>
-                {cmd.num_decks > 0 && <p>{cmd.num_decks.toLocaleString()} decks</p>}
+                <h3
+                  className="font-bold text-center cursor-pointer hover:text-blue-400 mt-3 text-lg"
+                  onClick={() => onSelectCommander(orig || { name: cmd.name })}
+                >
+                  {cmd.name}
+                </h3>
+                <div className="flex justify-center mt-2">
+                  <ColorBadge colors={orig?.color_identity} />
+                </div>
+                <div className="text-center mt-4">
+                  <span className={`text-4xl font-bold ${matchColor}`}>{cmd.match_percentage}%</span>
+                  <p className="text-xs text-gray-400 mt-1">{cmd.owned_count}/{cmd.total_cards} owned</p>
+                </div>
+                <div className="mt-3">
+                  <MatchBar percentage={cmd.match_percentage} size="lg" />
+                </div>
+                <div className="text-center text-sm mt-3">
+                  {cmd.missing_price > 0 && (
+                    <span className="bg-yellow-900/50 text-yellow-400 px-3 py-1 rounded-full text-xs">
+                      ~${cmd.missing_price.toFixed(2)} to complete
+                    </span>
+                  )}
+                </div>
+                <div className="text-center text-xs text-gray-500 mt-3 space-y-1">
+                  <p>{cmd.unique_cards.length} unique cards</p>
+                  {cmd.num_decks > 0 && <p>{cmd.num_decks.toLocaleString()} decks on EDHREC</p>}
+                </div>
               </div>
             </div>
           );
@@ -1773,10 +2017,10 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
       </div>
 
       {/* Shared cards */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
-        <h3 className="font-semibold text-blue-400">
-          Shared Across All ({data.shared_count} cards)
-        </h3>
+      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-5 space-y-3 border border-gray-700/50">
+        <SectionHeader color="blue" count={data.shared_count}>
+          Shared Across All
+        </SectionHeader>
         <p className="text-xs text-gray-400">Cards that appear in every commander's average deck.</p>
         <div className="flex flex-wrap gap-2">
           {(data.commanders[0]?.shared_cards || []).map(name => (
@@ -1809,6 +2053,16 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
 }
 
 // --- Commander Detail with progressive loading ---
+// Default deck composition values
+const DEFAULT_COMPOSITION = {
+  lands: 38,
+  ramp: 10,
+  cardDraw: 10,
+  removal: 8,
+  synergy: 20,
+  utility: 13
+};
+
 function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder, excludeInDecks }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1825,6 +2079,21 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const [partnerData, setPartnerData] = useState(null);
   const initialFetchDone = useRef(false);
   const currentCommander = useRef(commander.name);
+
+  // Deck composition settings
+  const [showCompositionSettings, setShowCompositionSettings] = useState(false);
+  const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
+  const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
+  const [priorities, setPriorities] = useState({
+    preferOwned: true,
+    budgetConscious: false,
+    includeStaples: true
+  });
+  const [tempPriorities, setTempPriorities] = useState({
+    preferOwned: true,
+    budgetConscious: false,
+    includeStaples: true
+  });
 
   // Reset state when commander changes
   useEffect(() => {
@@ -1982,56 +2251,101 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   else if (recSort === 'synergy_asc') filteredRecs.sort((a, b) => (a.synergy || 0) - (b.synergy || 0));
   else if (recSort === 'inclusion_desc') filteredRecs.sort((a, b) => (b.inclusion || 0) - (a.inclusion || 0));
 
-  return (
-    <div className="space-y-6">
-      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+  // Get the backdrop image - prefer art_crop for wider aspect ratio
+  const backdropImage = commander.art_crop || commander.image_uri;
 
-      {/* Header */}
-      <div className="flex gap-6 items-start">
-        {/* Commander image(s) - tucked layout when partner selected */}
-        {selectedPartner ? (
-          <div className="relative flex-shrink-0" style={{ width: '200px', height: '280px' }}>
-            <img
-              src={selectedPartner.image_uri}
-              alt={selectedPartner.name}
-              className="absolute w-40 rounded-lg shadow-lg"
-              style={{ top: 0, right: 0 }}
-            />
+  return (
+    <div className="relative">
+      {/* Commander backdrop blur effect */}
+      {backdropImage && (
+        <div
+          className="commander-backdrop"
+          style={{ backgroundImage: `url(${backdropImage})` }}
+        />
+      )}
+
+      <div className="relative z-10 space-y-6">
+        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+
+        {/* Header */}
+        <div className="flex gap-6 items-start">
+          {/* Commander image(s) - tucked layout when partner selected */}
+          {selectedPartner ? (
+            <div className="relative flex-shrink-0" style={{ width: '200px', height: '280px' }}>
+              <img
+                src={selectedPartner.image_uri}
+                alt={selectedPartner.name}
+                className="absolute w-40 rounded-lg shadow-lg"
+                style={{ top: 0, right: 0 }}
+              />
+              <img
+                src={commander.image_uri}
+                alt={commander.name}
+                className="absolute w-40 rounded-lg shadow-xl"
+                style={{ bottom: 0, left: 0, zIndex: 1 }}
+              />
+            </div>
+          ) : commander.image_uri ? (
             <img
               src={commander.image_uri}
               alt={commander.name}
-              className="absolute w-40 rounded-lg shadow-xl"
-              style={{ bottom: 0, left: 0, zIndex: 1 }}
+              className="w-48 rounded-lg shadow-lg flex-shrink-0"
+              style={{ boxShadow: `0 8px 32px ${getColorGlow(commander.color_identity)}` }}
             />
-          </div>
-        ) : commander.image_uri ? (
-          <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
-        ) : null}
-        <div className="space-y-3 flex-1">
-          <h2 className="text-3xl font-bold">
-            {commander.name}
-            {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
-          </h2>
-          <ColorBadge colors={combinedColors} />
-          <div className="flex items-baseline gap-4">
-            <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
-            <span className="text-gray-400">
-              {data.owned_count}/{data.total_cards} cards owned
-            </span>
-          </div>
-          <MatchBar percentage={data.match_percentage} size="lg" />
-          <div className="flex gap-4 text-sm">
-            {data.num_decks > 0 && (
-              <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
-            )}
-            {data.total_missing_price > 0 && (
-              <span className="text-yellow-400">
-                ~${data.total_missing_price.toFixed(2)} to complete
+          ) : null}
+          <div className="space-y-3 flex-1">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-3xl font-bold">
+                  {commander.name}
+                  {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
+                </h2>
+                <ColorBadge colors={combinedColors} />
+              </div>
+              <div className="flex items-center gap-3">
+                <a
+                  href={`https://edhrec.com/commanders/${commander.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-gray-300 transition-colors"
+                >
+                  EDHREC
+                </a>
+                <button
+                  onClick={() => {
+                    setTempComposition(composition);
+                    setTempPriorities(priorities);
+                    setShowCompositionSettings(true);
+                  }}
+                  className="p-2 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                  title="Deck Composition Settings"
+                >
+                  <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex items-baseline gap-4">
+              <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
+              <span className="text-gray-400">
+                {data.owned_count}/{data.total_cards} cards owned
               </span>
-            )}
+            </div>
+            <MatchBar percentage={data.match_percentage} size="lg" />
+            <div className="flex gap-4 text-sm">
+              {data.num_decks > 0 && (
+                <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
+              )}
+              {data.total_missing_price > 0 && (
+                <span className="text-yellow-400">
+                  ~${data.total_missing_price.toFixed(2)} to complete
+                </span>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Partner Commander */}
       <PartnerPicker
@@ -2160,10 +2474,10 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       {/* Possible Recommendations */}
       {allRecs.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-purple-400">
-            Possible Recommendations ({filteredRecs.length})
-          </h3>
-          <p className="text-xs text-gray-400">
+          <SectionHeader color="purple" count={filteredRecs.length}>
+            Possible Recommendations
+          </SectionHeader>
+          <p className="text-xs text-gray-400 ml-3">
             Cards with high synergy for this commander that aren't in the average deck.
           </p>
           <div className="flex flex-wrap gap-3 items-center">
@@ -2240,6 +2554,120 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
           </div>
         </div>
       )}
+
+      {/* Deck Composition Settings Modal */}
+      {showCompositionSettings && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-6">Deck Composition Settings</h3>
+
+              {/* Category Sliders */}
+              <div className="space-y-5 mb-6">
+                {[
+                  { key: 'lands', label: 'Lands', icon: '🏔️', min: 30, max: 45 },
+                  { key: 'ramp', label: 'Ramp', icon: '⚡', min: 5, max: 20 },
+                  { key: 'cardDraw', label: 'Card Draw', icon: '📚', min: 5, max: 20 },
+                  { key: 'removal', label: 'Removal', icon: '💀', min: 3, max: 15 },
+                  { key: 'synergy', label: 'Synergy', icon: '✨', min: 10, max: 40 },
+                  { key: 'utility', label: 'Utility', icon: '🔧', min: 5, max: 25 },
+                ].map(({ key, label, icon, min, max }) => (
+                  <div key={key}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-gray-300 flex items-center gap-2">
+                        <span>{icon}</span> {label}
+                      </span>
+                      <span className="text-white font-medium w-8 text-right">{tempComposition[key]}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      value={tempComposition[key]}
+                      onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
+                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                      style={{
+                        background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Total Counter */}
+              <div className="bg-gray-900 rounded-lg p-3 mb-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">Total allocated:</span>
+                  <span className={`font-bold ${
+                    Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
+                      ? 'text-green-400'
+                      : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
+                        ? 'text-red-400'
+                        : 'text-yellow-400'
+                  }`}>
+                    {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
+              </div>
+
+              {/* Priority Toggles */}
+              <div className="mb-6">
+                <h4 className="text-sm font-medium text-gray-400 mb-3">Priorities</h4>
+                <div className="space-y-3">
+                  {[
+                    { key: 'preferOwned', label: 'Prefer cards I own' },
+                    { key: 'budgetConscious', label: 'Budget conscious' },
+                    { key: 'includeStaples', label: 'Include format staples' },
+                  ].map(({ key, label }) => (
+                    <label key={key} className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={tempPriorities[key]}
+                        onChange={(e) => setTempPriorities(prev => ({ ...prev, [key]: e.target.checked }))}
+                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-yellow-500 focus:ring-yellow-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-gray-300">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-gray-700">
+                <button
+                  onClick={() => {
+                    setTempComposition(DEFAULT_COMPOSITION);
+                    setTempPriorities({ preferOwned: true, budgetConscious: false, includeStaples: true });
+                  }}
+                  className="text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Reset to Defaults
+                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowCompositionSettings(false)}
+                    className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      setComposition(tempComposition);
+                      setPriorities(tempPriorities);
+                      setShowCompositionSettings(false);
+                    }}
+                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }
@@ -2444,17 +2872,24 @@ function MyDecks({ onDecksChanged, decksReady }) {
     }
   };
 
+  const deckList = Object.values(decks);
+  const totalCards = deckList.reduce((sum, d) => sum + (d.card_count || 0), 0);
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <h2 className="text-2xl font-bold">My Decks</h2>
-      <p className="text-gray-400">
-        Add your existing deck lists here. Cards committed to decks can be excluded from
-        recommendations so you only see what's actually available.
-      </p>
+    <div className="max-w-4xl mx-auto space-y-6">
+      <PageHero
+        title="My Decks"
+        subtitle="Add your existing deck lists here. Cards committed to decks can be excluded from recommendations so you only see what's actually available."
+        commanders={deckList.filter(d => d.image_uri).slice(0, 3)}
+        stats={deckList.length > 0 ? [
+          { value: deckList.length, label: 'Decks' },
+          { value: totalCards, label: 'Total Cards' }
+        ] : []}
+      />
 
       {/* Add new deck */}
-      <div className="bg-gray-800 rounded-lg p-6 space-y-3">
-        <h3 className="font-semibold text-lg">Add Deck</h3>
+      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-6 space-y-4 border border-gray-700/50">
+        <SectionHeader color="blue">Add New Deck</SectionHeader>
         <div className="flex gap-3">
           <div className="flex-1">
             <label className="block text-xs text-gray-400 mb-1">Deck Name *</label>
@@ -2786,21 +3221,39 @@ function CollectionStats({ collectionCount }) {
   if (!stats) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
-        <div className="text-center py-12 space-y-4">
-          <p className="text-gray-400">
-            Analyze your {collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.
-          </p>
-          <p className="text-xs text-gray-500">
+        <PageHero
+          title="Collection Statistics"
+          subtitle={`Analyze your ${collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.`}
+          colorIdentity={['U', 'R']}
+        >
+          <div className="flex items-center gap-6 mt-6">
+            {/* Decorative mana orbs */}
+            <div className="flex gap-2">
+              {['W', 'U', 'B', 'R', 'G'].map(c => (
+                <div
+                  key={c}
+                  className="mana-orb opacity-50"
+                  style={{
+                    backgroundColor: COLOR_MAP[c]?.bg,
+                    color: COLOR_MAP[c]?.text,
+                    '--orb-color': getColorGlow([c])
+                  }}
+                >
+                  {c}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={loadStats}
+              className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors animated-border"
+            >
+              Load Statistics
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">
             This fetches data from Scryfall and may take a moment for large collections.
           </p>
-          <button
-            onClick={loadStats}
-            className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors"
-          >
-            Load Statistics
-          </button>
-        </div>
+        </PageHero>
       </div>
     );
   }
@@ -2828,27 +3281,17 @@ function CollectionStats({ collectionCount }) {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Collection Statistics</h2>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-stagger">
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-blue-400 number-pop inline-block">{stats.total_unique.toLocaleString()}</span>
-          <p className="text-xs text-gray-500 mt-1">Unique Cards</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-green-400 number-pop inline-block">{stats.total_cards.toLocaleString()}</span>
-          <p className="text-xs text-gray-500 mt-1">Total Cards</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-yellow-400 number-pop inline-block">${stats.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          <p className="text-xs text-gray-500 mt-1">Est. Total Value</p>
-        </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-purple-400 number-pop inline-block">{stats.total_in_decks}</span>
-          <p className="text-xs text-gray-500 mt-1">Cards in Decks</p>
-        </div>
-      </div>
+      <PageHero
+        title="Collection Statistics"
+        subtitle="Your collection at a glance"
+        colorIdentity={['W', 'U', 'B', 'R', 'G']}
+        stats={[
+          { value: stats.total_unique.toLocaleString(), label: 'Unique Cards' },
+          { value: stats.total_cards.toLocaleString(), label: 'Total Cards' },
+          { value: `$${stats.total_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, label: 'Est. Value' },
+          { value: stats.total_in_decks, label: 'In Decks' }
+        ]}
+      />
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Type Distribution */}
@@ -2985,6 +3428,333 @@ function CollectionStats({ collectionCount }) {
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- About Page ---
+function AboutPage() {
+  return (
+    <div className="page-fade-in max-w-4xl mx-auto">
+      <AmbientBackground colorIdentity={['W', 'U', 'B', 'R', 'G']} />
+
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold text-amber-200 mb-2">About MTG Commander Recommender</h1>
+        <p className="text-gray-400">Turn your card collection into your next Commander deck</p>
+        <div className="h-px bg-gradient-to-r from-amber-500/50 to-transparent mt-4" />
+      </div>
+
+      <div className="space-y-8">
+        <section>
+          <h2 className="text-2xl font-bold text-amber-300 mb-4">What is MTG Commander Recommender?</h2>
+          <p className="text-gray-300 leading-relaxed mb-4">
+            MTG Commander Recommender is a free tool designed for Magic: The Gathering players who want to build
+            Commander (EDH) decks using cards they already own.
+          </p>
+          <p className="text-gray-300 leading-relaxed mb-4">
+            Instead of browsing decklists and buying singles, MTG Commander Recommender analyzes your existing
+            collection and recommends commanders that synergize with the cards you have. It's the perfect solution
+            for players looking to:
+          </p>
+          <ul className="list-disc list-inside text-gray-300 space-y-2 ml-4">
+            <li>Build new decks without buying more cards</li>
+            <li>Find unexpected commanders that match their collection</li>
+            <li>Discover synergies they didn't know existed</li>
+            <li>Make the most of their bulk collection</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold text-amber-300 mb-4">How It Works</h2>
+
+          <div className="space-y-6">
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 1: Export Your Collection</h3>
+              <p className="text-gray-300">
+                Export your card collection from popular tools like Archidekt, Moxfield, Manabox, or Dragon Shield.
+                MTG Commander Recommender supports CSV exports and simple card lists.
+              </p>
+            </div>
+
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 2: Paste and Analyze</h3>
+              <p className="text-gray-300">
+                Paste your collection into MTG Commander Recommender. The algorithm compares your cards against
+                the synergy data for over 1,500 commanders.
+              </p>
+            </div>
+
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 3: Get Recommendations</h3>
+              <p className="text-gray-300">
+                See which commanders you can build with your existing cards. View match percentages, estimated
+                costs to complete, and detailed decklists.
+              </p>
+            </div>
+
+            <div className="glass-panel rounded-xl p-5">
+              <h3 className="text-lg font-bold text-white mb-2">Step 4: Build Your Deck</h3>
+              <p className="text-gray-300">
+                Use the deck builder to customize your deck, adjust card counts, and export your final list
+                to your favorite deck building platform.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-2xl font-bold text-amber-300 mb-4">Data Sources</h2>
+          <p className="text-gray-300 leading-relaxed">
+            MTG Commander Recommender uses data from <a href="https://edhrec.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">EDHREC</a> for
+            average decklists and synergy scores, and <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Scryfall</a> for
+            card data and pricing information.
+          </p>
+        </section>
+
+        <section className="glass-panel rounded-xl p-6 text-center">
+          <h2 className="text-xl font-bold text-white mb-2">Ready to Start?</h2>
+          <p className="text-gray-300 mb-4">
+            Upload your collection and discover which commanders are waiting to be built!
+          </p>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// --- Guides Page ---
+function GuidesPage({ onNavigate }) {
+  const [selectedGuide, setSelectedGuide] = useState(null);
+
+  const guides = [
+    {
+      id: 'recommendations',
+      title: 'Reading Your Commander Recommendations',
+      description: 'Learn how to interpret the metrics and choose the best commander for your collection. Understand Match Percentage, synergy scores, and how to evaluate your options.',
+      readTime: '5 min read',
+      content: (
+        <div className="space-y-6">
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Understanding Match Percentage</h3>
+            <p className="text-gray-300 mb-4">
+              The match percentage shows how many cards from the average EDHREC decklist you already own.
+              A higher percentage means you can build the deck with fewer purchases.
+            </p>
+            <ul className="list-disc list-inside text-gray-300 space-y-2 ml-4">
+              <li><span className="text-green-400">60%+</span> - Excellent match, very few cards needed</li>
+              <li><span className="text-yellow-400">40-59%</span> - Good match, moderate investment needed</li>
+              <li><span className="text-gray-400">Below 40%</span> - Lower match, more cards to acquire</li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Cost to Complete</h3>
+            <p className="text-gray-300 mb-4">
+              This shows the estimated cost of cards you're missing based on current Scryfall prices.
+              Use this to find budget-friendly options or identify expensive staples you might want to proxy.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Filtering and Sorting</h3>
+            <p className="text-gray-300 mb-4">
+              Use the color filters to narrow down by color identity. Sort by match percentage to find
+              your best options, or by price to find the cheapest decks to complete.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Comparing Commanders</h3>
+            <p className="text-gray-300">
+              Can't decide between commanders? Use the compare feature to see them side by side.
+              Select 2-3 commanders and compare their card overlap, unique cards, and completion costs.
+            </p>
+          </section>
+        </div>
+      )
+    },
+    {
+      id: 'exporting',
+      title: 'Exporting Your Collection: Step-by-Step Guide',
+      description: 'Detailed instructions for exporting your card collection from popular platforms like Archidekt, Moxfield, Manabox, and Dragon Shield Scanner.',
+      readTime: '7 min read',
+      content: (
+        <div className="space-y-6">
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Moxfield</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Go to your collection page on Moxfield</li>
+              <li>Click the "Export" button (download icon)</li>
+              <li>Select "CSV" format</li>
+              <li>Copy the contents or download the file</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Archidekt</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Navigate to your collection</li>
+              <li>Click "Export" in the menu</li>
+              <li>Choose "Text" or "CSV" format</li>
+              <li>Copy the exported list</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Manabox</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Open Manabox app and go to your collection</li>
+              <li>Tap the share/export button</li>
+              <li>Select "Export as CSV" or "Plain text"</li>
+              <li>Copy or share the exported list</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">From Dragon Shield Scanner</h3>
+            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
+              <li>Open Dragon Shield app</li>
+              <li>Go to your collection folder</li>
+              <li>Tap "Export" or the share icon</li>
+              <li>Choose CSV or text format</li>
+              <li>Paste into MTG Commander Recommender</li>
+            </ol>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Simple Card List</h3>
+            <p className="text-gray-300 mb-4">
+              You can also paste a simple list with one card per line. Quantities are optional:
+            </p>
+            <pre className="bg-gray-800 rounded p-4 text-sm text-gray-300 font-mono">
+{`4 Lightning Bolt
+2 Counterspell
+Sol Ring
+Arcane Signet`}
+            </pre>
+          </section>
+        </div>
+      )
+    },
+    {
+      id: 'deckbuilder',
+      title: 'Using the Deck Builder',
+      description: 'Learn how to customize your deck, adjust card counts, add lands, and export your finished decklist.',
+      readTime: '4 min read',
+      content: (
+        <div className="space-y-6">
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Starting a Build</h3>
+            <p className="text-gray-300 mb-4">
+              From the commander detail page, click "Open in Deck Builder" to start customizing your deck.
+              The builder will pre-populate with the average decklist, highlighting cards you own.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Adding and Removing Cards</h3>
+            <p className="text-gray-300 mb-4">
+              Click cards to toggle them in/out of your deck. The card counter at the top shows your
+              current total. Commander decks need exactly 100 cards (including your commander).
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">View Modes</h3>
+            <p className="text-gray-300 mb-4">
+              Switch between Grid view (visual) and Stacks view (organized by type) to see your deck
+              from different perspectives. Use the mana curve chart to balance your deck's costs.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-xl font-bold text-amber-300 mb-3">Exporting Your Deck</h3>
+            <p className="text-gray-300">
+              When you're done, use the Export button to copy your decklist. You can import this into
+              Moxfield, Archidekt, or any other deck building platform.
+            </p>
+          </section>
+        </div>
+      )
+    }
+  ];
+
+  if (selectedGuide) {
+    const guide = guides.find(g => g.id === selectedGuide);
+    return (
+      <div className="page-fade-in max-w-4xl mx-auto">
+        <AmbientBackground colorIdentity={['U', 'G']} />
+
+        <button
+          onClick={() => setSelectedGuide(null)}
+          className="text-blue-400 hover:text-blue-300 mb-6 flex items-center gap-2"
+        >
+          <span>←</span> Back to Guides
+        </button>
+
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-amber-200 mb-2">{guide.title}</h1>
+          <p className="text-gray-500 text-sm">{guide.readTime}</p>
+        </div>
+
+        <div className="glass-panel rounded-xl p-6">
+          {guide.content}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-fade-in max-w-5xl mx-auto">
+      <AmbientBackground colorIdentity={['U', 'G']} />
+
+      {/* Hero Section */}
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold text-amber-200 mb-4">Commander Deck Building Guides</h1>
+        <p className="text-gray-400 max-w-2xl mx-auto">
+          Learn everything you need to know about building Commander decks,
+          understanding your recommendations, and making the most of MTG Commander Recommender.
+        </p>
+      </div>
+
+      {/* Guide Cards */}
+      <div className="grid md:grid-cols-2 gap-6 mb-12">
+        {guides.map(guide => (
+          <button
+            key={guide.id}
+            onClick={() => setSelectedGuide(guide.id)}
+            className="glass-panel rounded-xl p-6 text-left hover:bg-gray-800/50 transition-colors group"
+          >
+            <h2 className="text-xl font-bold text-white mb-3 group-hover:text-amber-200 transition-colors">
+              {guide.title}
+            </h2>
+            <p className="text-gray-400 text-sm mb-4 leading-relaxed">
+              {guide.description}
+            </p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500">{guide.readTime}</span>
+              <span className="text-blue-400 text-sm group-hover:translate-x-1 transition-transform">
+                Read →
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Help Section */}
+      <div className="glass-panel rounded-xl p-8 text-center">
+        <h2 className="text-2xl font-bold text-white mb-3">Need More Help?</h2>
+        <p className="text-gray-400">
+          Have questions that aren't covered in our guides?{' '}
+          <button onClick={() => onNavigate('about')} className="text-blue-400 hover:underline">
+            Visit our About page
+          </button>{' '}
+          to learn more about MTG Commander Recommender.
+        </p>
       </div>
     </div>
   );
@@ -3168,7 +3938,27 @@ function App() {
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
+          <div className="flex items-center gap-8">
+            <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
+            <nav className="flex items-center gap-6">
+              <button
+                onClick={() => setTab('guides')}
+                className={`text-sm font-medium transition-colors ${
+                  tab === 'guides' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                Guides
+              </button>
+              <button
+                onClick={() => setTab('about')}
+                className={`text-sm font-medium transition-colors ${
+                  tab === 'about' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                About
+              </button>
+            </nav>
+          </div>
           <div className="flex items-center gap-4">
             {collectionCount > 0 && (
               <span className="text-sm text-gray-400">
@@ -3328,6 +4118,18 @@ function App() {
               onBack={() => setTab('recommend')}
               onSelectCommander={handleSelectCommander}
             />
+          </div>
+        )}
+
+        {tab === 'about' && (
+          <div className="page-fade-in">
+            <AboutPage />
+          </div>
+        )}
+
+        {tab === 'guides' && (
+          <div className="page-fade-in">
+            <GuidesPage onNavigate={setTab} />
           </div>
         )}
       </main>
