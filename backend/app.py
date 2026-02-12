@@ -1611,29 +1611,8 @@ async def get_commander_detail(
     include_prices: bool = True,
     exclude_in_decks: bool = False,
     partner: Optional[str] = None,
-    # Deck composition targets (JSON-encoded)
-    composition: Optional[str] = None,
-    # Priority flags (JSON-encoded)
-    priorities: Optional[str] = None,
 ):
     """Get commander average deck from EDHREC, compare with collection, categorize by type."""
-    # Parse composition targets
-    default_composition = {"lands": 38, "ramp": 10, "cardDraw": 10, "removal": 8, "synergy": 20, "utility": 13}
-    comp_targets = default_composition
-    if composition:
-        try:
-            comp_targets = {**default_composition, **json.loads(composition)}
-        except (ValueError, TypeError):
-            pass
-
-    # Parse priority flags
-    default_priorities = {"preferOwned": True, "budgetConscious": False, "includeStaples": True}
-    priority_flags = default_priorities
-    if priorities:
-        try:
-            priority_flags = {**default_priorities, **json.loads(priorities)}
-        except (ValueError, TypeError):
-            pass
     # For DFCs, use only the front face name for EDHREC lookups
     front_face = commander_name.split("//")[0].strip()
 
@@ -1800,15 +1779,6 @@ async def get_commander_detail(
             r["cmc"] = minfo.get("cmc", 0)
             r["mana_cost"] = minfo.get("mana_cost", "")
 
-    # Fetch prices for non-owned recommendations (for budget priority)
-    if priority_flags.get("budgetConscious"):
-        unpriced_rec_names = [r["name"] for r in recommendations if not r.get("owned")]
-        if unpriced_rec_names:
-            rec_prices = fetch_prices_bulk(unpriced_rec_names)
-            for r in recommendations:
-                if not r.get("owned") and not r.get("price"):
-                    r["price"] = rec_prices.get(r["name_normalized"], 0)
-
     # --- Functional category classification ---
     # Apply to owned + missing (the average deck cards)
     for card in owned + missing:
@@ -1822,59 +1792,8 @@ async def get_commander_detail(
             r["name_normalized"], r.get("card_type", ""), type_data,
         )
 
-    # --- Composition analysis: actual counts vs targets ---
-    category_counts = {k: 0 for k in comp_targets}
-    for card in owned + missing:
-        cat = card.get("functional_category", "utility")
-        if cat in category_counts:
-            category_counts[cat] += 1
-
-    composition_analysis = {}
-    for cat, target in comp_targets.items():
-        actual = category_counts.get(cat, 0)
-        composition_analysis[cat] = {
-            "target": target,
-            "actual": actual,
-            "diff": actual - target,
-        }
-
-    # --- Reorder recommendations based on composition gaps + priorities ---
-    # Categories where the deck is short get a boost
-    category_need = {}
-    for cat, info in composition_analysis.items():
-        # Negative diff means we need more of this category
-        category_need[cat] = max(0, -info["diff"])
-
-    max_need = max(category_need.values()) if category_need else 1
-
-    for r in recommendations:
-        score = r.get("synergy", 0)
-        cat = r.get("functional_category", "utility")
-        # Boost score for categories the deck is short on (up to +0.5 bonus)
-        need = category_need.get(cat, 0)
-        if max_need > 0:
-            score += 0.5 * (need / max_need)
-        # Priority: prefer owned cards
-        if priority_flags.get("preferOwned") and r.get("owned"):
-            score += 0.3
-        # Priority: budget conscious (penalize expensive cards)
-        if priority_flags.get("budgetConscious"):
-            price = r.get("price", 0) or 0
-            if price > 20:
-                score -= 0.3
-            elif price > 10:
-                score -= 0.15
-        # Priority: include format staples (boost high-inclusion cards)
-        if priority_flags.get("includeStaples"):
-            inclusion = r.get("inclusion", 0)
-            if inclusion and inclusion > 40:
-                score += 0.15
-        r["_sort_score"] = score
-
-    recommendations.sort(key=lambda r: r.get("_sort_score", 0), reverse=True)
-    # Clean up internal sort key
-    for r in recommendations:
-        r.pop("_sort_score", None)
+    # Sort recommendations by synergy descending
+    recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
 
     return {
         "commander": data["commander"],
@@ -1888,7 +1807,6 @@ async def get_commander_detail(
         "owned_cards": owned,
         "missing_cards": missing,
         "recommendations": recommendations,
-        "composition_analysis": composition_analysis,
         "error": data.get("error"),
     }
 

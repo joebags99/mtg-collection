@@ -1564,6 +1564,11 @@ function DeckBuilder({ data, commander, onBack }) {
   const [exportText, setExportText] = useState('');
   const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
 
+  // Deck composition settings
+  const [showCompositionSettings, setShowCompositionSettings] = useState(false);
+  const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
+  const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
+
   // Initialize with avg deck
   useEffect(() => {
     if (data) {
@@ -1575,6 +1580,7 @@ function DeckBuilder({ data, commander, onBack }) {
       const recCards = (data.recommendations || []).map(c => ({
         name: c.name,
         card_type: c.card_type || 'Other',
+        functional_category: c.functional_category || 'utility',
         owned: c.owned,
         synergy: c.synergy,
         cmc: c.cmc || 0,
@@ -1597,6 +1603,59 @@ function DeckBuilder({ data, commander, onBack }) {
   const priceToComplete = includedCards
     .filter(c => !c.owned && c.price)
     .reduce((sum, c) => sum + (c.price * c.qty), 0);
+
+  // Composition analysis: actual counts vs targets per functional category
+  const CATEGORY_META = [
+    { key: 'lands', label: 'Lands', color: 'bg-amber-500' },
+    { key: 'ramp', label: 'Ramp', color: 'bg-green-500' },
+    { key: 'cardDraw', label: 'Draw', color: 'bg-blue-500' },
+    { key: 'removal', label: 'Removal', color: 'bg-red-500' },
+    { key: 'synergy', label: 'Synergy', color: 'bg-purple-500' },
+    { key: 'utility', label: 'Utility', color: 'bg-gray-400' },
+  ];
+
+  const categoryCounts = {};
+  for (const cat of CATEGORY_META) categoryCounts[cat.key] = 0;
+  for (const c of includedCards) {
+    const fc = c.functional_category || 'utility';
+    if (fc in categoryCounts) categoryCounts[fc] += c.qty;
+  }
+
+  // Build swap suggestions: for over-target categories, find lowest-synergy included cards to cut;
+  // for under-target categories, find highest-synergy excluded cards to add
+  const swapSuggestions = [];
+  const overCategories = CATEGORY_META.filter(m => categoryCounts[m.key] > composition[m.key]);
+  const underCategories = CATEGORY_META.filter(m => categoryCounts[m.key] < composition[m.key]);
+
+  if (overCategories.length > 0 && underCategories.length > 0) {
+    // Find removable cards from over-represented categories (lowest synergy first)
+    const removable = [];
+    for (const over of overCategories) {
+      const excess = categoryCounts[over.key] - composition[over.key];
+      const candidates = includedCards
+        .filter(c => (c.functional_category || 'utility') === over.key)
+        .sort((a, b) => (a.synergy || 0) - (b.synergy || 0))
+        .slice(0, excess);
+      for (const c of candidates) removable.push({ ...c, fromCategory: over.label });
+    }
+
+    // Find addable cards from excluded list for under-represented categories (highest synergy first)
+    const addable = [];
+    for (const under of underCategories) {
+      const deficit = composition[under.key] - categoryCounts[under.key];
+      const candidates = excludedCards
+        .filter(c => (c.functional_category || 'utility') === under.key)
+        .sort((a, b) => (b.synergy || 0) - (a.synergy || 0))
+        .slice(0, deficit);
+      for (const c of candidates) addable.push({ ...c, toCategory: under.label });
+    }
+
+    // Pair them up: each swap is "remove X, add Y"
+    const pairCount = Math.min(removable.length, addable.length, 5);
+    for (let i = 0; i < pairCount; i++) {
+      swapSuggestions.push({ remove: removable[i], add: addable[i] });
+    }
+  }
 
   const toggle = (name) => {
     setDeck(prev => prev.map(c =>
@@ -1863,6 +1922,16 @@ function DeckBuilder({ data, commander, onBack }) {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => { setTempComposition(composition); setShowCompositionSettings(true); }}
+            className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+            title="Deck Composition Settings"
+          >
+            <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
           <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
@@ -1893,9 +1962,152 @@ function DeckBuilder({ data, commander, onBack }) {
         <DeckStats cards={includedCards} />
       </div>
 
+      {/* Composition Analysis Panel */}
+      <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
+          <button
+            onClick={() => { setTempComposition(composition); setShowCompositionSettings(true); }}
+            className="text-xs text-gray-400 hover:text-white transition-colors"
+          >
+            Edit Targets
+          </button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {CATEGORY_META.map(({ key, label, color }) => {
+            const actual = categoryCounts[key];
+            const target = composition[key];
+            const diff = actual - target;
+            const pct = Math.min(100, Math.round((actual / Math.max(target, 1)) * 100));
+            return (
+              <div key={key} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-400">{label}</span>
+                  <span className={diff === 0 ? 'text-green-400' : diff > 0 ? 'text-yellow-400' : 'text-red-400'}>
+                    {actual}/{target}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${diff === 0 ? 'bg-green-500' : diff > 0 ? 'bg-yellow-500' : color}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                {diff !== 0 && (
+                  <p className="text-[10px] text-gray-500">
+                    {diff > 0 ? `${diff} over` : `${-diff} short`}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Swap Suggestions */}
+        {swapSuggestions.length > 0 && (
+          <div className="border-t border-gray-700/50 pt-3 space-y-2">
+            <h4 className="text-xs font-medium text-gray-400">Suggested Swaps</h4>
+            {swapSuggestions.map((swap, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs bg-gray-900/50 rounded-lg px-3 py-2">
+                <button
+                  onClick={() => { toggle(swap.remove.name); toggle(swap.add.name); }}
+                  className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-[10px] font-medium transition-colors flex-shrink-0"
+                >
+                  Swap
+                </button>
+                <span className="text-red-400 truncate" title={swap.remove.name}>
+                  - {swap.remove.name}
+                </span>
+                <span className="text-gray-500 flex-shrink-0 text-[10px]">({swap.remove.fromCategory})</span>
+                <svg className="w-3 h-3 text-gray-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+                <span className="text-green-400 truncate" title={swap.add.name}>
+                  + {swap.add.name}
+                </span>
+                <span className="text-gray-500 flex-shrink-0 text-[10px]">({swap.add.toCategory})</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {viewMode === 'list' && renderListView()}
       {viewMode === 'gallery' && renderGalleryView()}
       {viewMode === 'stacks' && renderStacksView()}
+
+      {/* Deck Composition Settings Modal */}
+      {showCompositionSettings && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-6">Deck Composition Targets</h3>
+              <div className="space-y-5 mb-6">
+                {CATEGORY_META.map(({ key, label }) => {
+                  const min = key === 'lands' ? 30 : key === 'synergy' ? 10 : key === 'removal' ? 3 : 5;
+                  const max = key === 'lands' ? 45 : key === 'synergy' ? 40 : key === 'utility' ? 25 : 20;
+                  return (
+                    <div key={key}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-gray-300">{label}</span>
+                        <span className="text-white font-medium w-8 text-right">{tempComposition[key]}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        value={tempComposition[key]}
+                        onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
+                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="bg-gray-900 rounded-lg p-3 mb-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">Total allocated:</span>
+                  <span className={`font-bold ${
+                    Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
+                      ? 'text-green-400'
+                      : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
+                        ? 'text-red-400'
+                        : 'text-yellow-400'
+                  }`}>
+                    {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
+              </div>
+              <div className="flex items-center justify-between pt-4 border-t border-gray-700">
+                <button
+                  onClick={() => setTempComposition(DEFAULT_COMPOSITION)}
+                  className="text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Reset to Defaults
+                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowCompositionSettings(false)}
+                    className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => { setComposition(tempComposition); setShowCompositionSettings(false); }}
+                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2077,21 +2289,6 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const initialFetchDone = useRef(false);
   const currentCommander = useRef(commander.name);
 
-  // Deck composition settings
-  const [showCompositionSettings, setShowCompositionSettings] = useState(false);
-  const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
-  const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
-  const [priorities, setPriorities] = useState({
-    preferOwned: true,
-    budgetConscious: false,
-    includeStaples: true
-  });
-  const [tempPriorities, setTempPriorities] = useState({
-    preferOwned: true,
-    budgetConscious: false,
-    includeStaples: true
-  });
-
   // Reset state when commander changes
   useEffect(() => {
     if (currentCommander.current !== commander.name) {
@@ -2129,7 +2326,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
 
       // Now fetch EDHREC data (with partner if found)
       try {
-        const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null, composition: JSON.stringify(composition), priorities: JSON.stringify(priorities) };
+        const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
         if (partner) params.partner = partner.name;
         const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
         setData(d);
@@ -2147,7 +2344,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     setLoading(true);
     setError('');
     try {
-      const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null, composition: JSON.stringify(composition), priorities: JSON.stringify(priorities) };
+      const params = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
       const p = partnerOverride !== undefined ? partnerOverride : selectedPartner;
       if (p) params.partner = p.name;
       const d = await apiGet(`/api/commander/${encodeURIComponent(commander.name)}`, params);
@@ -2156,20 +2353,17 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       setError(err.message);
     }
     setLoading(false);
-  }, [commander.name, budget, theme, excludeInDecks, selectedPartner, composition, priorities]);
+  }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
 
-  // Refetch when filters or composition settings change (but not on initial mount)
-  const prevFilters = useRef({ budget: '', theme: '', composition: JSON.stringify(DEFAULT_COMPOSITION), priorities: JSON.stringify({ preferOwned: true, budgetConscious: false, includeStaples: true }) });
+  // Refetch when filters change (but not on initial mount)
+  const prevFilters = useRef({ budget: '', theme: '' });
   useEffect(() => {
     if (!initialFetchDone.current || !data) return;
-    const compStr = JSON.stringify(composition);
-    const prioStr = JSON.stringify(priorities);
-    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme
-        || prevFilters.current.composition !== compStr || prevFilters.current.priorities !== prioStr) {
-      prevFilters.current = { budget, theme, composition: compStr, priorities: prioStr };
+    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme) {
+      prevFilters.current = { budget, theme };
       fetchDetail();
     }
-  }, [budget, theme, composition, priorities, data, fetchDetail]);
+  }, [budget, theme, data, fetchDetail]);
 
   // Handle partner selection changes from PartnerPicker
   const handlePartnerChange = useCallback((newPartner) => {
@@ -2311,20 +2505,6 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
                 >
                   EDHREC
                 </a>
-                <button
-                  onClick={() => {
-                    setTempComposition(composition);
-                    setTempPriorities(priorities);
-                    setShowCompositionSettings(true);
-                  }}
-                  className="p-2 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
-                  title="Deck Composition Settings"
-                >
-                  <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </button>
               </div>
             </div>
             <div className="flex items-baseline gap-4">
@@ -2555,118 +2735,6 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
         </div>
       )}
 
-      {/* Deck Composition Settings Modal */}
-      {showCompositionSettings && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <h3 className="text-xl font-bold text-white mb-6">Deck Composition Settings</h3>
-
-              {/* Category Sliders */}
-              <div className="space-y-5 mb-6">
-                {[
-                  { key: 'lands', label: 'Lands', icon: '🏔️', min: 30, max: 45 },
-                  { key: 'ramp', label: 'Ramp', icon: '⚡', min: 5, max: 20 },
-                  { key: 'cardDraw', label: 'Card Draw', icon: '📚', min: 5, max: 20 },
-                  { key: 'removal', label: 'Removal', icon: '💀', min: 3, max: 15 },
-                  { key: 'synergy', label: 'Synergy', icon: '✨', min: 10, max: 40 },
-                  { key: 'utility', label: 'Utility', icon: '🔧', min: 5, max: 25 },
-                ].map(({ key, label, icon, min, max }) => (
-                  <div key={key}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-gray-300 flex items-center gap-2">
-                        <span>{icon}</span> {label}
-                      </span>
-                      <span className="text-white font-medium w-8 text-right">{tempComposition[key]}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={min}
-                      max={max}
-                      value={tempComposition[key]}
-                      onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
-                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                      style={{
-                        background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {/* Total Counter */}
-              <div className="bg-gray-900 rounded-lg p-3 mb-6">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Total allocated:</span>
-                  <span className={`font-bold ${
-                    Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
-                      ? 'text-green-400'
-                      : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
-                        ? 'text-red-400'
-                        : 'text-yellow-400'
-                  }`}>
-                    {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
-                  </span>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
-              </div>
-
-              {/* Priority Toggles */}
-              <div className="mb-6">
-                <h4 className="text-sm font-medium text-gray-400 mb-3">Priorities</h4>
-                <div className="space-y-3">
-                  {[
-                    { key: 'preferOwned', label: 'Prefer cards I own' },
-                    { key: 'budgetConscious', label: 'Budget conscious' },
-                    { key: 'includeStaples', label: 'Include format staples' },
-                  ].map(({ key, label }) => (
-                    <label key={key} className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={tempPriorities[key]}
-                        onChange={(e) => setTempPriorities(prev => ({ ...prev, [key]: e.target.checked }))}
-                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-yellow-500 focus:ring-yellow-500 focus:ring-offset-gray-800"
-                      />
-                      <span className="text-gray-300">{label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-4 border-t border-gray-700">
-                <button
-                  onClick={() => {
-                    setTempComposition(DEFAULT_COMPOSITION);
-                    setTempPriorities({ preferOwned: true, budgetConscious: false, includeStaples: true });
-                  }}
-                  className="text-sm text-gray-400 hover:text-white transition-colors"
-                >
-                  Reset to Defaults
-                </button>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowCompositionSettings(false)}
-                    className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      setComposition(tempComposition);
-                      setPriorities(tempPriorities);
-                      setShowCompositionSettings(false);
-                    }}
-                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       </div>
     </div>
   );
