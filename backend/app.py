@@ -811,10 +811,13 @@ scryfall_mana_cache = {}  # {card_name: {"cmc": float, "mana_cost": str}}
 def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
     """Fetch cmc and mana_cost from Scryfall collection endpoint."""
     result = {}
-    uncached = [n for n in card_names if n not in scryfall_mana_cache]
+    # Normalize names for consistent cache lookups
+    name_to_normalized = {n: normalize_card_name(n) for n in card_names}
+    uncached = [n for n in card_names if name_to_normalized[n] not in scryfall_mana_cache]
     for n in card_names:
-        if n in scryfall_mana_cache:
-            result[n] = scryfall_mana_cache[n]
+        norm = name_to_normalized[n]
+        if norm in scryfall_mana_cache:
+            result[norm] = scryfall_mana_cache[norm]
 
     for i in range(0, len(uncached), 75):
         batch = uncached[i:i+75]

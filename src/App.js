@@ -1559,6 +1559,61 @@ function DeckStats({ cards }) {
   );
 }
 
+// Client-side functional category classification
+// Uses card_type as primary signal, with name-based heuristics for ramp/draw/removal
+const RAMP_NAMES = new Set([
+  'sol ring', 'mana crypt', 'mana vault', 'arcane signet', 'mind stone', 'thought vessel',
+  'fellwar stone', 'commander\'s sphere', 'chromatic lantern', 'gilded lotus',
+  'thran dynamo', 'worn powerstone', 'hedron archive', 'dreamstone hedron',
+  'cultivate', 'kodama\'s reach', 'farseek', 'rampant growth', 'nature\'s lore',
+  'three visits', 'skyshroud claim', 'explosive vegetation', 'migration path',
+  'sakura-tribe elder', 'birds of paradise', 'llanowar elves', 'elvish mystic',
+  'fyndhorn elves', 'avacyn\'s pilgrim', 'bloom tender', 'priest of titania',
+  'dark ritual', 'cabal ritual', 'dockside extortionist',
+  'signets', 'talismans',  // partial matches handled below
+]);
+
+const DRAW_NAMES = new Set([
+  'rhystic study', 'mystic remora', 'phyrexian arena', 'sylvan library', 'necropotence',
+  'harmonize', 'read the bones', 'night\'s whisper', 'sign in blood', 'painful truths',
+  'brainstorm', 'ponder', 'preordain', 'windfall', 'wheel of fortune', 'treasure cruise',
+  'dig through time', 'fact or fiction', 'blue sun\'s zenith', 'pull from tomorrow',
+  'consecrated sphinx', 'esper sentinel', 'archivist of oghma', 'beast whisperer',
+  'guardian project', 'the great henge', 'skullclamp', 'mask of memory',
+]);
+
+const REMOVAL_NAMES = new Set([
+  'swords to plowshares', 'path to exile', 'beast within', 'chaos warp', 'generous gift',
+  'assassin\'s trophy', 'anguished unmaking', 'vindicate', 'mortify', 'putrefy',
+  'counterspell', 'swan song', 'negate', 'dovin\'s veto', 'mana drain', 'force of will',
+  'force of negation', 'fierce guardianship', 'pact of negation', 'arcane denial',
+  'cyclonic rift', 'toxic deluge', 'wrath of god', 'damnation', 'blasphemous act',
+  'farewell', 'vandalblast', 'return to dust', 'krosan grip', 'nature\'s claim',
+  'go for the throat', 'terminate', 'reality shift', 'rapid hybridization', 'pongify',
+  'despark', 'abrupt decay', 'heroic intervention',
+]);
+
+function classifyFunctionalCategory(card) {
+  // Use backend classification if available
+  if (card.functional_category && card.functional_category !== 'utility') {
+    return card.functional_category;
+  }
+  // Client-side fallback using card_type + name heuristics
+  const ct = (card.card_type || '').toLowerCase();
+  if (ct === 'land') return 'lands';
+
+  const name = (card.name || '').toLowerCase();
+  if (RAMP_NAMES.has(name) || name.includes('signet') || name.includes('talisman')) return 'ramp';
+  if (DRAW_NAMES.has(name)) return 'cardDraw';
+  if (REMOVAL_NAMES.has(name)) return 'removal';
+
+  // Use backend value if it was set (including 'utility')
+  return card.functional_category || 'utility';
+}
+
+// Basic lands for each color identity
+const COLOR_TO_BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
@@ -1569,29 +1624,67 @@ function DeckBuilder({ data, commander, onBack }) {
   const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
   const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
 
-  // Initialize with avg deck
+  // Initialize with avg deck + classify cards + auto-fill basic lands
   useEffect(() => {
     if (data) {
-      const initial = [...data.owned_cards, ...data.missing_cards].map(c => ({
-        ...c,
-        included: true,
-        qty: 1,
-      }));
-      const recCards = (data.recommendations || []).map(c => ({
-        name: c.name,
-        card_type: c.card_type || 'Other',
-        functional_category: c.functional_category || 'utility',
-        owned: c.owned,
-        synergy: c.synergy,
-        cmc: c.cmc || 0,
-        mana_cost: c.mana_cost || '',
-        included: false,
-        isRecommendation: true,
-        qty: 1,
-      }));
-      setDeck([...initial, ...recCards]);
+      const initial = [...data.owned_cards, ...data.missing_cards].map(c => {
+        const card = { ...c, included: true, qty: 1 };
+        card.functional_category = classifyFunctionalCategory(card);
+        return card;
+      });
+      const recCards = (data.recommendations || []).map(c => {
+        const card = {
+          name: c.name,
+          card_type: c.card_type || 'Other',
+          functional_category: c.functional_category || 'utility',
+          owned: c.owned,
+          synergy: c.synergy,
+          cmc: c.cmc || 0,
+          mana_cost: c.mana_cost || '',
+          included: false,
+          isRecommendation: true,
+          qty: 1,
+        };
+        card.functional_category = classifyFunctionalCategory(card);
+        return card;
+      });
+
+      // Auto-fill basic lands to reach the land target
+      const currentLands = initial.filter(c => c.functional_category === 'lands' && c.included).length;
+      const landTarget = DEFAULT_COMPOSITION.lands;
+      const landDeficit = Math.max(0, landTarget - currentLands);
+      const colors = commander.color_identity || [];
+      const basics = colors.length > 0
+        ? colors.filter(c => COLOR_TO_BASICS[c]).map(c => COLOR_TO_BASICS[c])
+        : ['Wastes'];
+
+      const basicLandCards = [];
+      if (landDeficit > 0 && basics.length > 0) {
+        // Distribute evenly across available basic land types
+        const perType = Math.floor(landDeficit / basics.length);
+        const remainder = landDeficit % basics.length;
+        basics.forEach((basicName, i) => {
+          const qty = perType + (i < remainder ? 1 : 0);
+          if (qty > 0) {
+            basicLandCards.push({
+              name: basicName,
+              name_normalized: basicName.toLowerCase(),
+              card_type: 'Land',
+              functional_category: 'lands',
+              owned: true,
+              isBasicLand: true,
+              included: true,
+              qty,
+              cmc: 0,
+              mana_cost: '',
+            });
+          }
+        });
+      }
+
+      setDeck([...initial, ...basicLandCards, ...recCards]);
     }
-  }, [data]);
+  }, [data, commander.color_identity]);
 
   const includedCards = deck.filter(c => c.included);
   const excludedCards = deck.filter(c => !c.included);
@@ -1617,35 +1710,59 @@ function DeckBuilder({ data, commander, onBack }) {
   const categoryCounts = {};
   for (const cat of CATEGORY_META) categoryCounts[cat.key] = 0;
   for (const c of includedCards) {
-    const fc = c.functional_category || 'utility';
+    const fc = classifyFunctionalCategory(c);
     if (fc in categoryCounts) categoryCounts[fc] += c.qty;
   }
 
-  // Build swap suggestions: for over-target categories, find lowest-synergy included cards to cut;
-  // for under-target categories, find highest-synergy excluded cards to add
+  // Build swap suggestions: for over-target categories, find cards to cut;
+  // for under-target categories, find cards from excluded list to add.
+  // Removal priority: basic lands first, then unowned, then most expensive, then lowest synergy.
   const swapSuggestions = [];
   const overCategories = CATEGORY_META.filter(m => categoryCounts[m.key] > composition[m.key]);
   const underCategories = CATEGORY_META.filter(m => categoryCounts[m.key] < composition[m.key]);
 
   if (overCategories.length > 0 && underCategories.length > 0) {
-    // Find removable cards from over-represented categories (lowest synergy first)
+    // Find removable cards from over-represented categories
+    // Priority: basic lands first, then unowned, then highest price, then lowest synergy
     const removable = [];
     for (const over of overCategories) {
       const excess = categoryCounts[over.key] - composition[over.key];
       const candidates = includedCards
-        .filter(c => (c.functional_category || 'utility') === over.key)
-        .sort((a, b) => (a.synergy || 0) - (b.synergy || 0))
+        .filter(c => classifyFunctionalCategory(c) === over.key)
+        .sort((a, b) => {
+          // Basic lands always first to remove
+          if (a.isBasicLand && !b.isBasicLand) return -1;
+          if (!a.isBasicLand && b.isBasicLand) return 1;
+          // Then prefer removing cards we don't own
+          if (!a.owned && b.owned) return -1;
+          if (a.owned && !b.owned) return 1;
+          // Then most expensive first (remove pricey cards we'd need to buy)
+          const pa = a.price || 0, pb = b.price || 0;
+          if (pa !== pb) return pb - pa;
+          // Finally lowest synergy
+          return (a.synergy || 0) - (b.synergy || 0);
+        })
         .slice(0, excess);
       for (const c of candidates) removable.push({ ...c, fromCategory: over.label });
     }
 
-    // Find addable cards from excluded list for under-represented categories (highest synergy first)
+    // Find addable cards for under-represented categories
+    // Priority: owned first, then cheapest, then highest synergy
     const addable = [];
     for (const under of underCategories) {
       const deficit = composition[under.key] - categoryCounts[under.key];
       const candidates = excludedCards
-        .filter(c => (c.functional_category || 'utility') === under.key)
-        .sort((a, b) => (b.synergy || 0) - (a.synergy || 0))
+        .filter(c => classifyFunctionalCategory(c) === under.key)
+        .sort((a, b) => {
+          // Prefer cards we own
+          if (a.owned && !b.owned) return -1;
+          if (!a.owned && b.owned) return 1;
+          // Then cheapest
+          const pa = a.price || 0, pb = b.price || 0;
+          if (pa !== pb) return pa - pb;
+          // Then highest synergy
+          return (b.synergy || 0) - (a.synergy || 0);
+        })
         .slice(0, deficit);
       for (const c of candidates) addable.push({ ...c, toCategory: under.label });
     }
@@ -1660,6 +1777,21 @@ function DeckBuilder({ data, commander, onBack }) {
   const toggle = (name) => {
     setDeck(prev => prev.map(c =>
       c.name === name ? { ...c, included: !c.included, qty: c.included ? c.qty : 1 } : c
+    ));
+  };
+
+  // For swaps: remove one copy (reduce qty for multi-copy cards like basics)
+  const removeOneIncluded = (name) => {
+    setDeck(prev => prev.map(c => {
+      if (c.name !== name) return c;
+      if (c.qty > 1) return { ...c, qty: c.qty - 1 };
+      return { ...c, included: false, qty: 1 };
+    }));
+  };
+
+  const addOneExcluded = (name) => {
+    setDeck(prev => prev.map(c =>
+      c.name === name ? { ...c, included: true, qty: c.included ? c.qty + 1 : 1 } : c
     ));
   };
 
@@ -2010,7 +2142,7 @@ function DeckBuilder({ data, commander, onBack }) {
             {swapSuggestions.map((swap, i) => (
               <div key={i} className="flex items-center gap-2 text-xs bg-gray-900/50 rounded-lg px-3 py-2">
                 <button
-                  onClick={() => { toggle(swap.remove.name); toggle(swap.add.name); }}
+                  onClick={() => { removeOneIncluded(swap.remove.name); addOneExcluded(swap.add.name); }}
                   className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-[10px] font-medium transition-colors flex-shrink-0"
                 >
                   Swap
