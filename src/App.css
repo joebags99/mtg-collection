@@ -1,3 +1,12 @@
+/* Loading spinner */
+@keyframes spinSmooth {
+  to { transform: rotate(360deg); }
+}
+
+.loading-spinner {
+  animation: spinSmooth 0.8s linear infinite;
+}
+
 /* Page transition animations */
 @keyframes fadeSlideIn {
   from {

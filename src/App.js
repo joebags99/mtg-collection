@@ -222,6 +222,19 @@ function SectionHeader({ children, color = 'blue', size = 'md', count, className
   );
 }
 
+// --- Loading Overlay ---
+function LoadingOverlay({ message, submessage }) {
+  return (
+    <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="flex flex-col items-center gap-4 p-8">
+        <div className="loading-spinner w-12 h-12 rounded-full border-[3px] border-gray-600 border-t-blue-500" />
+        {message && <p className="text-gray-200 font-medium text-center">{message}</p>}
+        {submessage && <p className="text-gray-500 text-sm text-center max-w-xs">{submessage}</p>}
+      </div>
+    </div>
+  );
+}
+
 // --- Card Type Section Header ---
 function TypeSectionHeader({ type, count, className = '' }) {
   const typeClass = `type-${type.toLowerCase().replace(/\s+/g, '-')}`;
@@ -773,6 +786,8 @@ function CollectionUpload({ onUploaded, collectionCount }) {
         </button>
       </div>
 
+      {loading && <LoadingOverlay message="Processing your collection..." submessage="Validating card names and updating your collection." />}
+
       {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
 
       {result && (
@@ -1039,13 +1054,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
 
       {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
 
-      {loading && (
-        <div className="text-center py-12 text-gray-400">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-          <p>Fetching average decklists from EDHREC and comparing with your collection...</p>
-          <p className="text-sm mt-1">This checks up to 200 commanders and fetches prices. May take a few minutes.</p>
-        </div>
-      )}
+      {loading && <LoadingOverlay message="Fetching recommendations from EDHREC..." submessage="Comparing up to 200 commanders with your collection. This may take a few minutes." />}
 
       {!loading && sortedResults.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">
@@ -2258,12 +2267,7 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
   }, [commanders]);
 
   if (loading) {
-    return (
-      <div className="text-center py-12">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-        <p className="text-gray-400">Comparing commanders...</p>
-      </div>
-    );
+    return <LoadingOverlay message="Comparing commanders..." submessage="Fetching deck data and matching against your collection." />;
   }
 
   if (error) {
@@ -2519,29 +2523,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   };
 
   if (loading && !data) {
-    return (
-      <div className="space-y-6">
-        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
-        {/* Show header immediately with commander card info */}
-        <div className="flex gap-6 items-start">
-          {commander.image_uri && (
-            <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
-          )}
-          <div className="space-y-3 flex-1">
-            <h2 className="text-3xl font-bold">{commander.name}</h2>
-            <ColorBadge colors={commander.color_identity} />
-            <div className="space-y-3 mt-4">
-              <div className="animate-pulse space-y-3">
-                <div className="h-10 bg-gray-700 rounded w-32" />
-                <div className="h-2.5 bg-gray-700 rounded w-full" />
-                <div className="h-4 bg-gray-700 rounded w-48" />
-              </div>
-              <p className="text-gray-400 text-sm mt-4">Fetching average deck from EDHREC, classifying cards, and loading prices...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <LoadingOverlay message={`Loading ${commander.name}...`} submessage="Fetching average deck from EDHREC, classifying cards, and loading prices." />;
   }
 
   if (error) {
@@ -3394,16 +3376,7 @@ function CollectionStats({ collectionCount }) {
   }
 
   if (loading) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
-        <div className="text-center py-12">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-gray-400">Analyzing your collection...</p>
-          <p className="text-xs text-gray-500 mt-1">Fetching prices and card data from Scryfall</p>
-        </div>
-      </div>
-    );
+    return <LoadingOverlay message="Analyzing your collection..." submessage="Fetching prices and card data from Scryfall." />;
   }
 
   if (error) {
