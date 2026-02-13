@@ -1609,9 +1609,33 @@ const REMOVAL_NAMES = new Set([
   'despark', 'abrupt decay', 'heroic intervention',
 ]);
 
+const UTILITY_NAMES = new Set([
+  // Tutors
+  'demonic tutor', 'vampiric tutor', 'enlightened tutor', 'mystical tutor', 'worldly tutor',
+  'gamble', 'diabolic tutor', 'diabolic intent', 'final parting', 'scheming symmetry',
+  'fabricate', 'whir of invention', 'tribute mage', 'trophy mage', 'trinket mage',
+  'imperial seal', 'grim tutor', 'wishclaw talisman', 'profane tutor',
+  // Protection / interaction
+  'lightning greaves', 'swiftfoot boots', 'whispersilk cloak', 'darksteel plate',
+  'teferi\'s protection', 'grand abolisher', 'drannith magistrate', 'defense grid',
+  'deflecting swat', 'flawless maneuver', 'tibalt\'s trickery', 'red elemental blast',
+  'pyroblast', 'veil of summer', 'silence', 'autumn\'s veil',
+  // Recursion
+  'eternal witness', 'regrowth', 'noxious revival', 'sun titan', 'reanimate',
+  'animate dead', 'necromancy', 'living death', 'victimize', 'karmic guide',
+  'phyrexian reclamation', 'muldrotha, the gravetide', 'underworld breach',
+  'sevinne\'s reclamation', 'brought back', 'hall of heliod\'s generosity',
+  // General value / staples
+  'smothering tithe', 'land tax', 'trouble in pairs', 'black market connections',
+  'propaganda', 'ghostly prison', 'sphere of safety', 'crawlspace',
+  'panharmonicon', 'conjurer\'s closet', 'helm of the host', 'strionic resonator',
+  'sensei\'s divining top', 'scroll rack', 'top', 'rings of brighthearth',
+  'illusionist\'s bracers', 'lithoform engine',
+]);
+
 function classifyFunctionalCategory(card) {
-  // Use backend classification if it's not just the default 'utility'
-  if (card.functional_category && card.functional_category !== 'utility') {
+  // Use backend classification if available and specific
+  if (card.functional_category && card.functional_category !== 'utility' && card.functional_category !== 'synergy') {
     return card.functional_category;
   }
   // Client-side fallback using card_type + name heuristics
@@ -1622,9 +1646,14 @@ function classifyFunctionalCategory(card) {
   if (RAMP_NAMES.has(name) || name.includes('signet') || name.includes('talisman')) return 'ramp';
   if (DRAW_NAMES.has(name)) return 'cardDraw';
   if (REMOVAL_NAMES.has(name)) return 'removal';
+  if (UTILITY_NAMES.has(name)) return 'utility';
 
-  // Avg deck cards that aren't staples are synergy picks for this commander
-  // Recommendations already have isRecommendation flag; avg deck cards don't
+  // If backend already classified it, trust that
+  if (card.functional_category && card.functional_category !== 'utility') {
+    return card.functional_category;
+  }
+
+  // Avg deck cards that aren't common staples are synergy picks for this commander
   if (!card.isRecommendation && !card.isBasicLand) return 'synergy';
 
   return card.functional_category || 'utility';

@@ -1025,6 +1025,33 @@ def classify_functional_category(
         if any(p in first_ability for p in removal_patterns):
             return "removal"
 
+    # Utility: tutors, protection, recursion, graveyard, general value
+    utility_patterns = [
+        "search your library",      # tutors (non-land, those caught by ramp above)
+        "hexproof",
+        "indestructible",
+        "protection from",
+        "shroud",
+        "return target card from your graveyard",
+        "return target creature card from your graveyard",
+        "put target card from a graveyard",
+        "can't be countered",
+        "flash",
+        "copy target",
+        "create a token",
+        "create a copy",
+        "whenever a creature enters",
+        "whenever a nontoken creature",
+        "whenever you cast",
+        "at the beginning of your upkeep",
+        "sacrifice a creature",
+        "each opponent",
+        "whenever an opponent",
+    ]
+    if any(p in oracle for p in utility_patterns):
+        # Only classify as utility if NOT already caught by ramp/draw patterns
+        return "utility"
+
     # High synergy cards (from EDHREC synergy list) -> synergy
     synergy_names = {c.get("name_normalized") for c in type_data.get("high_synergy", [])}
     if card_name_normalized in synergy_names:
