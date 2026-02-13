@@ -227,7 +227,14 @@ function LoadingOverlay({ message, submessage }) {
   return (
     <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm flex items-center justify-center z-50">
       <div className="flex flex-col items-center gap-4 p-8">
-        <div className="loading-spinner w-12 h-12 rounded-full border-[3px] border-gray-600 border-t-blue-500" />
+        <div
+          className="w-12 h-12 rounded-full"
+          style={{
+            border: '3px solid #4b5563',
+            borderTopColor: '#3b82f6',
+            animation: 'spinSmooth 0.8s linear infinite',
+          }}
+        />
         {message && <p className="text-gray-200 font-medium text-center">{message}</p>}
         {submessage && <p className="text-gray-500 text-sm text-center max-w-xs">{submessage}</p>}
       </div>
@@ -1667,15 +1674,19 @@ function DeckBuilder({ data, commander, onBack }) {
         ? colors.filter(c => COLOR_TO_BASICS[c]).map(c => COLOR_TO_BASICS[c])
         : ['Wastes'];
 
-      const basicLandCards = [];
       if (landDeficit > 0 && basics.length > 0) {
-        // Distribute evenly across available basic land types
         const perType = Math.floor(landDeficit / basics.length);
         const remainder = landDeficit % basics.length;
         basics.forEach((basicName, i) => {
           const qty = perType + (i < remainder ? 1 : 0);
-          if (qty > 0) {
-            basicLandCards.push({
+          if (qty <= 0) return;
+          // Merge into existing entry if the basic land is already in the deck
+          const existing = initial.find(c => c.name === basicName);
+          if (existing) {
+            existing.qty = (existing.qty || 1) + qty;
+            existing.isBasicLand = true;
+          } else {
+            initial.push({
               name: basicName,
               name_normalized: basicName.toLowerCase(),
               card_type: 'Land',
@@ -1691,7 +1702,7 @@ function DeckBuilder({ data, commander, onBack }) {
         });
       }
 
-      setDeck([...initial, ...basicLandCards, ...recCards]);
+      setDeck([...initial, ...recCards]);
     }
   }, [data, commander.color_identity]);
 
@@ -2208,7 +2219,7 @@ function DeckBuilder({ data, commander, onBack }) {
                   );
                 })}
               </div>
-              <div className="bg-gray-900 rounded-lg p-3 mb-6">
+              <div className="bg-gray-900 rounded-lg p-3 mb-4">
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">Total allocated:</span>
                   <span className={`font-bold ${
@@ -2223,6 +2234,88 @@ function DeckBuilder({ data, commander, onBack }) {
                 </div>
                 <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
               </div>
+              {/* Live preview of changes */}
+              {(() => {
+                const previewRemovals = [];
+                const previewAdds = [];
+                for (const { key, label } of CATEGORY_META) {
+                  const actual = categoryCounts[key];
+                  const newTarget = tempComposition[key];
+                  const oldTarget = composition[key];
+                  if (newTarget === oldTarget) continue;
+                  const diff = actual - newTarget;
+                  if (diff > 0 && diff > (actual - oldTarget)) {
+                    // Need to remove cards from this category
+                    const toRemove = diff - Math.max(0, actual - oldTarget);
+                    const candidates = includedCards
+                      .filter(c => classifyFunctionalCategory(c) === key)
+                      .sort((a, b) => {
+                        if (a.isBasicLand && !b.isBasicLand) return -1;
+                        if (!a.isBasicLand && b.isBasicLand) return 1;
+                        if (!a.owned && b.owned) return -1;
+                        if (a.owned && !b.owned) return 1;
+                        const pa = a.price || 0, pb = b.price || 0;
+                        if (pa !== pb) return pb - pa;
+                        return (a.synergy || 0) - (b.synergy || 0);
+                      });
+                    // Take from the top (worst-to-keep cards first)
+                    let remaining = toRemove;
+                    for (const c of candidates) {
+                      if (remaining <= 0) break;
+                      const take = Math.min(c.qty, remaining);
+                      previewRemovals.push({ name: c.name, qty: take, category: label });
+                      remaining -= take;
+                    }
+                  } else if (diff < 0 && diff < (actual - oldTarget)) {
+                    // Need to add cards to this category
+                    const toAdd = Math.abs(diff) - Math.max(0, oldTarget - actual);
+                    const candidates = excludedCards
+                      .filter(c => classifyFunctionalCategory(c) === key)
+                      .sort((a, b) => {
+                        if (a.owned && !b.owned) return -1;
+                        if (!a.owned && b.owned) return 1;
+                        const pa = a.price || 0, pb = b.price || 0;
+                        if (pa !== pb) return pa - pb;
+                        return (b.synergy || 0) - (a.synergy || 0);
+                      });
+                    let remaining = toAdd;
+                    for (const c of candidates) {
+                      if (remaining <= 0) break;
+                      previewAdds.push({ name: c.name, qty: 1, category: label, owned: c.owned });
+                      remaining -= 1;
+                    }
+                  }
+                }
+                if (previewRemovals.length === 0 && previewAdds.length === 0) return null;
+                return (
+                  <div className="bg-gray-900/80 rounded-lg p-3 mb-4 space-y-2">
+                    <h4 className="text-xs font-semibold text-gray-400">Preview Changes</h4>
+                    {previewRemovals.length > 0 && (
+                      <div className="space-y-1">
+                        {previewRemovals.map((r, i) => (
+                          <div key={`r-${i}`} className="flex items-center gap-2 text-xs">
+                            <span className="text-red-400">−</span>
+                            <span className="text-red-400 truncate">{r.qty > 1 ? `${r.qty}x ` : ''}{r.name}</span>
+                            <span className="text-gray-600 text-[10px]">({r.category})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {previewAdds.length > 0 && (
+                      <div className="space-y-1">
+                        {previewAdds.map((a, i) => (
+                          <div key={`a-${i}`} className="flex items-center gap-2 text-xs">
+                            <span className="text-green-400">+</span>
+                            <span className="text-green-400 truncate">{a.name}</span>
+                            <span className="text-gray-600 text-[10px]">({a.category})</span>
+                            {a.owned && <span className="text-[9px] text-blue-400 bg-blue-400/10 px-1 rounded">owned</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="flex items-center justify-between pt-4 border-t border-gray-700">
                 <button
                   onClick={() => setTempComposition(DEFAULT_COMPOSITION)}
