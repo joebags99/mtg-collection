@@ -1640,15 +1640,18 @@ function DeckBuilder({ data, commander, onBack }) {
 
   // Deck composition settings
   const [showCompositionSettings, setShowCompositionSettings] = useState(false);
-  const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
+  const [composition, setComposition] = useState(null);
   const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
   const [suggestionMode, setSuggestionMode] = useState('collection'); // 'collection', 'cheapest', 'best'
 
   // Initialize with avg deck + classify cards + auto-fill basic lands
   useEffect(() => {
     if (data) {
+      const commanderNorm = (commander.name || '').toLowerCase();
+
       const initial = [...data.owned_cards, ...data.missing_cards].map(c => {
-        const card = { ...c, included: true, qty: 1 };
+        const isCommander = (c.name_normalized || c.name?.toLowerCase()) === commanderNorm;
+        const card = { ...c, included: true, qty: 1, isCommander };
         card.functional_category = classifyFunctionalCategory(card);
         return card;
       });
@@ -1669,10 +1672,23 @@ function DeckBuilder({ data, commander, onBack }) {
         return card;
       });
 
-      // Auto-fill basic lands to reach the land target
-      const currentLands = initial.filter(c => c.functional_category === 'lands' && c.included).length;
-      const landTarget = DEFAULT_COMPOSITION.lands;
-      const landDeficit = Math.max(0, landTarget - currentLands);
+      // Compute composition targets from the actual avg deck
+      const deckCounts = {};
+      for (const cat of ['lands', 'ramp', 'cardDraw', 'removal', 'synergy', 'utility']) deckCounts[cat] = 0;
+      for (const c of initial) {
+        if (c.isCommander) continue;
+        const fc = classifyFunctionalCategory(c);
+        if (fc in deckCounts) deckCounts[fc] += c.qty;
+      }
+
+      // Auto-fill basic lands to reach 99 non-commander cards
+      const currentTotal = initial.filter(c => !c.isCommander).reduce((s, c) => s + c.qty, 0);
+      const currentLands = deckCounts.lands || 0;
+      const desiredLands = Math.max(currentLands, 38);
+      // Fill basics to bring lands up, but cap total deck at 99 (commander is #100)
+      const spaceForBasics = Math.max(0, 99 - currentTotal);
+      const landDeficit = Math.min(Math.max(0, desiredLands - currentLands), spaceForBasics);
+
       const colors = commander.color_identity || [];
       const basics = colors.length > 0
         ? colors.filter(c => COLOR_TO_BASICS[c]).map(c => COLOR_TO_BASICS[c])
@@ -1684,7 +1700,6 @@ function DeckBuilder({ data, commander, onBack }) {
         basics.forEach((basicName, i) => {
           const qty = perType + (i < remainder ? 1 : 0);
           if (qty <= 0) return;
-          // Merge into existing entry if the basic land is already in the deck
           const existing = initial.find(c => c.name === basicName);
           if (existing) {
             existing.qty = (existing.qty || 1) + qty;
@@ -1704,11 +1719,16 @@ function DeckBuilder({ data, commander, onBack }) {
             });
           }
         });
+        deckCounts.lands += landDeficit;
       }
+
+      // Set composition targets from actual deck breakdown
+      setComposition(deckCounts);
+      setTempComposition(deckCounts);
 
       setDeck([...initial, ...recCards]);
     }
-  }, [data, commander.color_identity]);
+  }, [data, commander.color_identity, commander.name]);
 
   const includedCards = deck.filter(c => c.included);
   const excludedCards = deck.filter(c => !c.included);
@@ -1731,9 +1751,15 @@ function DeckBuilder({ data, commander, onBack }) {
     { key: 'utility', label: 'Utility', color: 'bg-gray-400' },
   ];
 
+  // Exclude commander from composition analysis and swap logic
+  const nonCommanderIncluded = includedCards.filter(c => !c.isCommander);
+  const nonCommanderExcluded = excludedCards.filter(c => !c.isCommander);
+
+  const activeComposition = composition || DEFAULT_COMPOSITION;
+
   const categoryCounts = {};
   for (const cat of CATEGORY_META) categoryCounts[cat.key] = 0;
-  for (const c of includedCards) {
+  for (const c of nonCommanderIncluded) {
     const fc = classifyFunctionalCategory(c);
     if (fc in categoryCounts) categoryCounts[fc] += c.qty;
   }
@@ -1759,28 +1785,23 @@ function DeckBuilder({ data, commander, onBack }) {
   // for under-target categories, find cards from excluded list to add.
   // Removal priority: basic lands first, then unowned, then most expensive, then lowest synergy.
   const swapSuggestions = [];
-  const overCategories = CATEGORY_META.filter(m => categoryCounts[m.key] > composition[m.key]);
-  const underCategories = CATEGORY_META.filter(m => categoryCounts[m.key] < composition[m.key]);
+  const overCategories = CATEGORY_META.filter(m => categoryCounts[m.key] > activeComposition[m.key]);
+  const underCategories = CATEGORY_META.filter(m => categoryCounts[m.key] < activeComposition[m.key]);
 
   if (overCategories.length > 0 && underCategories.length > 0) {
-    // Find removable cards from over-represented categories
-    // Priority: basic lands first, then unowned, then highest price, then lowest synergy
+    // Find removable cards from over-represented categories (never remove commander)
     const removable = [];
     for (const over of overCategories) {
-      const excess = categoryCounts[over.key] - composition[over.key];
-      const candidates = includedCards
+      const excess = categoryCounts[over.key] - activeComposition[over.key];
+      const candidates = nonCommanderIncluded
         .filter(c => classifyFunctionalCategory(c) === over.key)
         .sort((a, b) => {
-          // Basic lands always first to remove
           if (a.isBasicLand && !b.isBasicLand) return -1;
           if (!a.isBasicLand && b.isBasicLand) return 1;
-          // Then prefer removing cards we don't own
           if (!a.owned && b.owned) return -1;
           if (a.owned && !b.owned) return 1;
-          // Then most expensive first (remove pricey cards we'd need to buy)
           const pa = a.price || 0, pb = b.price || 0;
           if (pa !== pb) return pb - pa;
-          // Finally lowest synergy
           return (a.synergy || 0) - (b.synergy || 0);
         })
         .slice(0, excess);
@@ -1790,8 +1811,8 @@ function DeckBuilder({ data, commander, onBack }) {
     // Find addable cards for under-represented categories
     const addable = [];
     for (const under of underCategories) {
-      const deficit = composition[under.key] - categoryCounts[under.key];
-      const candidates = excludedCards
+      const deficit = activeComposition[under.key] - categoryCounts[under.key];
+      const candidates = nonCommanderExcluded
         .filter(c => classifyFunctionalCategory(c) === under.key)
         .sort(sortAddCandidates)
         .slice(0, deficit);
@@ -1806,9 +1827,10 @@ function DeckBuilder({ data, commander, onBack }) {
   }
 
   const toggle = (name) => {
-    setDeck(prev => prev.map(c =>
-      c.name === name ? { ...c, included: !c.included, qty: c.included ? c.qty : 1 } : c
-    ));
+    setDeck(prev => prev.map(c => {
+      if (c.name !== name || c.isCommander) return c;
+      return { ...c, included: !c.included, qty: c.included ? c.qty : 1 };
+    }));
   };
 
   // For swaps: remove one copy (reduce qty for multi-copy cards like basics)
@@ -2086,7 +2108,7 @@ function DeckBuilder({ data, commander, onBack }) {
             ))}
           </div>
           <button
-            onClick={() => { setTempComposition(composition); setShowCompositionSettings(true); }}
+            onClick={() => { setTempComposition(activeComposition); setShowCompositionSettings(true); }}
             className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
             title="Deck Composition Settings"
           >
@@ -2151,7 +2173,7 @@ function DeckBuilder({ data, commander, onBack }) {
             </div>
           </div>
           <button
-            onClick={() => { setTempComposition(composition); setShowCompositionSettings(true); }}
+            onClick={() => { setTempComposition(activeComposition); setShowCompositionSettings(true); }}
             className="text-xs text-gray-400 hover:text-white transition-colors"
           >
             Edit Targets
@@ -2160,7 +2182,7 @@ function DeckBuilder({ data, commander, onBack }) {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {CATEGORY_META.map(({ key, label, color }) => {
             const actual = categoryCounts[key];
-            const target = composition[key];
+            const target = activeComposition[key];
             const diff = actual - target;
             const pct = Math.min(100, Math.round((actual / Math.max(target, 1)) * 100));
             return (
@@ -2304,7 +2326,7 @@ function DeckBuilder({ data, commander, onBack }) {
                       const newTarget = tempComposition[key];
                       const diff = actual - newTarget;
                       if (diff > 0) {
-                        const candidates = includedCards
+                        const candidates = nonCommanderIncluded
                           .filter(c => classifyFunctionalCategory(c) === key)
                           .sort((a, b) => {
                             if (a.isBasicLand && !b.isBasicLand) return -1;
@@ -2323,7 +2345,7 @@ function DeckBuilder({ data, commander, onBack }) {
                           remaining -= take;
                         }
                       } else if (diff < 0) {
-                        const candidates = excludedCards
+                        const candidates = nonCommanderExcluded
                           .filter(c => classifyFunctionalCategory(c) === key)
                           .sort(sortAddCandidates);
                         let remaining = Math.abs(diff);
