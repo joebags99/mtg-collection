@@ -1863,6 +1863,76 @@ function DeckBuilder({ data, commander, onBack }) {
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
+  // Apply composition targets: actually perform the removals/adds to the deck
+  const applyComposition = (newTargets) => {
+    const toRemove = {}; // name -> qty to remove
+    const toAdd = new Set(); // names to add
+
+    for (const { key } of CATEGORY_META) {
+      const actual = categoryCounts[key];
+      const newTarget = newTargets[key];
+      const diff = actual - newTarget;
+
+      if (diff > 0) {
+        // Remove cards from over-represented category
+        const candidates = nonCommanderIncluded
+          .filter(c => classifyFunctionalCategory(c) === key)
+          .sort((a, b) => {
+            if (a.isBasicLand && !b.isBasicLand) return -1;
+            if (!a.isBasicLand && b.isBasicLand) return 1;
+            if (!a.owned && b.owned) return -1;
+            if (a.owned && !b.owned) return 1;
+            const pa = a.price || 0, pb = b.price || 0;
+            if (pa !== pb) return pb - pa;
+            return (a.synergy || 0) - (b.synergy || 0);
+          });
+        let remaining = diff;
+        for (const c of candidates) {
+          if (remaining <= 0) break;
+          const take = Math.min(c.qty, remaining);
+          toRemove[c.name] = (toRemove[c.name] || 0) + take;
+          remaining -= take;
+        }
+      } else if (diff < 0) {
+        // Add cards to under-represented category
+        const candidates = nonCommanderExcluded
+          .filter(c => classifyFunctionalCategory(c) === key)
+          .sort(sortAddCandidates);
+        let remaining = Math.abs(diff);
+        for (const c of candidates) {
+          if (remaining <= 0) break;
+          toAdd.add(c.name);
+          remaining -= 1;
+        }
+      }
+    }
+
+    // Apply changes to deck in one pass
+    setDeck(prev => prev.map(c => {
+      if (c.isCommander) return c;
+      // Handle removals
+      if (toRemove[c.name] && c.included) {
+        const removeQty = toRemove[c.name];
+        if (c.qty <= removeQty) {
+          toRemove[c.name] -= c.qty;
+          return { ...c, included: false, qty: 1 };
+        } else {
+          toRemove[c.name] = 0;
+          return { ...c, qty: c.qty - removeQty };
+        }
+      }
+      // Handle additions
+      if (toAdd.has(c.name) && !c.included) {
+        toAdd.delete(c.name);
+        return { ...c, included: true, qty: 1 };
+      }
+      return c;
+    }));
+
+    setComposition(newTargets);
+    setShowCompositionSettings(false);
+  };
+
   const includedGroups = groupByType(includedCards);
 
   // --- View renderers ---
@@ -2399,7 +2469,7 @@ function DeckBuilder({ data, commander, onBack }) {
                     Cancel
                   </button>
                   <button
-                    onClick={() => { setComposition(tempComposition); setShowCompositionSettings(false); }}
+                    onClick={() => applyComposition(tempComposition)}
                     className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
                   >
                     Apply
