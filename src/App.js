@@ -1894,8 +1894,9 @@ function DeckBuilder({ data, commander, onBack }) {
 
   // Apply composition targets: actually perform the removals/adds to the deck
   const applyComposition = (newTargets) => {
-    const toRemove = {}; // name -> qty to remove
-    const toAdd = new Set(); // names to add
+    // Build lists of card names to remove/add with quantities
+    const removeMap = {}; // name -> qty to remove
+    const addSet = {};    // name -> true
 
     for (const { key } of CATEGORY_META) {
       const actual = categoryCounts[key];
@@ -1903,7 +1904,6 @@ function DeckBuilder({ data, commander, onBack }) {
       const diff = actual - newTarget;
 
       if (diff > 0) {
-        // Remove cards from over-represented category
         const candidates = nonCommanderIncluded
           .filter(c => classifyFunctionalCategory(c) === key)
           .sort((a, b) => {
@@ -1919,44 +1919,50 @@ function DeckBuilder({ data, commander, onBack }) {
         for (const c of candidates) {
           if (remaining <= 0) break;
           const take = Math.min(c.qty, remaining);
-          toRemove[c.name] = (toRemove[c.name] || 0) + take;
+          removeMap[c.name] = (removeMap[c.name] || 0) + take;
           remaining -= take;
         }
       } else if (diff < 0) {
-        // Add cards to under-represented category
         const candidates = nonCommanderExcluded
           .filter(c => classifyFunctionalCategory(c) === key)
           .sort(sortAddCandidates);
         let remaining = Math.abs(diff);
         for (const c of candidates) {
           if (remaining <= 0) break;
-          toAdd.add(c.name);
+          addSet[c.name] = true;
           remaining -= 1;
         }
       }
     }
 
-    // Apply changes to deck in one pass
-    setDeck(prev => prev.map(c => {
-      if (c.isCommander) return c;
-      // Handle removals
-      if (toRemove[c.name] && c.included) {
-        const removeQty = toRemove[c.name];
-        if (c.qty <= removeQty) {
-          toRemove[c.name] -= c.qty;
-          return { ...c, included: false, qty: 1 };
-        } else {
-          toRemove[c.name] = 0;
-          return { ...c, qty: c.qty - removeQty };
+    // Build new deck array (no mutation of lookup objects during iteration)
+    setDeck(prev => {
+      const removalsLeft = { ...removeMap };
+      const addsLeft = { ...addSet };
+      return prev.map(c => {
+        if (c.isCommander) return c;
+
+        // Handle removals
+        if (removalsLeft[c.name] > 0 && c.included) {
+          const removeQty = removalsLeft[c.name];
+          if (c.qty <= removeQty) {
+            removalsLeft[c.name] = removeQty - c.qty;
+            return { ...c, included: false, qty: 1 };
+          } else {
+            removalsLeft[c.name] = 0;
+            return { ...c, qty: c.qty - removeQty };
+          }
         }
-      }
-      // Handle additions
-      if (toAdd.has(c.name) && !c.included) {
-        toAdd.delete(c.name);
-        return { ...c, included: true, qty: 1 };
-      }
-      return c;
-    }));
+
+        // Handle additions
+        if (addsLeft[c.name] && !c.included) {
+          delete addsLeft[c.name];
+          return { ...c, included: true, qty: 1 };
+        }
+
+        return c;
+      });
+    });
 
     setComposition(newTargets);
     setShowCompositionSettings(false);
