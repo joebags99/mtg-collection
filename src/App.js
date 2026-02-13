@@ -1610,7 +1610,7 @@ const REMOVAL_NAMES = new Set([
 ]);
 
 function classifyFunctionalCategory(card) {
-  // Use backend classification if available
+  // Use backend classification if it's not just the default 'utility'
   if (card.functional_category && card.functional_category !== 'utility') {
     return card.functional_category;
   }
@@ -1623,7 +1623,10 @@ function classifyFunctionalCategory(card) {
   if (DRAW_NAMES.has(name)) return 'cardDraw';
   if (REMOVAL_NAMES.has(name)) return 'removal';
 
-  // Use backend value if it was set (including 'utility')
+  // Avg deck cards that aren't staples are synergy picks for this commander
+  // Recommendations already have isRecommendation flag; avg deck cards don't
+  if (!card.isRecommendation && !card.isBasicLand) return 'synergy';
+
   return card.functional_category || 'utility';
 }
 
@@ -1639,6 +1642,7 @@ function DeckBuilder({ data, commander, onBack }) {
   const [showCompositionSettings, setShowCompositionSettings] = useState(false);
   const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
   const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
+  const [suggestionMode, setSuggestionMode] = useState('collection'); // 'collection', 'cheapest', 'best'
 
   // Initialize with avg deck + classify cards + auto-fill basic lands
   useEffect(() => {
@@ -1734,6 +1738,23 @@ function DeckBuilder({ data, commander, onBack }) {
     if (fc in categoryCounts) categoryCounts[fc] += c.qty;
   }
 
+  // Sort function for add candidates based on suggestion mode
+  const sortAddCandidates = (a, b) => {
+    if (suggestionMode === 'collection') {
+      if (a.owned && !b.owned) return -1;
+      if (!a.owned && b.owned) return 1;
+      const pa = a.price || 0, pb = b.price || 0;
+      if (pa !== pb) return pa - pb;
+      return (b.synergy || 0) - (a.synergy || 0);
+    } else if (suggestionMode === 'cheapest') {
+      const pa = a.price || 0, pb = b.price || 0;
+      if (pa !== pb) return pa - pb;
+      return (b.synergy || 0) - (a.synergy || 0);
+    } else { // 'best'
+      return (b.synergy || 0) - (a.synergy || 0);
+    }
+  };
+
   // Build swap suggestions: for over-target categories, find cards to cut;
   // for under-target categories, find cards from excluded list to add.
   // Removal priority: basic lands first, then unowned, then most expensive, then lowest synergy.
@@ -1767,22 +1788,12 @@ function DeckBuilder({ data, commander, onBack }) {
     }
 
     // Find addable cards for under-represented categories
-    // Priority: owned first, then cheapest, then highest synergy
     const addable = [];
     for (const under of underCategories) {
       const deficit = composition[under.key] - categoryCounts[under.key];
       const candidates = excludedCards
         .filter(c => classifyFunctionalCategory(c) === under.key)
-        .sort((a, b) => {
-          // Prefer cards we own
-          if (a.owned && !b.owned) return -1;
-          if (!a.owned && b.owned) return 1;
-          // Then cheapest
-          const pa = a.price || 0, pb = b.price || 0;
-          if (pa !== pb) return pa - pb;
-          // Then highest synergy
-          return (b.synergy || 0) - (a.synergy || 0);
-        })
+        .sort(sortAddCandidates)
         .slice(0, deficit);
       for (const c of candidates) addable.push({ ...c, toCategory: under.label });
     }
@@ -2117,7 +2128,28 @@ function DeckBuilder({ data, commander, onBack }) {
       {/* Composition Analysis Panel */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
+            <div className="flex items-center gap-1">
+              {[
+                { value: 'collection', label: 'Collection' },
+                { value: 'cheapest', label: 'Cheapest' },
+                { value: 'best', label: 'Best' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setSuggestionMode(opt.value)}
+                  className={`px-2 py-0.5 text-[10px] rounded-full transition-colors ${
+                    suggestionMode === opt.value
+                      ? 'bg-yellow-600 text-white'
+                      : 'bg-gray-700 text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <button
             onClick={() => { setTempComposition(composition); setShowCompositionSettings(true); }}
             className="text-xs text-gray-400 hover:text-white transition-colors"
@@ -2191,132 +2223,146 @@ function DeckBuilder({ data, commander, onBack }) {
       {/* Deck Composition Settings Modal */}
       {showCompositionSettings && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
-              <h3 className="text-xl font-bold text-white mb-6">Deck Composition Targets</h3>
-              <div className="space-y-5 mb-6">
-                {CATEGORY_META.map(({ key, label }) => {
-                  const min = key === 'lands' ? 30 : key === 'synergy' ? 10 : key === 'removal' ? 3 : 5;
-                  const max = key === 'lands' ? 45 : key === 'synergy' ? 40 : key === 'utility' ? 25 : 20;
-                  return (
-                    <div key={key}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-gray-300">{label}</span>
-                        <span className="text-white font-medium w-8 text-right">{tempComposition[key]}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={min}
-                        max={max}
-                        value={tempComposition[key]}
-                        onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
-                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                        style={{
-                          background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
-                        }}
-                      />
-                    </div>
-                  );
-                })}
+              <h3 className="text-xl font-bold text-white mb-4">Deck Composition Targets</h3>
+              {/* Suggestion priority toggle */}
+              <div className="flex items-center gap-2 mb-5">
+                <span className="text-xs text-gray-400">Prioritize:</span>
+                {[
+                  { value: 'collection', label: 'My Collection' },
+                  { value: 'cheapest', label: 'Cheapest' },
+                  { value: 'best', label: 'Best Synergy' },
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSuggestionMode(opt.value)}
+                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                      suggestionMode === opt.value
+                        ? 'bg-yellow-600 text-white'
+                        : 'bg-gray-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-              <div className="bg-gray-900 rounded-lg p-3 mb-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Total allocated:</span>
-                  <span className={`font-bold ${
-                    Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
-                      ? 'text-green-400'
-                      : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
-                        ? 'text-red-400'
-                        : 'text-yellow-400'
-                  }`}>
-                    {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
-                  </span>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
-              </div>
-              {/* Live preview of changes */}
-              {(() => {
-                const previewRemovals = [];
-                const previewAdds = [];
-                for (const { key, label } of CATEGORY_META) {
-                  const actual = categoryCounts[key];
-                  const newTarget = tempComposition[key];
-                  const oldTarget = composition[key];
-                  if (newTarget === oldTarget) continue;
-                  const diff = actual - newTarget;
-                  if (diff > 0 && diff > (actual - oldTarget)) {
-                    // Need to remove cards from this category
-                    const toRemove = diff - Math.max(0, actual - oldTarget);
-                    const candidates = includedCards
-                      .filter(c => classifyFunctionalCategory(c) === key)
-                      .sort((a, b) => {
-                        if (a.isBasicLand && !b.isBasicLand) return -1;
-                        if (!a.isBasicLand && b.isBasicLand) return 1;
-                        if (!a.owned && b.owned) return -1;
-                        if (a.owned && !b.owned) return 1;
-                        const pa = a.price || 0, pb = b.price || 0;
-                        if (pa !== pb) return pb - pa;
-                        return (a.synergy || 0) - (b.synergy || 0);
-                      });
-                    // Take from the top (worst-to-keep cards first)
-                    let remaining = toRemove;
-                    for (const c of candidates) {
-                      if (remaining <= 0) break;
-                      const take = Math.min(c.qty, remaining);
-                      previewRemovals.push({ name: c.name, qty: take, category: label });
-                      remaining -= take;
-                    }
-                  } else if (diff < 0 && diff < (actual - oldTarget)) {
-                    // Need to add cards to this category
-                    const toAdd = Math.abs(diff) - Math.max(0, oldTarget - actual);
-                    const candidates = excludedCards
-                      .filter(c => classifyFunctionalCategory(c) === key)
-                      .sort((a, b) => {
-                        if (a.owned && !b.owned) return -1;
-                        if (!a.owned && b.owned) return 1;
-                        const pa = a.price || 0, pb = b.price || 0;
-                        if (pa !== pb) return pa - pb;
-                        return (b.synergy || 0) - (a.synergy || 0);
-                      });
-                    let remaining = toAdd;
-                    for (const c of candidates) {
-                      if (remaining <= 0) break;
-                      previewAdds.push({ name: c.name, qty: 1, category: label, owned: c.owned });
-                      remaining -= 1;
-                    }
-                  }
-                }
-                if (previewRemovals.length === 0 && previewAdds.length === 0) return null;
-                return (
-                  <div className="bg-gray-900/80 rounded-lg p-3 mb-4 space-y-2">
-                    <h4 className="text-xs font-semibold text-gray-400">Preview Changes</h4>
-                    {previewRemovals.length > 0 && (
-                      <div className="space-y-1">
-                        {previewRemovals.map((r, i) => (
-                          <div key={`r-${i}`} className="flex items-center gap-2 text-xs">
-                            <span className="text-red-400">−</span>
-                            <span className="text-red-400 truncate">{r.qty > 1 ? `${r.qty}x ` : ''}{r.name}</span>
-                            <span className="text-gray-600 text-[10px]">({r.category})</span>
+              <div className="flex gap-6">
+                {/* Left: Sliders */}
+                <div className="flex-1 min-w-0">
+                  <div className="space-y-5 mb-6">
+                    {CATEGORY_META.map(({ key, label }) => {
+                      const min = key === 'lands' ? 30 : key === 'synergy' ? 10 : key === 'removal' ? 3 : 5;
+                      const max = key === 'lands' ? 45 : key === 'synergy' ? 40 : key === 'utility' ? 25 : 20;
+                      return (
+                        <div key={key}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-gray-300 text-sm">{label}</span>
+                            <span className="text-xs text-gray-500">
+                              {categoryCounts[key]}/{tempComposition[key]}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    {previewAdds.length > 0 && (
-                      <div className="space-y-1">
-                        {previewAdds.map((a, i) => (
-                          <div key={`a-${i}`} className="flex items-center gap-2 text-xs">
-                            <span className="text-green-400">+</span>
-                            <span className="text-green-400 truncate">{a.name}</span>
-                            <span className="text-gray-600 text-[10px]">({a.category})</span>
-                            {a.owned && <span className="text-[9px] text-blue-400 bg-blue-400/10 px-1 rounded">owned</span>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          <input
+                            type="range"
+                            min={min}
+                            max={max}
+                            value={tempComposition[key]}
+                            onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
+                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                            style={{
+                              background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })()}
-              <div className="flex items-center justify-between pt-4 border-t border-gray-700">
+                  <div className="bg-gray-900 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400 text-sm">Total allocated:</span>
+                      <span className={`font-bold ${
+                        Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
+                          ? 'text-green-400'
+                          : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
+                            ? 'text-red-400'
+                            : 'text-yellow-400'
+                      }`}>
+                        {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
+                  </div>
+                </div>
+                {/* Right: Live preview */}
+                <div className="w-64 flex-shrink-0">
+                  <h4 className="text-xs font-semibold text-gray-400 mb-3">Preview Changes</h4>
+                  {(() => {
+                    const previewRemovals = [];
+                    const previewAdds = [];
+                    for (const { key, label } of CATEGORY_META) {
+                      const actual = categoryCounts[key];
+                      const newTarget = tempComposition[key];
+                      const diff = actual - newTarget;
+                      if (diff > 0) {
+                        const candidates = includedCards
+                          .filter(c => classifyFunctionalCategory(c) === key)
+                          .sort((a, b) => {
+                            if (a.isBasicLand && !b.isBasicLand) return -1;
+                            if (!a.isBasicLand && b.isBasicLand) return 1;
+                            if (!a.owned && b.owned) return -1;
+                            if (a.owned && !b.owned) return 1;
+                            const pa = a.price || 0, pb = b.price || 0;
+                            if (pa !== pb) return pb - pa;
+                            return (a.synergy || 0) - (b.synergy || 0);
+                          });
+                        let remaining = diff;
+                        for (const c of candidates) {
+                          if (remaining <= 0) break;
+                          const take = Math.min(c.qty, remaining);
+                          previewRemovals.push({ name: c.name, qty: take, category: label });
+                          remaining -= take;
+                        }
+                      } else if (diff < 0) {
+                        const candidates = excludedCards
+                          .filter(c => classifyFunctionalCategory(c) === key)
+                          .sort(sortAddCandidates);
+                        let remaining = Math.abs(diff);
+                        for (const c of candidates) {
+                          if (remaining <= 0) break;
+                          previewAdds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy });
+                          remaining -= 1;
+                        }
+                      }
+                    }
+                    if (previewRemovals.length === 0 && previewAdds.length === 0) {
+                      return <p className="text-xs text-gray-600 italic">Adjust sliders to see changes</p>;
+                    }
+                    return (
+                      <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                        {previewRemovals.map((r, i) => (
+                          <div key={`r-${i}`} className="flex items-center gap-1.5 text-xs">
+                            <span className="text-red-400 flex-shrink-0">−</span>
+                            <span className="text-red-400 truncate">{r.qty > 1 ? `${r.qty}x ` : ''}{r.name}</span>
+                            <span className="text-gray-600 text-[10px] flex-shrink-0">({r.category})</span>
+                          </div>
+                        ))}
+                        {previewRemovals.length > 0 && previewAdds.length > 0 && (
+                          <div className="border-t border-gray-700/50 my-1" />
+                        )}
+                        {previewAdds.map((a, i) => (
+                          <div key={`a-${i}`} className="flex items-center gap-1.5 text-xs">
+                            <span className="text-green-400 flex-shrink-0">+</span>
+                            <span className="text-green-400 truncate">{a.name}</span>
+                            <span className="text-gray-600 text-[10px] flex-shrink-0">({a.category})</span>
+                            {a.owned && <span className="text-[9px] text-blue-400 bg-blue-400/10 px-1 rounded flex-shrink-0">owned</span>}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+              <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-700">
                 <button
                   onClick={() => setTempComposition(DEFAULT_COMPOSITION)}
                   className="text-sm text-gray-400 hover:text-white transition-colors"

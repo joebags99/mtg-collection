@@ -1030,7 +1030,17 @@ def classify_functional_category(
     if card_name_normalized in synergy_names:
         return "synergy"
 
-    # Default: utility
+    # Cards that appear in any EDHREC top-card list for this commander are synergy picks
+    all_top_names = set()
+    for top_key in ["top_creatures", "top_instants", "top_sorceries", "top_enchantments",
+                     "top_artifacts", "top_planeswalkers", "top_lands", "top_utility_lands"]:
+        for c in type_data.get(top_key, []):
+            all_top_names.add(c.get("name_normalized"))
+    # Exclude mana artifacts (already classified as ramp above)
+    if card_name_normalized in all_top_names:
+        return "synergy"
+
+    # Default: utility (generic goodstuff not tied to this commander)
     return "utility"
 
 
