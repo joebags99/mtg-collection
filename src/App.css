@@ -216,7 +216,7 @@ nav button {
 }
 
 .mana-particle {
-  position: fixed;
+  position: absolute;
   pointer-events: none;
   border-radius: 50%;
   filter: blur(1px);
@@ -238,7 +238,7 @@ nav button {
 }
 
 .ambient-orb {
-  position: fixed;
+  position: absolute;
   border-radius: 50%;
   pointer-events: none;
   animation:

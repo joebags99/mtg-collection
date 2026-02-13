@@ -115,7 +115,7 @@ function AmbientBackground({ colors = [] }) {
   }));
 
   return (
-    <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+    <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
       {orbs.map((orb, i) => (
         <div
           key={`orb-${i}`}
@@ -157,7 +157,7 @@ function PageHero({ title, subtitle, commanders = [], stats = [], children, colo
   const glowColor = colors.length > 0 ? getColorGlow(colors) : 'rgba(59, 130, 246, 0.6)';
 
   return (
-    <div className="relative mb-8" style={{ zIndex: 1 }}>
+    <div className="relative mb-8 overflow-hidden" style={{ zIndex: 1 }}>
       <AmbientBackground colors={colors} />
 
       <div className="flex items-start justify-between gap-6 mb-4 flex-wrap">
