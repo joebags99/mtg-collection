@@ -1347,11 +1347,16 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
         style={{ height: `${STRIP_HEIGHT}px` }}
       >
         <span className="text-xs text-gray-500 w-4 text-center flex-shrink-0">{card.qty}</span>
-        {card.owned ? (
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
-        ) : (
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="Need to buy" />
-        )}
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+          !card.owned ? 'bg-red-500' :
+          (card.qty_in_decks || 0) >= (card.qty_owned || 1) ? 'bg-gray-500' :
+          (card.qty_in_decks || 0) > 0 ? 'bg-yellow-500' :
+          'bg-green-500'
+        }`} title={
+          !card.owned ? 'Need to buy' :
+          (card.qty_in_decks || 0) > 0 ? `In ${(card.in_decks || []).map(d => d.name).join(', ')}` :
+          'Owned'
+        } />
         <span className="text-xs truncate flex-1">{card.name}</span>
         {!card.owned && card.price > 0 && (
           <span className="text-[10px] text-yellow-400 flex-shrink-0">${card.price.toFixed(2)}</span>
@@ -1982,15 +1987,13 @@ function DeckBuilder({ data, commander, onBack }) {
               {cards.map(card => (
                 <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group deck-card-enhanced hover:bg-gray-700/50">
                   <div className="flex items-center gap-2">
-                    {card.owned ? (
-                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
-                    )}
+                    <AvailDot card={card} />
                     <CardName name={card.name} className="text-sm" />
                     {card.isRecommendation && <span className="text-xs text-purple-400 bg-purple-900/30 px-1.5 py-0.5 rounded">rec</span>}
+                    {card.isCommander && <span className="text-xs text-yellow-400 bg-yellow-900/30 px-1.5 py-0.5 rounded">cmdr</span>}
                   </div>
                   <div className="flex items-center gap-2">
+                    <DeckBadges inDecks={card.in_decks} />
                     {canHaveMultiple(card.name) ? (
                       <div className="flex items-center gap-1">
                         <button
@@ -2026,12 +2029,9 @@ function DeckBuilder({ data, commander, onBack }) {
           {excludedCards.map(card => (
             <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
               <div className="flex items-center gap-2">
-                {card.owned ? (
-                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                ) : (
-                  <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
-                )}
+                <AvailDot card={card} />
                 <CardName name={card.name} className="text-sm text-gray-400" />
+                <DeckBadges inDecks={card.in_decks} />
               </div>
               <button
                 onClick={() => toggle(card.name)}
@@ -2063,9 +2063,16 @@ function DeckBuilder({ data, commander, onBack }) {
                     x{card.qty}
                   </span>
                 )}
-                {card.owned && (
-                  <span className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 border border-black" />
-                )}
+                <span className={`absolute top-1 left-1 w-2.5 h-2.5 rounded-full border border-black ${
+                  !card.owned ? 'bg-red-500' :
+                  (card.qty_in_decks || 0) >= (card.qty_owned || 1) ? 'bg-gray-500' :
+                  (card.qty_in_decks || 0) > 0 ? 'bg-yellow-500' :
+                  'bg-green-500'
+                }`} title={
+                  !card.owned ? 'Not owned' :
+                  (card.qty_in_decks || 0) > 0 ? `In ${(card.in_decks || []).map(d => d.name).join(', ')}` :
+                  'Owned'
+                } />
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 rounded-lg">
                   {canHaveMultiple(card.name) && (
                     <>
