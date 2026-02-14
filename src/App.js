@@ -1584,7 +1584,6 @@ const RAMP_NAMES = new Set([
   'sakura-tribe elder', 'birds of paradise', 'llanowar elves', 'elvish mystic',
   'fyndhorn elves', 'avacyn\'s pilgrim', 'bloom tender', 'priest of titania',
   'dark ritual', 'cabal ritual', 'dockside extortionist',
-  'signets', 'talismans',  // partial matches handled below
 ]);
 
 const DRAW_NAMES = new Set([
@@ -1604,7 +1603,7 @@ const REMOVAL_NAMES = new Set([
   'cyclonic rift', 'toxic deluge', 'wrath of god', 'damnation', 'blasphemous act',
   'farewell', 'vandalblast', 'return to dust', 'krosan grip', 'nature\'s claim',
   'go for the throat', 'terminate', 'reality shift', 'rapid hybridization', 'pongify',
-  'despark', 'abrupt decay', 'heroic intervention',
+  'despark', 'abrupt decay',
 ]);
 
 const UTILITY_NAMES = new Set([
@@ -1627,8 +1626,8 @@ const UTILITY_NAMES = new Set([
   'smothering tithe', 'land tax', 'trouble in pairs', 'black market connections',
   'propaganda', 'ghostly prison', 'sphere of safety', 'crawlspace',
   'panharmonicon', 'conjurer\'s closet', 'helm of the host', 'strionic resonator',
-  'sensei\'s divining top', 'scroll rack', 'top', 'rings of brighthearth',
-  'illusionist\'s bracers', 'lithoform engine',
+  'sensei\'s divining top', 'scroll rack', 'rings of brighthearth',
+  'illusionist\'s bracers', 'lithoform engine', 'heroic intervention',
 ]);
 
 function classifyFunctionalCategory(card) {
@@ -1646,15 +1645,15 @@ function classifyFunctionalCategory(card) {
   if (REMOVAL_NAMES.has(name)) return 'removal';
   if (UTILITY_NAMES.has(name)) return 'utility';
 
-  // If backend already classified it, trust that
-  if (card.functional_category && card.functional_category !== 'utility') {
+  // If backend already classified it (as synergy or utility), trust that
+  if (card.functional_category) {
     return card.functional_category;
   }
 
   // Avg deck cards that aren't common staples are synergy picks for this commander
   if (!card.isRecommendation && !card.isBasicLand) return 'synergy';
 
-  return card.functional_category || 'utility';
+  return 'utility';
 }
 
 // Basic lands for each color identity
@@ -1893,8 +1892,9 @@ function DeckBuilder({ data, commander, onBack }) {
   // Apply composition targets: actually perform the removals/adds to the deck
   const applyComposition = (newTargets) => {
     // Build lists of card names to remove/add with quantities
-    const removeMap = {}; // name -> qty to remove
-    const addSet = {};    // name -> true
+    const removeMap = {};    // name -> qty to remove
+    const addSet = {};       // name -> qty to add (excluded cards)
+    const increaseMap = {};  // name -> qty to increase (already-included unlimited cards)
 
     for (const { key } of CATEGORY_META) {
       const actual = categoryCounts[key];
@@ -1921,14 +1921,26 @@ function DeckBuilder({ data, commander, onBack }) {
           remaining -= take;
         }
       } else if (diff < 0) {
+        let remaining = Math.abs(diff);
+        // First: add from excluded cards
         const candidates = nonCommanderExcluded
           .filter(c => classifyFunctionalCategory(c) === key)
           .sort(sortAddCandidates);
-        let remaining = Math.abs(diff);
         for (const c of candidates) {
           if (remaining <= 0) break;
-          addSet[c.name] = true;
+          addSet[c.name] = (addSet[c.name] || 0) + 1;
           remaining -= 1;
+        }
+        // Second: if still remaining, increase qty on already-included unlimited cards (basic lands)
+        if (remaining > 0) {
+          const includedUnlimited = nonCommanderIncluded
+            .filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
+            .sort(sortAddCandidates);
+          for (const c of includedUnlimited) {
+            if (remaining <= 0) break;
+            increaseMap[c.name] = (increaseMap[c.name] || 0) + remaining;
+            remaining = 0;
+          }
         }
       }
     }
@@ -1937,6 +1949,7 @@ function DeckBuilder({ data, commander, onBack }) {
     setDeck(prev => {
       const removalsLeft = { ...removeMap };
       const addsLeft = { ...addSet };
+      const increasesLeft = { ...increaseMap };
       return prev.map(c => {
         if (c.isCommander) return c;
 
@@ -1952,9 +1965,16 @@ function DeckBuilder({ data, commander, onBack }) {
           }
         }
 
-        // Handle additions
-        if (addsLeft[c.name] && !c.included) {
-          delete addsLeft[c.name];
+        // Handle qty increases on already-included unlimited cards
+        if (increasesLeft[c.name] > 0 && c.included) {
+          const addQty = increasesLeft[c.name];
+          increasesLeft[c.name] = 0;
+          return { ...c, qty: c.qty + addQty };
+        }
+
+        // Handle additions of excluded cards
+        if (addsLeft[c.name] > 0 && !c.included) {
+          addsLeft[c.name] = 0;
           return { ...c, included: true, qty: 1 };
         }
 
@@ -2450,14 +2470,26 @@ function DeckBuilder({ data, commander, onBack }) {
                           remaining -= take;
                         }
                       } else if (diff < 0) {
+                        let remaining = Math.abs(diff);
+                        // First: add from excluded cards
                         const candidates = nonCommanderExcluded
                           .filter(c => classifyFunctionalCategory(c) === key)
                           .sort(sortAddCandidates);
-                        let remaining = Math.abs(diff);
                         for (const c of candidates) {
                           if (remaining <= 0) break;
                           previewAdds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy });
                           remaining -= 1;
+                        }
+                        // Second: if still remaining, increase qty on already-included unlimited cards
+                        if (remaining > 0) {
+                          const includedUnlimited = nonCommanderIncluded
+                            .filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
+                            .sort(sortAddCandidates);
+                          for (const c of includedUnlimited) {
+                            if (remaining <= 0) break;
+                            previewAdds.push({ name: c.name, qty: remaining, category: label, owned: c.owned, synergy: c.synergy });
+                            remaining = 0;
+                          }
                         }
                       }
                     }
@@ -2479,7 +2511,7 @@ function DeckBuilder({ data, commander, onBack }) {
                         {previewAdds.map((a, i) => (
                           <div key={`a-${i}`} className="flex items-center gap-1.5 text-xs">
                             <span className="text-green-400 flex-shrink-0">+</span>
-                            <span className="text-green-400 truncate">{a.name}</span>
+                            <span className="text-green-400 truncate">{a.qty > 1 ? `${a.qty}x ` : ''}{a.name}</span>
                             <span className="text-gray-600 text-[10px] flex-shrink-0">({a.category})</span>
                             {a.owned && <span className="text-[9px] text-blue-400 bg-blue-400/10 px-1 rounded flex-shrink-0">owned</span>}
                           </div>
