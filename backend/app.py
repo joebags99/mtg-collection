@@ -1977,6 +1977,22 @@ async def recommendations_from_favorites(request: Request, body: dict):
         match_pct = round(match_count / len(favorites_normalized) * 100, 1)
         matched_display = sorted([norm_to_display[n] for n in matched_normalized if n in norm_to_display])
 
+        # Build a preview of top non-land cards from the avg deck for the expand panel
+        preview_cards = []
+        for card in data.get("decklist", []):
+            cat = (card.get("category") or "").lower()
+            if cat in ("land", "lands"):
+                continue
+            if card["name_normalized"] == normalize_card_name(cmd["name"]):
+                continue
+            preview_cards.append({
+                "name": card["name"],
+                "category": card.get("category", ""),
+                "is_favorite": card["name_normalized"] in favorites_normalized,
+            })
+            if len(preview_cards) >= 15:
+                break
+
         results.append({
             "name": cmd["name"],
             "color_identity": cmd["color_identity"],
@@ -1987,6 +2003,7 @@ async def recommendations_from_favorites(request: Request, body: dict):
             "total_favorites": len(favorites_normalized),
             "match_percentage": match_pct,
             "matched_cards": matched_display,
+            "preview_cards": preview_cards,
         })
 
         time.sleep(0.05)

@@ -4271,13 +4271,57 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
   const [detectedColors, setDetectedColors] = useState([]);
   const [searched, setSearched] = useState(false);
   const [buildingDeck, setBuildingDeck] = useState(null);
+  const [expandedCommander, setExpandedCommander] = useState(null);
+
+  // Card search state
+  const [cardSearch, setCardSearch] = useState('');
+  const [cardSuggestions, setCardSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchRef = useRef(null);
+  const debounceRef = useRef(null);
 
   const favList = [...favorites];
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const handleCardSearchInput = (val) => {
+    setCardSearch(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (val.length < 2) { setCardSuggestions([]); setShowSuggestions(false); return; }
+    setSearchLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const resp = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(val)}`);
+        const data = await resp.json();
+        setCardSuggestions(data.data || []);
+        setShowSuggestions(true);
+      } catch { setCardSuggestions([]); }
+      setSearchLoading(false);
+    }, 200);
+  };
+
+  const handleAddCard = (name) => {
+    onToggleFavorite(name);
+    setCardSearch('');
+    setCardSuggestions([]);
+    setShowSuggestions(false);
+  };
 
   const handleFind = async () => {
     if (favList.length === 0) return;
     setLoading(true);
     setError('');
+    setExpandedCommander(null);
     try {
       const data = await apiPost('/api/recommendations/from-favorites', { card_names: favList });
       setResults(data.results || []);
@@ -4302,6 +4346,15 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
 
   const COLOR_NAMES = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
 
+  const CATEGORY_COLORS = {
+    Creature: 'text-green-300 bg-green-900/30',
+    Instant: 'text-blue-300 bg-blue-900/30',
+    Sorcery: 'text-purple-300 bg-purple-900/30',
+    Enchantment: 'text-yellow-300 bg-yellow-900/30',
+    Artifact: 'text-gray-300 bg-gray-700/50',
+    Planeswalker: 'text-orange-300 bg-orange-900/30',
+  };
+
   return (
     <div className="space-y-6 page-fade-in">
       <PageHero
@@ -4310,7 +4363,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
         colorIdentity={detectedColors}
       />
 
-      {/* Favorites list */}
+      {/* Favorites panel */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-white">
@@ -4326,12 +4379,45 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
           )}
         </div>
 
-        {favList.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-3">☆</div>
-            <p className="text-sm">Star cards from any card list to add them here.</p>
-            <p className="text-xs mt-1 text-gray-600">Look for the ☆ icon next to card names in commander details, deck builder, and recommendations.</p>
+        {/* Card search */}
+        <div ref={searchRef} className="relative">
+          <div className="flex items-center gap-2 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
+            <span className="text-gray-500 text-sm">☆</span>
+            <input
+              value={cardSearch}
+              onChange={e => handleCardSearchInput(e.target.value)}
+              onFocus={() => { if (cardSuggestions.length > 0) setShowSuggestions(true); }}
+              placeholder="Search for a card to add to favorites…"
+              className="flex-1 bg-transparent text-sm outline-none placeholder-gray-600"
+            />
+            {searchLoading && (
+              <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            )}
           </div>
+          {showSuggestions && cardSuggestions.length > 0 && (
+            <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl max-h-56 overflow-y-auto">
+              {cardSuggestions.map(name => {
+                const isFav = favorites.has(name.toLowerCase());
+                return (
+                  <button
+                    key={name}
+                    onClick={() => handleAddCard(name)}
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between gap-2 transition-colors"
+                  >
+                    <span className="truncate">{name}</span>
+                    <span className={`text-xs flex-shrink-0 ${isFav ? 'text-yellow-400' : 'text-gray-500'}`}>
+                      {isFav ? '★ added' : '+ add'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Favorited cards */}
+        {favList.length === 0 ? (
+          <p className="text-sm text-gray-500">Search above or star cards from any card list in the app.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {favList.map(name => (
@@ -4343,7 +4429,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                 {name}
                 <button
                   onClick={() => onToggleFavorite(name)}
-                  className="text-gray-500 hover:text-red-400 transition-colors ml-0.5 text-xs"
+                  className="text-gray-500 hover:text-red-400 transition-colors ml-0.5 text-xs leading-none"
                   title="Remove"
                 >
                   ×
@@ -4396,69 +4482,112 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
             </div>
           ) : (
             <div className="grid md:grid-cols-2 gap-4">
-              {results.map(cmd => (
-                <div key={cmd.name} className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3 hover:border-gray-600 transition-colors">
-                  <div className="flex items-start gap-3">
-                    {cmd.image_uri && (
-                      <img
-                        src={cmd.image_uri}
-                        alt={cmd.name}
-                        className="w-12 h-12 rounded-lg object-cover object-top flex-shrink-0 border border-gray-600"
-                      />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-white text-sm">{cmd.name}</span>
-                        <ColorBadge colors={cmd.color_identity} />
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {cmd.num_decks?.toLocaleString()} decks on EDHREC
-                      </div>
-                      <div className="mt-1.5">
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="text-gray-400">
-                            {cmd.match_count} of {cmd.total_favorites} favorites fit
-                          </span>
-                          <span className={`font-bold ${
-                            cmd.match_percentage >= 75 ? 'text-green-400' :
-                            cmd.match_percentage >= 50 ? 'text-yellow-400' :
-                            'text-orange-400'
-                          }`}>
-                            {cmd.match_percentage}%
-                          </span>
+              {results.map(cmd => {
+                const isExpanded = expandedCommander === cmd.name;
+                return (
+                  <div key={cmd.name} className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden hover:border-gray-600 transition-colors">
+                    <div className="p-4 space-y-3">
+                      {/* Header row */}
+                      <div className="flex items-start gap-3">
+                        {cmd.image_uri && (
+                          <img
+                            src={cmd.image_uri}
+                            alt={cmd.name}
+                            className="w-12 h-12 rounded-lg object-cover object-top flex-shrink-0 border border-gray-600"
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-white text-sm">{cmd.name}</span>
+                            <ColorBadge colors={cmd.color_identity} />
+                          </div>
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            {cmd.num_decks?.toLocaleString()} decks on EDHREC
+                          </div>
+                          <div className="mt-1.5">
+                            <div className="flex items-center justify-between text-xs mb-1">
+                              <span className="text-gray-400">
+                                {cmd.match_count} of {cmd.total_favorites} favorites fit
+                              </span>
+                              <span className={`font-bold ${
+                                cmd.match_percentage >= 75 ? 'text-green-400' :
+                                cmd.match_percentage >= 50 ? 'text-yellow-400' :
+                                'text-orange-400'
+                              }`}>
+                                {cmd.match_percentage}%
+                              </span>
+                            </div>
+                            <MatchBar percentage={cmd.match_percentage} size="sm" />
+                          </div>
                         </div>
-                        <MatchBar percentage={cmd.match_percentage} size="sm" />
+                      </div>
+
+                      {/* Matched favorites */}
+                      <div className="flex flex-wrap gap-1">
+                        {cmd.matched_cards.map(card => (
+                          <span key={card} className="text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-800/50 rounded px-1.5 py-0.5">
+                            ★ {card}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex gap-2 items-center pt-1">
+                        <button
+                          onClick={() => onSelectCommander(cmd)}
+                          className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded transition-colors"
+                        >
+                          View Commander
+                        </button>
+                        <button
+                          onClick={() => handleBuildDeck(cmd)}
+                          disabled={buildingDeck === cmd.name}
+                          className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
+                        >
+                          {buildingDeck === cmd.name ? 'Loading…' : 'Build Deck'}
+                        </button>
+                        {cmd.preview_cards?.length > 0 && (
+                          <button
+                            onClick={() => setExpandedCommander(isExpanded ? null : cmd.name)}
+                            className="ml-auto text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1"
+                          >
+                            {isExpanded ? 'Hide preview ▲' : 'Top cards ▼'}
+                          </button>
+                        )}
                       </div>
                     </div>
-                  </div>
 
-                  {/* Matched cards */}
-                  <div className="flex flex-wrap gap-1">
-                    {cmd.matched_cards.map(card => (
-                      <span key={card} className="text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-800/50 rounded px-1.5 py-0.5">
-                        ★ {card}
-                      </span>
-                    ))}
+                    {/* Expanded preview panel */}
+                    {isExpanded && cmd.preview_cards?.length > 0 && (
+                      <div className="border-t border-gray-700 bg-gray-900/50 px-4 py-3">
+                        <p className="text-xs text-gray-500 mb-2">Top cards in the average {cmd.name} deck</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {cmd.preview_cards.map(card => {
+                            const catStyle = CATEGORY_COLORS[card.category] || 'text-gray-400 bg-gray-700/30';
+                            return (
+                              <span
+                                key={card.name}
+                                className={`inline-flex items-center gap-1 text-xs rounded px-1.5 py-0.5 border ${
+                                  card.is_favorite
+                                    ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/60'
+                                    : `${catStyle} border-transparent`
+                                }`}
+                                title={card.category}
+                              >
+                                {card.is_favorite && <span className="text-yellow-400">★</span>}
+                                {card.name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {cmd.preview_cards.length >= 15 && (
+                          <p className="text-xs text-gray-600 mt-2">+ more — click View Commander for the full list</p>
+                        )}
+                      </div>
+                    )}
                   </div>
-
-                  {/* Action buttons */}
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={() => onSelectCommander(cmd)}
-                      className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded transition-colors"
-                    >
-                      View Commander
-                    </button>
-                    <button
-                      onClick={() => handleBuildDeck(cmd)}
-                      disabled={buildingDeck === cmd.name}
-                      className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
-                    >
-                      {buildingDeck === cmd.name ? 'Loading…' : 'Build Deck'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
