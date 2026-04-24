@@ -115,7 +115,7 @@ function AmbientBackground({ colors = [] }) {
   }));
 
   return (
-    <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+    <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
       {orbs.map((orb, i) => (
         <div
           key={`orb-${i}`}
@@ -157,7 +157,7 @@ function PageHero({ title, subtitle, commanders = [], stats = [], children, colo
   const glowColor = colors.length > 0 ? getColorGlow(colors) : 'rgba(59, 130, 246, 0.6)';
 
   return (
-    <div className="relative mb-8" style={{ zIndex: 1 }}>
+    <div className="relative mb-8 overflow-hidden" style={{ zIndex: 1 }}>
       <AmbientBackground colors={colors} />
 
       <div className="flex items-start justify-between gap-6 mb-4 flex-wrap">
@@ -219,6 +219,19 @@ function SectionHeader({ children, color = 'blue', size = 'md', count, className
         <span className="text-gray-500 font-normal ml-2">({count})</span>
       )}
     </h3>
+  );
+}
+
+// --- Loading Overlay ---
+function LoadingOverlay({ message, submessage }) {
+  return (
+    <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="flex flex-col items-center gap-4 p-8">
+        <div className="loading-spinner" />
+        {message && <p className="text-gray-200 font-medium text-center">{message}</p>}
+        {submessage && <p className="text-gray-500 text-sm text-center max-w-xs">{submessage}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -773,6 +786,8 @@ function CollectionUpload({ onUploaded, collectionCount }) {
         </button>
       </div>
 
+      {loading && <LoadingOverlay message="Processing your collection..." submessage="Validating card names and updating your collection." />}
+
       {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
 
       {result && (
@@ -791,11 +806,9 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
   const colorGlow = getColorGlow(commander.color_identity);
 
   return (
-    <div className="card-3d-wrapper">
       <div
-        className={`card-3d holo-shine rounded-xl cursor-pointer relative ${selected ? 'ring-2 ring-purple-500' : ''}`}
+        className={`rounded-xl cursor-pointer relative transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${selected ? 'ring-2 ring-purple-500' : ''}`}
         style={{
-          '--card-glow-color': colorGlow,
           boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
           background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)'
         }}
@@ -862,7 +875,6 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
         </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -1042,13 +1054,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
 
       {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
 
-      {loading && (
-        <div className="text-center py-12 text-gray-400">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-          <p>Fetching average decklists from EDHREC and comparing with your collection...</p>
-          <p className="text-sm mt-1">This checks up to 200 commanders and fetches prices. May take a few minutes.</p>
-        </div>
-      )}
+      {loading && <LoadingOverlay message="Fetching recommendations from EDHREC..." submessage="Comparing up to 200 commanders with your collection. This may take a few minutes." />}
 
       {!loading && sortedResults.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">
@@ -1334,11 +1340,16 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
         style={{ height: `${STRIP_HEIGHT}px` }}
       >
         <span className="text-xs text-gray-500 w-4 text-center flex-shrink-0">{card.qty}</span>
-        {card.owned ? (
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
-        ) : (
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="Need to buy" />
-        )}
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+          !card.owned ? 'bg-red-500' :
+          (card.qty_in_decks || 0) >= (card.qty_owned || 1) ? 'bg-gray-500' :
+          (card.qty_in_decks || 0) > 0 ? 'bg-yellow-500' :
+          'bg-green-500'
+        }`} title={
+          !card.owned ? 'Need to buy' :
+          (card.qty_in_decks || 0) > 0 ? `In ${(card.in_decks || []).map(d => d.name).join(', ')}` :
+          'Owned'
+        } />
         <span className="text-xs truncate flex-1">{card.name}</span>
         {!card.owned && card.price > 0 && (
           <span className="text-[10px] text-yellow-400 flex-shrink-0">${card.price.toFixed(2)}</span>
@@ -1562,33 +1573,188 @@ function DeckStats({ cards }) {
   );
 }
 
+// Client-side functional category classification
+// Uses card_type as primary signal, with name-based heuristics for ramp/draw/removal
+const RAMP_NAMES = new Set([
+  'sol ring', 'mana crypt', 'mana vault', 'arcane signet', 'mind stone', 'thought vessel',
+  'fellwar stone', 'commander\'s sphere', 'chromatic lantern', 'gilded lotus',
+  'thran dynamo', 'worn powerstone', 'hedron archive', 'dreamstone hedron',
+  'cultivate', 'kodama\'s reach', 'farseek', 'rampant growth', 'nature\'s lore',
+  'three visits', 'skyshroud claim', 'explosive vegetation', 'migration path',
+  'sakura-tribe elder', 'birds of paradise', 'llanowar elves', 'elvish mystic',
+  'fyndhorn elves', 'avacyn\'s pilgrim', 'bloom tender', 'priest of titania',
+  'dark ritual', 'cabal ritual', 'dockside extortionist',
+]);
+
+const DRAW_NAMES = new Set([
+  'rhystic study', 'mystic remora', 'phyrexian arena', 'sylvan library', 'necropotence',
+  'harmonize', 'read the bones', 'night\'s whisper', 'sign in blood', 'painful truths',
+  'brainstorm', 'ponder', 'preordain', 'windfall', 'wheel of fortune', 'treasure cruise',
+  'dig through time', 'fact or fiction', 'blue sun\'s zenith', 'pull from tomorrow',
+  'consecrated sphinx', 'esper sentinel', 'archivist of oghma', 'beast whisperer',
+  'guardian project', 'the great henge', 'skullclamp', 'mask of memory',
+]);
+
+const REMOVAL_NAMES = new Set([
+  'swords to plowshares', 'path to exile', 'beast within', 'chaos warp', 'generous gift',
+  'assassin\'s trophy', 'anguished unmaking', 'vindicate', 'mortify', 'putrefy',
+  'counterspell', 'swan song', 'negate', 'dovin\'s veto', 'mana drain', 'force of will',
+  'force of negation', 'fierce guardianship', 'pact of negation', 'arcane denial',
+  'cyclonic rift', 'toxic deluge', 'wrath of god', 'damnation', 'blasphemous act',
+  'farewell', 'vandalblast', 'return to dust', 'krosan grip', 'nature\'s claim',
+  'go for the throat', 'terminate', 'reality shift', 'rapid hybridization', 'pongify',
+  'despark', 'abrupt decay',
+]);
+
+const UTILITY_NAMES = new Set([
+  // Tutors
+  'demonic tutor', 'vampiric tutor', 'enlightened tutor', 'mystical tutor', 'worldly tutor',
+  'gamble', 'diabolic tutor', 'diabolic intent', 'final parting', 'scheming symmetry',
+  'fabricate', 'whir of invention', 'tribute mage', 'trophy mage', 'trinket mage',
+  'imperial seal', 'grim tutor', 'wishclaw talisman', 'profane tutor',
+  // Protection / interaction
+  'lightning greaves', 'swiftfoot boots', 'whispersilk cloak', 'darksteel plate',
+  'teferi\'s protection', 'grand abolisher', 'drannith magistrate', 'defense grid',
+  'deflecting swat', 'flawless maneuver', 'tibalt\'s trickery', 'red elemental blast',
+  'pyroblast', 'veil of summer', 'silence', 'autumn\'s veil',
+  // Recursion
+  'eternal witness', 'regrowth', 'noxious revival', 'sun titan', 'reanimate',
+  'animate dead', 'necromancy', 'living death', 'victimize', 'karmic guide',
+  'phyrexian reclamation', 'muldrotha, the gravetide', 'underworld breach',
+  'sevinne\'s reclamation', 'brought back', 'hall of heliod\'s generosity',
+  // General value / staples
+  'smothering tithe', 'land tax', 'trouble in pairs', 'black market connections',
+  'propaganda', 'ghostly prison', 'sphere of safety', 'crawlspace',
+  'panharmonicon', 'conjurer\'s closet', 'helm of the host', 'strionic resonator',
+  'sensei\'s divining top', 'scroll rack', 'rings of brighthearth',
+  'illusionist\'s bracers', 'lithoform engine', 'heroic intervention',
+]);
+
+function classifyFunctionalCategory(card) {
+  // Use backend classification if available and specific
+  if (card.functional_category && card.functional_category !== 'utility' && card.functional_category !== 'synergy') {
+    return card.functional_category;
+  }
+  // Client-side fallback using card_type + name heuristics
+  const ct = (card.card_type || '').toLowerCase();
+  if (ct === 'land') return 'lands';
+
+  const name = (card.name || '').toLowerCase();
+  if (RAMP_NAMES.has(name) || name.includes('signet') || name.includes('talisman')) return 'ramp';
+  if (DRAW_NAMES.has(name)) return 'cardDraw';
+  if (REMOVAL_NAMES.has(name)) return 'removal';
+  if (UTILITY_NAMES.has(name)) return 'utility';
+
+  // If backend already classified it (as synergy or utility), trust that
+  if (card.functional_category) {
+    return card.functional_category;
+  }
+
+  // Avg deck cards that aren't common staples are synergy picks for this commander
+  if (!card.isRecommendation && !card.isBasicLand) return 'synergy';
+
+  return 'utility';
+}
+
+// Basic lands for each color identity
+const COLOR_TO_BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
+
 function DeckBuilder({ data, commander, onBack }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
   const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
 
-  // Initialize with avg deck
+  // Deck composition settings
+  const [showCompositionSettings, setShowCompositionSettings] = useState(false);
+  const [composition, setComposition] = useState(null);
+  const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
+  const [suggestionMode, setSuggestionMode] = useState('collection'); // 'collection', 'cheapest', 'best'
+
+  // Initialize with avg deck + classify cards + auto-fill basic lands
   useEffect(() => {
     if (data) {
-      const initial = [...data.owned_cards, ...data.missing_cards].map(c => ({
-        ...c,
-        included: true,
-        qty: 1,
-      }));
-      const recCards = (data.recommendations || []).map(c => ({
-        name: c.name,
-        card_type: c.card_type || 'Other',
-        owned: c.owned,
-        synergy: c.synergy,
-        cmc: c.cmc || 0,
-        mana_cost: c.mana_cost || '',
-        included: false,
-        isRecommendation: true,
-        qty: 1,
-      }));
+      const commanderNorm = (commander.name || '').toLowerCase();
+
+      const initial = [...data.owned_cards, ...data.missing_cards].map(c => {
+        const isCommander = (c.name_normalized || c.name?.toLowerCase()) === commanderNorm;
+        const card = { ...c, included: true, qty: 1, isCommander };
+        card.functional_category = classifyFunctionalCategory(card);
+        return card;
+      });
+      const recCards = (data.recommendations || []).map(c => {
+        const card = {
+          name: c.name,
+          card_type: c.card_type || 'Other',
+          functional_category: c.functional_category || 'utility',
+          owned: c.owned,
+          synergy: c.synergy,
+          cmc: c.cmc || 0,
+          mana_cost: c.mana_cost || '',
+          included: false,
+          isRecommendation: true,
+          qty: 1,
+        };
+        card.functional_category = classifyFunctionalCategory(card);
+        return card;
+      });
+
+      // Compute composition targets from the actual avg deck
+      const deckCounts = {};
+      for (const cat of ['lands', 'ramp', 'cardDraw', 'removal', 'synergy', 'utility']) deckCounts[cat] = 0;
+      for (const c of initial) {
+        if (c.isCommander) continue;
+        const fc = classifyFunctionalCategory(c);
+        if (fc in deckCounts) deckCounts[fc] += c.qty;
+      }
+
+      // Auto-fill basic lands to reach 99 non-commander cards
+      const currentTotal = initial.filter(c => !c.isCommander).reduce((s, c) => s + c.qty, 0);
+      const currentLands = deckCounts.lands || 0;
+      const desiredLands = Math.max(currentLands, 38);
+      // Fill basics to bring lands up, but cap total deck at 99 (commander is #100)
+      const spaceForBasics = Math.max(0, 99 - currentTotal);
+      const landDeficit = Math.min(Math.max(0, desiredLands - currentLands), spaceForBasics);
+
+      const colors = commander.color_identity || [];
+      const basics = colors.length > 0
+        ? colors.filter(c => COLOR_TO_BASICS[c]).map(c => COLOR_TO_BASICS[c])
+        : ['Wastes'];
+
+      if (landDeficit > 0 && basics.length > 0) {
+        const perType = Math.floor(landDeficit / basics.length);
+        const remainder = landDeficit % basics.length;
+        basics.forEach((basicName, i) => {
+          const qty = perType + (i < remainder ? 1 : 0);
+          if (qty <= 0) return;
+          const existing = initial.find(c => c.name === basicName);
+          if (existing) {
+            existing.qty = (existing.qty || 1) + qty;
+            existing.isBasicLand = true;
+          } else {
+            initial.push({
+              name: basicName,
+              name_normalized: basicName.toLowerCase(),
+              card_type: 'Land',
+              functional_category: 'lands',
+              owned: true,
+              isBasicLand: true,
+              included: true,
+              qty,
+              cmc: 0,
+              mana_cost: '',
+            });
+          }
+        });
+        deckCounts.lands += landDeficit;
+      }
+
+      // Set composition targets from actual deck breakdown
+      setComposition(deckCounts);
+      setTempComposition(deckCounts);
+
       setDeck([...initial, ...recCards]);
     }
-  }, [data]);
+  }, [data, commander.color_identity, commander.name]);
 
   const includedCards = deck.filter(c => c.included);
   const excludedCards = deck.filter(c => !c.included);
@@ -1601,9 +1767,110 @@ function DeckBuilder({ data, commander, onBack }) {
     .filter(c => !c.owned && c.price)
     .reduce((sum, c) => sum + (c.price * c.qty), 0);
 
+  // Composition analysis: actual counts vs targets per functional category
+  const CATEGORY_META = [
+    { key: 'lands', label: 'Lands', color: 'bg-amber-500' },
+    { key: 'ramp', label: 'Ramp', color: 'bg-green-500' },
+    { key: 'cardDraw', label: 'Draw', color: 'bg-blue-500' },
+    { key: 'removal', label: 'Removal', color: 'bg-red-500' },
+    { key: 'synergy', label: 'Synergy', color: 'bg-purple-500' },
+    { key: 'utility', label: 'Utility', color: 'bg-gray-400' },
+  ];
+
+  // Exclude commander from composition analysis and swap logic
+  const nonCommanderIncluded = includedCards.filter(c => !c.isCommander);
+  const nonCommanderExcluded = excludedCards.filter(c => !c.isCommander);
+
+  const activeComposition = composition || DEFAULT_COMPOSITION;
+
+  const categoryCounts = {};
+  for (const cat of CATEGORY_META) categoryCounts[cat.key] = 0;
+  for (const c of nonCommanderIncluded) {
+    const fc = classifyFunctionalCategory(c);
+    if (fc in categoryCounts) categoryCounts[fc] += c.qty;
+  }
+
+  // Sort function for add candidates based on suggestion mode
+  const sortAddCandidates = (a, b) => {
+    if (suggestionMode === 'collection') {
+      if (a.owned && !b.owned) return -1;
+      if (!a.owned && b.owned) return 1;
+      const pa = a.price || 0, pb = b.price || 0;
+      if (pa !== pb) return pa - pb;
+      return (b.synergy || 0) - (a.synergy || 0);
+    } else if (suggestionMode === 'cheapest') {
+      const pa = a.price || 0, pb = b.price || 0;
+      if (pa !== pb) return pa - pb;
+      return (b.synergy || 0) - (a.synergy || 0);
+    } else { // 'best'
+      return (b.synergy || 0) - (a.synergy || 0);
+    }
+  };
+
+  // Build swap suggestions: for over-target categories, find cards to cut;
+  // for under-target categories, find cards from excluded list to add.
+  // Removal priority: basic lands first, then unowned, then most expensive, then lowest synergy.
+  const swapSuggestions = [];
+  const overCategories = CATEGORY_META.filter(m => categoryCounts[m.key] > activeComposition[m.key]);
+  const underCategories = CATEGORY_META.filter(m => categoryCounts[m.key] < activeComposition[m.key]);
+
+  if (overCategories.length > 0 && underCategories.length > 0) {
+    // Find removable cards from over-represented categories (never remove commander)
+    const removable = [];
+    for (const over of overCategories) {
+      const excess = categoryCounts[over.key] - activeComposition[over.key];
+      const candidates = nonCommanderIncluded
+        .filter(c => classifyFunctionalCategory(c) === over.key)
+        .sort((a, b) => {
+          if (a.isBasicLand && !b.isBasicLand) return -1;
+          if (!a.isBasicLand && b.isBasicLand) return 1;
+          if (!a.owned && b.owned) return -1;
+          if (a.owned && !b.owned) return 1;
+          const pa = a.price || 0, pb = b.price || 0;
+          if (pa !== pb) return pb - pa;
+          return (a.synergy || 0) - (b.synergy || 0);
+        })
+        .slice(0, excess);
+      for (const c of candidates) removable.push({ ...c, fromCategory: over.label });
+    }
+
+    // Find addable cards for under-represented categories
+    const addable = [];
+    for (const under of underCategories) {
+      const deficit = activeComposition[under.key] - categoryCounts[under.key];
+      const candidates = nonCommanderExcluded
+        .filter(c => classifyFunctionalCategory(c) === under.key)
+        .sort(sortAddCandidates)
+        .slice(0, deficit);
+      for (const c of candidates) addable.push({ ...c, toCategory: under.label });
+    }
+
+    // Pair them up: each swap is "remove X, add Y"
+    const pairCount = Math.min(removable.length, addable.length, 5);
+    for (let i = 0; i < pairCount; i++) {
+      swapSuggestions.push({ remove: removable[i], add: addable[i] });
+    }
+  }
+
   const toggle = (name) => {
+    setDeck(prev => prev.map(c => {
+      if (c.name !== name || c.isCommander) return c;
+      return { ...c, included: !c.included, qty: c.included ? c.qty : 1 };
+    }));
+  };
+
+  // For swaps: remove one copy (reduce qty for multi-copy cards like basics)
+  const removeOneIncluded = (name) => {
+    setDeck(prev => prev.map(c => {
+      if (c.name !== name) return c;
+      if (c.qty > 1) return { ...c, qty: c.qty - 1 };
+      return { ...c, included: false, qty: 1 };
+    }));
+  };
+
+  const addOneExcluded = (name) => {
     setDeck(prev => prev.map(c =>
-      c.name === name ? { ...c, included: !c.included, qty: c.included ? c.qty : 1 } : c
+      c.name === name ? { ...c, included: true, qty: c.included ? c.qty + 1 : 1 } : c
     ));
   };
 
@@ -1622,6 +1889,103 @@ function DeckBuilder({ data, commander, onBack }) {
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
+  // Apply composition targets: actually perform the removals/adds to the deck
+  const applyComposition = (newTargets) => {
+    // Build lists of card names to remove/add with quantities
+    const removeMap = {};    // name -> qty to remove
+    const addSet = {};       // name -> qty to add (excluded cards)
+    const increaseMap = {};  // name -> qty to increase (already-included unlimited cards)
+
+    for (const { key } of CATEGORY_META) {
+      const actual = categoryCounts[key];
+      const newTarget = newTargets[key];
+      const diff = actual - newTarget;
+
+      if (diff > 0) {
+        const candidates = nonCommanderIncluded
+          .filter(c => classifyFunctionalCategory(c) === key)
+          .sort((a, b) => {
+            if (a.isBasicLand && !b.isBasicLand) return -1;
+            if (!a.isBasicLand && b.isBasicLand) return 1;
+            if (!a.owned && b.owned) return -1;
+            if (a.owned && !b.owned) return 1;
+            const pa = a.price || 0, pb = b.price || 0;
+            if (pa !== pb) return pb - pa;
+            return (a.synergy || 0) - (b.synergy || 0);
+          });
+        let remaining = diff;
+        for (const c of candidates) {
+          if (remaining <= 0) break;
+          const take = Math.min(c.qty, remaining);
+          removeMap[c.name] = (removeMap[c.name] || 0) + take;
+          remaining -= take;
+        }
+      } else if (diff < 0) {
+        let remaining = Math.abs(diff);
+        // First: add from excluded cards
+        const candidates = nonCommanderExcluded
+          .filter(c => classifyFunctionalCategory(c) === key)
+          .sort(sortAddCandidates);
+        for (const c of candidates) {
+          if (remaining <= 0) break;
+          addSet[c.name] = (addSet[c.name] || 0) + 1;
+          remaining -= 1;
+        }
+        // Second: if still remaining, increase qty on already-included unlimited cards (basic lands)
+        if (remaining > 0) {
+          const includedUnlimited = nonCommanderIncluded
+            .filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
+            .sort(sortAddCandidates);
+          for (const c of includedUnlimited) {
+            if (remaining <= 0) break;
+            increaseMap[c.name] = (increaseMap[c.name] || 0) + remaining;
+            remaining = 0;
+          }
+        }
+      }
+    }
+
+    // Build new deck array (no mutation of lookup objects during iteration)
+    setDeck(prev => {
+      const removalsLeft = { ...removeMap };
+      const addsLeft = { ...addSet };
+      const increasesLeft = { ...increaseMap };
+      return prev.map(c => {
+        if (c.isCommander) return c;
+
+        // Handle removals
+        if (removalsLeft[c.name] > 0 && c.included) {
+          const removeQty = removalsLeft[c.name];
+          if (c.qty <= removeQty) {
+            removalsLeft[c.name] = removeQty - c.qty;
+            return { ...c, included: false, qty: 1 };
+          } else {
+            removalsLeft[c.name] = 0;
+            return { ...c, qty: c.qty - removeQty };
+          }
+        }
+
+        // Handle qty increases on already-included unlimited cards
+        if (increasesLeft[c.name] > 0 && c.included) {
+          const addQty = increasesLeft[c.name];
+          increasesLeft[c.name] = 0;
+          return { ...c, qty: c.qty + addQty };
+        }
+
+        // Handle additions of excluded cards
+        if (addsLeft[c.name] > 0 && !c.included) {
+          addsLeft[c.name] = 0;
+          return { ...c, included: true, qty: 1 };
+        }
+
+        return c;
+      });
+    });
+
+    setComposition(newTargets);
+    setShowCompositionSettings(false);
+  };
+
   const includedGroups = groupByType(includedCards);
 
   // --- View renderers ---
@@ -1636,15 +2000,13 @@ function DeckBuilder({ data, commander, onBack }) {
               {cards.map(card => (
                 <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group deck-card-enhanced hover:bg-gray-700/50">
                   <div className="flex items-center gap-2">
-                    {card.owned ? (
-                      <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Owned" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Missing" />
-                    )}
+                    <AvailDot card={card} />
                     <CardName name={card.name} className="text-sm" />
                     {card.isRecommendation && <span className="text-xs text-purple-400 bg-purple-900/30 px-1.5 py-0.5 rounded">rec</span>}
+                    {card.isCommander && <span className="text-xs text-yellow-400 bg-yellow-900/30 px-1.5 py-0.5 rounded">cmdr</span>}
                   </div>
                   <div className="flex items-center gap-2">
+                    <DeckBadges inDecks={card.in_decks} />
                     {canHaveMultiple(card.name) ? (
                       <div className="flex items-center gap-1">
                         <button
@@ -1680,12 +2042,9 @@ function DeckBuilder({ data, commander, onBack }) {
           {excludedCards.map(card => (
             <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
               <div className="flex items-center gap-2">
-                {card.owned ? (
-                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                ) : (
-                  <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
-                )}
+                <AvailDot card={card} />
                 <CardName name={card.name} className="text-sm text-gray-400" />
+                <DeckBadges inDecks={card.in_decks} />
               </div>
               <button
                 onClick={() => toggle(card.name)}
@@ -1717,9 +2076,16 @@ function DeckBuilder({ data, commander, onBack }) {
                     x{card.qty}
                   </span>
                 )}
-                {card.owned && (
-                  <span className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 border border-black" />
-                )}
+                <span className={`absolute top-1 left-1 w-2.5 h-2.5 rounded-full border border-black ${
+                  !card.owned ? 'bg-red-500' :
+                  (card.qty_in_decks || 0) >= (card.qty_owned || 1) ? 'bg-gray-500' :
+                  (card.qty_in_decks || 0) > 0 ? 'bg-yellow-500' :
+                  'bg-green-500'
+                }`} title={
+                  !card.owned ? 'Not owned' :
+                  (card.qty_in_decks || 0) > 0 ? `In ${(card.in_decks || []).map(d => d.name).join(', ')}` :
+                  'Owned'
+                } />
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 rounded-lg">
                   {canHaveMultiple(card.name) && (
                     <>
@@ -1866,6 +2232,16 @@ function DeckBuilder({ data, commander, onBack }) {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => { setTempComposition(activeComposition); setShowCompositionSettings(true); }}
+            className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+            title="Deck Composition Settings"
+          >
+            <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
           <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
@@ -1896,9 +2272,281 @@ function DeckBuilder({ data, commander, onBack }) {
         <DeckStats cards={includedCards} />
       </div>
 
+      {/* Composition Analysis Panel */}
+      <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
+            <div className="flex items-center gap-1">
+              {[
+                { value: 'collection', label: 'Collection' },
+                { value: 'cheapest', label: 'Cheapest' },
+                { value: 'best', label: 'Best' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setSuggestionMode(opt.value)}
+                  className={`px-2 py-0.5 text-[10px] rounded-full transition-colors ${
+                    suggestionMode === opt.value
+                      ? 'bg-yellow-600 text-white'
+                      : 'bg-gray-700 text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={() => { setTempComposition(activeComposition); setShowCompositionSettings(true); }}
+            className="text-xs text-gray-400 hover:text-white transition-colors"
+          >
+            Edit Targets
+          </button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {CATEGORY_META.map(({ key, label, color }) => {
+            const actual = categoryCounts[key];
+            const target = activeComposition[key];
+            const diff = actual - target;
+            const pct = Math.min(100, Math.round((actual / Math.max(target, 1)) * 100));
+            return (
+              <div key={key} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-400">{label}</span>
+                  <span className={diff === 0 ? 'text-green-400' : diff > 0 ? 'text-yellow-400' : 'text-red-400'}>
+                    {actual}/{target}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${diff === 0 ? 'bg-green-500' : diff > 0 ? 'bg-yellow-500' : color}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                {diff !== 0 && (
+                  <p className="text-[10px] text-gray-500">
+                    {diff > 0 ? `${diff} over` : `${-diff} short`}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Swap Suggestions */}
+        {swapSuggestions.length > 0 && (
+          <div className="border-t border-gray-700/50 pt-3 space-y-2">
+            <h4 className="text-xs font-medium text-gray-400">Suggested Swaps</h4>
+            {swapSuggestions.map((swap, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs bg-gray-900/50 rounded-lg px-3 py-2">
+                <button
+                  onClick={() => { removeOneIncluded(swap.remove.name); addOneExcluded(swap.add.name); }}
+                  className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-[10px] font-medium transition-colors flex-shrink-0"
+                >
+                  Swap
+                </button>
+                <span className="text-red-400 truncate" title={swap.remove.name}>
+                  - {swap.remove.name}
+                </span>
+                <span className="text-gray-500 flex-shrink-0 text-[10px]">({swap.remove.fromCategory})</span>
+                <svg className="w-3 h-3 text-gray-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+                <span className="text-green-400 truncate" title={swap.add.name}>
+                  + {swap.add.name}
+                </span>
+                <span className="text-gray-500 flex-shrink-0 text-[10px]">({swap.add.toCategory})</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {viewMode === 'list' && renderListView()}
       {viewMode === 'gallery' && renderGalleryView()}
       {viewMode === 'stacks' && renderStacksView()}
+
+      {/* Deck Composition Settings Modal */}
+      {showCompositionSettings && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-4">Deck Composition Targets</h3>
+              {/* Suggestion priority toggle */}
+              <div className="flex items-center gap-2 mb-5">
+                <span className="text-xs text-gray-400">Prioritize:</span>
+                {[
+                  { value: 'collection', label: 'My Collection' },
+                  { value: 'cheapest', label: 'Cheapest' },
+                  { value: 'best', label: 'Best Synergy' },
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSuggestionMode(opt.value)}
+                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                      suggestionMode === opt.value
+                        ? 'bg-yellow-600 text-white'
+                        : 'bg-gray-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-6">
+                {/* Left: Sliders */}
+                <div className="flex-1 min-w-0">
+                  <div className="space-y-5 mb-6">
+                    {CATEGORY_META.map(({ key, label }) => {
+                      const min = key === 'lands' ? 30 : key === 'synergy' ? 10 : key === 'removal' ? 3 : 5;
+                      const max = key === 'lands' ? 45 : key === 'synergy' ? 40 : key === 'utility' ? 25 : 20;
+                      return (
+                        <div key={key}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-gray-300 text-sm">{label}</span>
+                            <span className="text-xs text-gray-500">
+                              {categoryCounts[key]}/{tempComposition[key]}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={min}
+                            max={max}
+                            value={tempComposition[key]}
+                            onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
+                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                            style={{
+                              background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="bg-gray-900 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400 text-sm">Total allocated:</span>
+                      <span className={`font-bold ${
+                        Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
+                          ? 'text-green-400'
+                          : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
+                            ? 'text-red-400'
+                            : 'text-yellow-400'
+                      }`}>
+                        {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
+                  </div>
+                </div>
+                {/* Right: Live preview */}
+                <div className="w-64 flex-shrink-0">
+                  <h4 className="text-xs font-semibold text-gray-400 mb-3">Preview Changes</h4>
+                  {(() => {
+                    const previewRemovals = [];
+                    const previewAdds = [];
+                    for (const { key, label } of CATEGORY_META) {
+                      const actual = categoryCounts[key];
+                      const newTarget = tempComposition[key];
+                      const diff = actual - newTarget;
+                      if (diff > 0) {
+                        const candidates = nonCommanderIncluded
+                          .filter(c => classifyFunctionalCategory(c) === key)
+                          .sort((a, b) => {
+                            if (a.isBasicLand && !b.isBasicLand) return -1;
+                            if (!a.isBasicLand && b.isBasicLand) return 1;
+                            if (!a.owned && b.owned) return -1;
+                            if (a.owned && !b.owned) return 1;
+                            const pa = a.price || 0, pb = b.price || 0;
+                            if (pa !== pb) return pb - pa;
+                            return (a.synergy || 0) - (b.synergy || 0);
+                          });
+                        let remaining = diff;
+                        for (const c of candidates) {
+                          if (remaining <= 0) break;
+                          const take = Math.min(c.qty, remaining);
+                          previewRemovals.push({ name: c.name, qty: take, category: label });
+                          remaining -= take;
+                        }
+                      } else if (diff < 0) {
+                        let remaining = Math.abs(diff);
+                        // First: add from excluded cards
+                        const candidates = nonCommanderExcluded
+                          .filter(c => classifyFunctionalCategory(c) === key)
+                          .sort(sortAddCandidates);
+                        for (const c of candidates) {
+                          if (remaining <= 0) break;
+                          previewAdds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy });
+                          remaining -= 1;
+                        }
+                        // Second: if still remaining, increase qty on already-included unlimited cards
+                        if (remaining > 0) {
+                          const includedUnlimited = nonCommanderIncluded
+                            .filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
+                            .sort(sortAddCandidates);
+                          for (const c of includedUnlimited) {
+                            if (remaining <= 0) break;
+                            previewAdds.push({ name: c.name, qty: remaining, category: label, owned: c.owned, synergy: c.synergy });
+                            remaining = 0;
+                          }
+                        }
+                      }
+                    }
+                    if (previewRemovals.length === 0 && previewAdds.length === 0) {
+                      return <p className="text-xs text-gray-600 italic">Adjust sliders to see changes</p>;
+                    }
+                    return (
+                      <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                        {previewRemovals.map((r, i) => (
+                          <div key={`r-${i}`} className="flex items-center gap-1.5 text-xs">
+                            <span className="text-red-400 flex-shrink-0">−</span>
+                            <span className="text-red-400 truncate">{r.qty > 1 ? `${r.qty}x ` : ''}{r.name}</span>
+                            <span className="text-gray-600 text-[10px] flex-shrink-0">({r.category})</span>
+                          </div>
+                        ))}
+                        {previewRemovals.length > 0 && previewAdds.length > 0 && (
+                          <div className="border-t border-gray-700/50 my-1" />
+                        )}
+                        {previewAdds.map((a, i) => (
+                          <div key={`a-${i}`} className="flex items-center gap-1.5 text-xs">
+                            <span className="text-green-400 flex-shrink-0">+</span>
+                            <span className="text-green-400 truncate">{a.qty > 1 ? `${a.qty}x ` : ''}{a.name}</span>
+                            <span className="text-gray-600 text-[10px] flex-shrink-0">({a.category})</span>
+                            {a.owned && <span className="text-[9px] text-blue-400 bg-blue-400/10 px-1 rounded flex-shrink-0">owned</span>}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+              <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-700">
+                <button
+                  onClick={() => setTempComposition(DEFAULT_COMPOSITION)}
+                  className="text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Reset to Defaults
+                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowCompositionSettings(false)}
+                    className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => applyComposition(tempComposition)}
+                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1917,12 +2565,7 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
   }, [commanders]);
 
   if (loading) {
-    return (
-      <div className="text-center py-12">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-        <p className="text-gray-400">Comparing commanders...</p>
-      </div>
-    );
+    return <LoadingOverlay message="Comparing commanders..." submessage="Fetching deck data and matching against your collection." />;
   }
 
   if (error) {
@@ -2080,21 +2723,6 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   const initialFetchDone = useRef(false);
   const currentCommander = useRef(commander.name);
 
-  // Deck composition settings
-  const [showCompositionSettings, setShowCompositionSettings] = useState(false);
-  const [composition, setComposition] = useState(DEFAULT_COMPOSITION);
-  const [tempComposition, setTempComposition] = useState(DEFAULT_COMPOSITION);
-  const [priorities, setPriorities] = useState({
-    preferOwned: true,
-    budgetConscious: false,
-    includeStaples: true
-  });
-  const [tempPriorities, setTempPriorities] = useState({
-    preferOwned: true,
-    budgetConscious: false,
-    includeStaples: true
-  });
-
   // Reset state when commander changes
   useEffect(() => {
     if (currentCommander.current !== commander.name) {
@@ -2193,29 +2821,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   };
 
   if (loading && !data) {
-    return (
-      <div className="space-y-6">
-        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
-        {/* Show header immediately with commander card info */}
-        <div className="flex gap-6 items-start">
-          {commander.image_uri && (
-            <img src={commander.image_uri} alt={commander.name} className="w-48 rounded-lg shadow-lg flex-shrink-0" />
-          )}
-          <div className="space-y-3 flex-1">
-            <h2 className="text-3xl font-bold">{commander.name}</h2>
-            <ColorBadge colors={commander.color_identity} />
-            <div className="space-y-3 mt-4">
-              <div className="animate-pulse space-y-3">
-                <div className="h-10 bg-gray-700 rounded w-32" />
-                <div className="h-2.5 bg-gray-700 rounded w-full" />
-                <div className="h-4 bg-gray-700 rounded w-48" />
-              </div>
-              <p className="text-gray-400 text-sm mt-4">Fetching average deck from EDHREC, classifying cards, and loading prices...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <LoadingOverlay message={`Loading ${commander.name}...`} submessage="Fetching average deck from EDHREC, classifying cards, and loading prices." />;
   }
 
   if (error) {
@@ -2311,20 +2917,6 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
                 >
                   EDHREC
                 </a>
-                <button
-                  onClick={() => {
-                    setTempComposition(composition);
-                    setTempPriorities(priorities);
-                    setShowCompositionSettings(true);
-                  }}
-                  className="p-2 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
-                  title="Deck Composition Settings"
-                >
-                  <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </button>
               </div>
             </div>
             <div className="flex items-baseline gap-4">
@@ -2555,118 +3147,6 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
         </div>
       )}
 
-      {/* Deck Composition Settings Modal */}
-      {showCompositionSettings && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <h3 className="text-xl font-bold text-white mb-6">Deck Composition Settings</h3>
-
-              {/* Category Sliders */}
-              <div className="space-y-5 mb-6">
-                {[
-                  { key: 'lands', label: 'Lands', icon: '🏔️', min: 30, max: 45 },
-                  { key: 'ramp', label: 'Ramp', icon: '⚡', min: 5, max: 20 },
-                  { key: 'cardDraw', label: 'Card Draw', icon: '📚', min: 5, max: 20 },
-                  { key: 'removal', label: 'Removal', icon: '💀', min: 3, max: 15 },
-                  { key: 'synergy', label: 'Synergy', icon: '✨', min: 10, max: 40 },
-                  { key: 'utility', label: 'Utility', icon: '🔧', min: 5, max: 25 },
-                ].map(({ key, label, icon, min, max }) => (
-                  <div key={key}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-gray-300 flex items-center gap-2">
-                        <span>{icon}</span> {label}
-                      </span>
-                      <span className="text-white font-medium w-8 text-right">{tempComposition[key]}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={min}
-                      max={max}
-                      value={tempComposition[key]}
-                      onChange={(e) => setTempComposition(prev => ({ ...prev, [key]: parseInt(e.target.value) }))}
-                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                      style={{
-                        background: `linear-gradient(to right, #eab308 0%, #eab308 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 ${((tempComposition[key] - min) / (max - min)) * 100}%, #374151 100%)`
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {/* Total Counter */}
-              <div className="bg-gray-900 rounded-lg p-3 mb-6">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Total allocated:</span>
-                  <span className={`font-bold ${
-                    Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
-                      ? 'text-green-400'
-                      : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
-                        ? 'text-red-400'
-                        : 'text-yellow-400'
-                  }`}>
-                    {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
-                  </span>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
-              </div>
-
-              {/* Priority Toggles */}
-              <div className="mb-6">
-                <h4 className="text-sm font-medium text-gray-400 mb-3">Priorities</h4>
-                <div className="space-y-3">
-                  {[
-                    { key: 'preferOwned', label: 'Prefer cards I own' },
-                    { key: 'budgetConscious', label: 'Budget conscious' },
-                    { key: 'includeStaples', label: 'Include format staples' },
-                  ].map(({ key, label }) => (
-                    <label key={key} className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={tempPriorities[key]}
-                        onChange={(e) => setTempPriorities(prev => ({ ...prev, [key]: e.target.checked }))}
-                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-yellow-500 focus:ring-yellow-500 focus:ring-offset-gray-800"
-                      />
-                      <span className="text-gray-300">{label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-4 border-t border-gray-700">
-                <button
-                  onClick={() => {
-                    setTempComposition(DEFAULT_COMPOSITION);
-                    setTempPriorities({ preferOwned: true, budgetConscious: false, includeStaples: true });
-                  }}
-                  className="text-sm text-gray-400 hover:text-white transition-colors"
-                >
-                  Reset to Defaults
-                </button>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowCompositionSettings(false)}
-                    className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      setComposition(tempComposition);
-                      setPriorities(tempPriorities);
-                      setShowCompositionSettings(false);
-                    }}
-                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       </div>
     </div>
   );
@@ -3194,16 +3674,7 @@ function CollectionStats({ collectionCount }) {
   }
 
   if (loading) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
-        <div className="text-center py-12">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-gray-400">Analyzing your collection...</p>
-          <p className="text-xs text-gray-500 mt-1">Fetching prices and card data from Scryfall</p>
-        </div>
-      </div>
-    );
+    return <LoadingOverlay message="Analyzing your collection..." submessage="Fetching prices and card data from Scryfall." />;
   }
 
   if (error) {

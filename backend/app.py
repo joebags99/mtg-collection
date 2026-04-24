@@ -804,16 +804,20 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
 
 
 scryfall_type_cache = {}
+scryfall_oracle_cache = {}  # {normalized_name: oracle_text_string}
 scryfall_mana_cache = {}  # {card_name: {"cmc": float, "mana_cost": str}}
 
 
 def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
     """Fetch cmc and mana_cost from Scryfall collection endpoint."""
     result = {}
-    uncached = [n for n in card_names if n not in scryfall_mana_cache]
+    # Normalize names for consistent cache lookups
+    name_to_normalized = {n: normalize_card_name(n) for n in card_names}
+    uncached = [n for n in card_names if name_to_normalized[n] not in scryfall_mana_cache]
     for n in card_names:
-        if n in scryfall_mana_cache:
-            result[n] = scryfall_mana_cache[n]
+        norm = name_to_normalized[n]
+        if norm in scryfall_mana_cache:
+            result[norm] = scryfall_mana_cache[norm]
 
     for i in range(0, len(uncached), 75):
         batch = uncached[i:i+75]
@@ -838,10 +842,15 @@ def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
                     entry = {"cmc": cmc, "mana_cost": mana_cost}
                     scryfall_mana_cache[normalized] = entry
                     result[normalized] = entry
-                    # Also cache the type while we're here
+                    # Also cache the type and oracle text while we're here
                     if normalized not in scryfall_type_cache:
                         card_type = _parse_type_line(type_line)
                         scryfall_type_cache[normalized] = card_type
+                    if normalized not in scryfall_oracle_cache:
+                        oracle = card.get("oracle_text", "")
+                        if not oracle and card.get("card_faces"):
+                            oracle = card["card_faces"][0].get("oracle_text", "")
+                        scryfall_oracle_cache[normalized] = oracle
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall mana fetch error: {e}")
@@ -881,6 +890,11 @@ def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
                     card_type = _parse_type_line(type_line)
                     scryfall_type_cache[normalized] = card_type
                     result[normalized] = card_type
+                    # Also cache oracle text for functional classification
+                    oracle = card.get("oracle_text", "")
+                    if not oracle and "card_faces" in card:
+                        oracle = card["card_faces"][0].get("oracle_text", "")
+                    scryfall_oracle_cache[normalized] = oracle
             time.sleep(0.1)
         except Exception as e:
             logger.error(f"Scryfall type fetch error: {e}")
@@ -928,6 +942,133 @@ def classify_card_type(card_name: str, type_data: dict) -> str:
             if card.get("name_normalized") == normalized:
                 return type_name
     return ""
+
+
+def classify_functional_category(
+    card_name_normalized: str,
+    card_type: str,
+    type_data: dict,
+) -> str:
+    """Classify a card into a functional deck-building category using card type,
+    EDHREC source lists, and oracle text analysis.
+
+    Categories: lands, ramp, cardDraw, removal, synergy, utility
+    """
+    # 1. Lands are straightforward
+    if card_type == "Land":
+        return "lands"
+
+    # 2. Check EDHREC mana artifacts list -> ramp
+    mana_art_names = {c.get("name_normalized") for c in type_data.get("top_mana_artifacts", [])}
+    if card_name_normalized in mana_art_names:
+        return "ramp"
+
+    # 3. Use oracle text for functional classification
+    oracle = scryfall_oracle_cache.get(card_name_normalized, "").lower()
+
+    # Ramp: produces mana or fetches lands
+    ramp_patterns = [
+        "add {",                          # Mana production
+        "add one mana",
+        "add two mana",
+        "add three mana",
+        "adds one mana",
+        "search your library for a basic land",
+        "search your library for a land",
+        "put that card onto the battlefield",  # land fetch to battlefield
+    ]
+    if any(p in oracle for p in ramp_patterns):
+        # Exclude cards that are primarily something else (e.g. Solemn Simulacrum draws too)
+        # but ramp is the primary function if it fetches/produces mana
+        return "ramp"
+
+    # Card draw: draws cards
+    draw_patterns = [
+        "draw a card",
+        "draw cards",
+        "draw two",
+        "draw three",
+        "draws a card",
+        "draw x card",
+        "draw that many",
+    ]
+    # Exclude "when ~ dies, draw" type secondary effects for creatures
+    # by checking if draw is a primary ability (appears early in oracle text)
+    if any(p in oracle for p in draw_patterns):
+        # If it's a noncreature spell or the draw is the main effect, classify as cardDraw
+        if card_type in ("Instant", "Sorcery", "Enchantment"):
+            return "cardDraw"
+        # For creatures/artifacts, only classify as draw if oracle text leads with draw
+        first_ability = oracle.split("\n")[0] if oracle else ""
+        if any(p in first_ability for p in draw_patterns):
+            return "cardDraw"
+
+    # Removal: destroys, exiles, counters, or bounces
+    removal_patterns = [
+        "destroy target",
+        "destroy all",
+        "exile target",
+        "exile all",
+        "counter target spell",
+        "return target",    # bounce
+        "deals damage to any target",
+        "deals damage to target",
+        "fight",            # creature-based removal
+        "-x/-x",
+        "gets -",
+    ]
+    if any(p in oracle for p in removal_patterns):
+        if card_type in ("Instant", "Sorcery"):
+            return "removal"
+        # For permanents, check if removal is their primary purpose
+        first_ability = oracle.split("\n")[0] if oracle else ""
+        if any(p in first_ability for p in removal_patterns):
+            return "removal"
+
+    # Utility: tutors, protection, recursion, graveyard, general value
+    utility_patterns = [
+        "search your library",      # tutors (non-land, those caught by ramp above)
+        "hexproof",
+        "indestructible",
+        "protection from",
+        "shroud",
+        "return target card from your graveyard",
+        "return target creature card from your graveyard",
+        "put target card from a graveyard",
+        "can't be countered",
+        "flash",
+        "copy target",
+        "create a token",
+        "create a copy",
+        "whenever a creature enters",
+        "whenever a nontoken creature",
+        "whenever you cast",
+        "at the beginning of your upkeep",
+        "sacrifice a creature",
+        "each opponent",
+        "whenever an opponent",
+    ]
+    if any(p in oracle for p in utility_patterns):
+        # Only classify as utility if NOT already caught by ramp/draw patterns
+        return "utility"
+
+    # High synergy cards (from EDHREC synergy list) -> synergy
+    synergy_names = {c.get("name_normalized") for c in type_data.get("high_synergy", [])}
+    if card_name_normalized in synergy_names:
+        return "synergy"
+
+    # Cards that appear in any EDHREC top-card list for this commander are synergy picks
+    all_top_names = set()
+    for top_key in ["top_creatures", "top_instants", "top_sorceries", "top_enchantments",
+                     "top_artifacts", "top_planeswalkers", "top_lands", "top_utility_lands"]:
+        for c in type_data.get(top_key, []):
+            all_top_names.add(c.get("name_normalized"))
+    # Exclude mana artifacts (already classified as ramp above)
+    if card_name_normalized in all_top_names:
+        return "synergy"
+
+    # Default: utility (generic goodstuff not tied to this commander)
+    return "utility"
 
 
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
@@ -1677,6 +1818,19 @@ async def get_commander_detail(
             minfo = rec_mana.get(r["name_normalized"], rec_mana.get(r["name"], {}))
             r["cmc"] = minfo.get("cmc", 0)
             r["mana_cost"] = minfo.get("mana_cost", "")
+
+    # --- Functional category classification ---
+    # Apply to owned + missing (the average deck cards)
+    for card in owned + missing:
+        card["functional_category"] = classify_functional_category(
+            card["name_normalized"], card["card_type"], type_data,
+        )
+
+    # Apply to recommendations
+    for r in recommendations:
+        r["functional_category"] = classify_functional_category(
+            r["name_normalized"], r.get("card_type", ""), type_data,
+        )
 
     # Sort recommendations by synergy descending
     recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
