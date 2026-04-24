@@ -96,6 +96,16 @@ def init_db():
         )
     """)
 
+    # User favorites - one list per user
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_favorites (
+            user_id INTEGER PRIMARY KEY,
+            cards_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
     conn.close()
     logger.info(f"Database initialized at {DATABASE_PATH}")
@@ -396,6 +406,12 @@ async def get_all_user_data(user: dict = Depends(require_user)):
         FROM user_decks WHERE user_id = ?
     """, (user_id,))
     deck_rows = cursor.fetchall()
+
+    # Get favorites
+    cursor.execute("SELECT cards_json FROM user_favorites WHERE user_id = ?", (user_id,))
+    fav_row = cursor.fetchone()
+    favorites = json.loads(fav_row["cards_json"]) if fav_row else []
+
     conn.close()
 
     decks = {}
@@ -409,8 +425,47 @@ async def get_all_user_data(user: dict = Depends(require_user)):
 
     return {
         "collection": {"cards": cards, "count": len(cards)},
-        "decks": {"decks": decks, "count": len(decks)}
+        "decks": {"decks": decks, "count": len(decks)},
+        "favorites": {"cards": favorites, "count": len(favorites)},
     }
+
+
+@app.post("/api/user/favorites/save")
+async def save_user_favorites(body: dict, user: dict = Depends(require_user)):
+    """Save user's favorite cards to database."""
+    cards = body.get("cards", [])
+    user_id = user["user_id"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO user_favorites (user_id, cards_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            cards_json = excluded.cards_json,
+            updated_at = CURRENT_TIMESTAMP
+    """, (user_id, json.dumps(cards)))
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "count": len(cards)}
+
+
+@app.get("/api/user/favorites")
+async def get_user_favorites(user: dict = Depends(require_user)):
+    """Load user's favorite cards from database."""
+    user_id = user["user_id"]
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT cards_json, updated_at FROM user_favorites WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {"cards": [], "count": 0}
+
+    cards = json.loads(row["cards_json"])
+    return {"cards": cards, "count": len(cards), "updated_at": row["updated_at"]}
 
 
 edhrec = EDHRec()
@@ -1151,6 +1206,33 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         }
 
 
+def fetch_color_identities(card_names: list) -> set:
+    """Fetch color identities for a list of cards from Scryfall. Returns union of all colors found."""
+    colors = set()
+    clean_names = [n.split("//")[0].strip() for n in card_names]
+
+    for i in range(0, len(clean_names), 75):
+        batch = clean_names[i:i + 75]
+        identifiers = [{"name": n} for n in batch]
+        try:
+            resp = requests.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": identifiers},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for card in data.get("data", []):
+                    for c in card.get("color_identity", []):
+                        colors.add(c)
+        except Exception as e:
+            logger.error(f"Color identity fetch error: {e}")
+        if i + 75 < len(clean_names):
+            time.sleep(0.1)
+
+    return colors
+
+
 # --- API Endpoints ---
 
 @app.post("/api/collection/upload")
@@ -1848,6 +1930,74 @@ async def get_commander_detail(
         "missing_cards": missing,
         "recommendations": recommendations,
         "error": data.get("error"),
+    }
+
+
+@app.post("/api/recommendations/from-favorites")
+@rate_limit(RATE_LIMIT)
+async def recommendations_from_favorites(request: Request, body: dict):
+    """Find commanders that synergize with a list of favorite cards."""
+    card_names = body.get("card_names", [])
+    limit = body.get("limit", 40)
+
+    if not card_names:
+        raise HTTPException(status_code=400, detail="No card names provided")
+    if len(card_names) > 100:
+        raise HTTPException(status_code=400, detail="Too many cards (max 100)")
+
+    # Detect color identity union from the favorites
+    detected_colors = fetch_color_identities(card_names)
+
+    # Get all commanders and filter to those whose color identity is a superset of detected colors
+    commanders = get_cached_commanders()
+    if detected_colors:
+        commanders = [
+            c for c in commanders
+            if detected_colors.issubset(set(c["color_identity"]))
+        ]
+
+    # Score most-popular commanders first (better cache hit rate, faster results)
+    commanders = sorted(commanders, key=lambda c: c["edhrec_rank"])[:150]
+
+    favorites_normalized = {normalize_card_name(n) for n in card_names}
+    norm_to_display = {normalize_card_name(n): n for n in card_names}
+
+    results = []
+    for cmd in commanders:
+        data = get_commander_avg_deck(cmd["name"])
+        deck_cards = set(data.get("deck_card_names", []))
+        if not deck_cards:
+            continue
+
+        matched_normalized = favorites_normalized & deck_cards
+        match_count = len(matched_normalized)
+        if match_count == 0:
+            continue
+
+        match_pct = round(match_count / len(favorites_normalized) * 100, 1)
+        matched_display = sorted([norm_to_display[n] for n in matched_normalized if n in norm_to_display])
+
+        results.append({
+            "name": cmd["name"],
+            "color_identity": cmd["color_identity"],
+            "image_uri": cmd["image_uri"],
+            "edhrec_rank": cmd["edhrec_rank"],
+            "num_decks": data.get("num_decks", 0),
+            "match_count": match_count,
+            "total_favorites": len(favorites_normalized),
+            "match_percentage": match_pct,
+            "matched_cards": matched_display,
+        })
+
+        time.sleep(0.05)
+
+    # Sort by match % descending, then by EDHREC rank ascending (more popular first on ties)
+    results.sort(key=lambda r: (r["match_percentage"], -r["edhrec_rank"]), reverse=True)
+
+    return {
+        "results": results[:limit],
+        "detected_colors": sorted(list(detected_colors)),
+        "total_commanders_checked": len(commanders),
     }
 
 

@@ -267,11 +267,12 @@ function ColorBadge({ colors }) {
   );
 }
 
-function CardName({ name, className = '' }) {
+function CardName({ name, className = '', favorites, onToggleFavorite }) {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const ref = useRef(null);
   const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(name)}`;
+  const isFav = favorites && favorites.has(name.toLowerCase());
 
   const handleMouseEnter = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -289,11 +290,20 @@ function CardName({ name, className = '' }) {
   return (
     <span
       ref={ref}
-      className={`cursor-pointer hover:text-blue-400 transition-colors ${className}`}
+      className={`inline-flex items-center gap-1 cursor-pointer hover:text-blue-400 transition-colors ${className}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShow(false)}
     >
       {name}
+      {onToggleFavorite && (
+        <button
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleFavorite(name); }}
+          className={`text-xs leading-none transition-colors flex-shrink-0 ${isFav ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
+          title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          {isFav ? '★' : '☆'}
+        </button>
+      )}
       {show && (
         <div
           className="fixed z-50 pointer-events-none"
@@ -332,6 +342,7 @@ const STORAGE_KEY = 'mtg_collection';
 const DECKS_STORAGE_KEY = 'mtg_decks';
 const AUTH_TOKEN_KEY = 'mtg_auth_token';
 const AUTH_USER_KEY = 'mtg_auth_user';
+const FAVORITES_STORAGE_KEY = 'mtg_favorites';
 
 function saveAuthToken(token) {
   try {
@@ -407,6 +418,24 @@ function loadDecks() {
     console.error('Failed to load decks from localStorage:', e);
   }
   return {};
+}
+
+function saveFavorites(favs) {
+  try {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...favs]));
+  } catch (e) {
+    console.error('Failed to save favorites:', e);
+  }
+}
+
+function loadFavorites() {
+  try {
+    const data = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (data) return new Set(JSON.parse(data));
+  } catch (e) {
+    console.error('Failed to load favorites:', e);
+  }
+  return new Set();
 }
 
 // --- API helpers ---
@@ -1198,7 +1227,7 @@ function groupByType(cards) {
   return CARD_TYPE_ORDER.filter(t => groups[t]?.length > 0).map(t => ({ type: t, cards: groups[t] }));
 }
 
-function CardListByType({ ownedCards, missingCards, showOwned, showMissing, totalMissingPrice }) {
+function CardListByType({ ownedCards, missingCards, showOwned, showMissing, totalMissingPrice, favorites, onToggleFavorite }) {
   const ownedGroups = groupByType(ownedCards);
   const missingGroups = groupByType(missingCards);
 
@@ -1220,7 +1249,7 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                   <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
-                      <CardName name={card.name} className="text-sm" />
+                      <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <DeckBadges inDecks={card.in_decks} />
@@ -1261,7 +1290,7 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                   <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
-                      <CardName name={card.name} className="text-sm" />
+                      <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <DeckBadges inDecks={card.in_decks} />
@@ -1659,7 +1688,7 @@ function classifyFunctionalCategory(card) {
 // Basic lands for each color identity
 const COLOR_TO_BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
 
-function DeckBuilder({ data, commander, onBack }) {
+function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
   const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
@@ -2001,7 +2030,7 @@ function DeckBuilder({ data, commander, onBack }) {
                 <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group deck-card-enhanced hover:bg-gray-700/50">
                   <div className="flex items-center gap-2">
                     <AvailDot card={card} />
-                    <CardName name={card.name} className="text-sm" />
+                    <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                     {card.isRecommendation && <span className="text-xs text-purple-400 bg-purple-900/30 px-1.5 py-0.5 rounded">rec</span>}
                     {card.isCommander && <span className="text-xs text-yellow-400 bg-yellow-900/30 px-1.5 py-0.5 rounded">cmdr</span>}
                   </div>
@@ -2043,7 +2072,7 @@ function DeckBuilder({ data, commander, onBack }) {
             <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
               <div className="flex items-center gap-2">
                 <AvailDot card={card} />
-                <CardName name={card.name} className="text-sm text-gray-400" />
+                <CardName name={card.name} className="text-sm text-gray-400" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                 <DeckBadges inDecks={card.in_decks} />
               </div>
               <button
@@ -2706,7 +2735,7 @@ const DEFAULT_COMPOSITION = {
   utility: 13
 };
 
-function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder, excludeInDecks }) {
+function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder, excludeInDecks, favorites, onToggleFavorite }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -3061,6 +3090,8 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
         showOwned={showOwned}
         showMissing={showMissing}
         totalMissingPrice={data.total_missing_price}
+        favorites={favorites}
+        onToggleFavorite={onToggleFavorite}
       />
 
       {/* Possible Recommendations */}
@@ -3120,7 +3151,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
                   ) : (
                     <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="Not in collection" />
                   )}
-                  <CardName name={card.name} className="text-sm" />
+                  <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                   {card.card_type && (
                     <span className="text-xs text-gray-600">{card.card_type}</span>
                   )}
@@ -4231,6 +4262,211 @@ Arcane Signet`}
   );
 }
 
+// --- Favorites Tab ---
+
+function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectCommander, onOpenDeckBuilder }) {
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [detectedColors, setDetectedColors] = useState([]);
+  const [searched, setSearched] = useState(false);
+  const [buildingDeck, setBuildingDeck] = useState(null);
+
+  const favList = [...favorites];
+
+  const handleFind = async () => {
+    if (favList.length === 0) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiPost('/api/recommendations/from-favorites', { card_names: favList });
+      setResults(data.results || []);
+      setDetectedColors(data.detected_colors || []);
+      setSearched(true);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const handleBuildDeck = async (cmd) => {
+    setBuildingDeck(cmd.name);
+    try {
+      const data = await apiGet(`/api/commander/${encodeURIComponent(cmd.name)}`);
+      onOpenDeckBuilder(data, cmd);
+    } catch (err) {
+      setError(err.message);
+    }
+    setBuildingDeck(null);
+  };
+
+  const COLOR_NAMES = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
+
+  return (
+    <div className="space-y-6 page-fade-in">
+      <PageHero
+        title="Find My Commander"
+        subtitle="Star cards you love, and we'll find commanders that synergize with them using EDHREC data."
+        colorIdentity={detectedColors}
+      />
+
+      {/* Favorites list */}
+      <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-white">
+            {favList.length === 0 ? 'No favorites yet' : `Your Favorites (${favList.length})`}
+          </h2>
+          {favList.length > 0 && (
+            <button
+              onClick={onClearFavorites}
+              className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+
+        {favList.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <div className="text-4xl mb-3">☆</div>
+            <p className="text-sm">Star cards from any card list to add them here.</p>
+            <p className="text-xs mt-1 text-gray-600">Look for the ☆ icon next to card names in commander details, deck builder, and recommendations.</p>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {favList.map(name => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1.5 bg-gray-700 border border-gray-600 rounded-full px-3 py-1 text-sm"
+              >
+                <span className="text-yellow-400 text-xs">★</span>
+                {name}
+                <button
+                  onClick={() => onToggleFavorite(name)}
+                  className="text-gray-500 hover:text-red-400 transition-colors ml-0.5 text-xs"
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {favList.length > 0 && (
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={handleFind}
+              disabled={loading}
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2 rounded-lg font-medium text-sm transition-colors"
+            >
+              {loading ? 'Searching...' : 'Find My Commander'}
+            </button>
+            {detectedColors.length > 0 && (
+              <span className="text-xs text-gray-400">
+                Detected colors: <span className="font-medium text-white">{detectedColors.map(c => COLOR_NAMES[c] || c).join(', ')}</span>
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{error}</div>
+      )}
+
+      {loading && (
+        <div className="flex items-center justify-center py-12 text-gray-400 gap-3">
+          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <span>Checking commanders against your favorites&hellip;</span>
+        </div>
+      )}
+
+      {/* Results */}
+      {searched && !loading && (
+        <div className="space-y-3">
+          <SectionHeader color="blue" count={results.length}>
+            Commander Recommendations
+          </SectionHeader>
+
+          {results.length === 0 ? (
+            <div className="bg-gray-800 rounded-lg p-6 text-center text-gray-500">
+              <p>No commanders found that match your favorites.</p>
+              <p className="text-xs mt-1">Try adding more cards or cards with different colors.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-4">
+              {results.map(cmd => (
+                <div key={cmd.name} className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3 hover:border-gray-600 transition-colors">
+                  <div className="flex items-start gap-3">
+                    {cmd.image_uri && (
+                      <img
+                        src={cmd.image_uri}
+                        alt={cmd.name}
+                        className="w-12 h-12 rounded-lg object-cover object-top flex-shrink-0 border border-gray-600"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-white text-sm">{cmd.name}</span>
+                        <ColorBadge colors={cmd.color_identity} />
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {cmd.num_decks?.toLocaleString()} decks on EDHREC
+                      </div>
+                      <div className="mt-1.5">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-gray-400">
+                            {cmd.match_count} of {cmd.total_favorites} favorites fit
+                          </span>
+                          <span className={`font-bold ${
+                            cmd.match_percentage >= 75 ? 'text-green-400' :
+                            cmd.match_percentage >= 50 ? 'text-yellow-400' :
+                            'text-orange-400'
+                          }`}>
+                            {cmd.match_percentage}%
+                          </span>
+                        </div>
+                        <MatchBar percentage={cmd.match_percentage} size="sm" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Matched cards */}
+                  <div className="flex flex-wrap gap-1">
+                    {cmd.matched_cards.map(card => (
+                      <span key={card} className="text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-800/50 rounded px-1.5 py-0.5">
+                        ★ {card}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => onSelectCommander(cmd)}
+                      className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded transition-colors"
+                    >
+                      View Commander
+                    </button>
+                    <button
+                      onClick={() => handleBuildDeck(cmd)}
+                      disabled={buildingDeck === cmd.name}
+                      className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
+                    >
+                      {buildingDeck === cmd.name ? 'Loading…' : 'Build Deck'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Main App ---
 
 function App() {
@@ -4242,6 +4478,29 @@ function App() {
   const [excludeInDecks, setExcludeInDecks] = useState(false);
   const [deckCount, setDeckCount] = useState(0);
   const [decksReady, setDecksReady] = useState(false);
+
+  // Favorites state
+  const [favorites, setFavorites] = useState(() => loadFavorites());
+
+  const handleToggleFavorite = useCallback((cardName) => {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      const key = cardName.toLowerCase();
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      saveFavorites(next);
+      return next;
+    });
+  }, []);
+
+  const handleClearFavorites = useCallback(() => {
+    const empty = new Set();
+    setFavorites(empty);
+    saveFavorites(empty);
+  }, []);
 
   // Auth state
   const [user, setUser] = useState(null);
@@ -4376,7 +4635,8 @@ function App() {
     });
   };
 
-  const handleOpenDeckBuilder = (data) => {
+  const handleOpenDeckBuilder = (data, cmd) => {
+    if (cmd) setSelectedCommander(cmd);
     setDeckBuilderData(data);
     setTab('deckbuilder');
   };
@@ -4393,6 +4653,7 @@ function App() {
     { id: 'upload', label: 'Upload Collection' },
     { id: 'recommend', label: 'Recommendations' },
     { id: 'search', label: 'Search' },
+    { id: 'favorites', label: `Find My Commander${favorites.size > 0 ? ` (${favorites.size}★)` : ''}` },
     { id: 'mydecks', label: `My Decks${deckCount ? ` (${deckCount})` : ''}` },
     { id: 'stats', label: 'Stats' },
   ];
@@ -4487,8 +4748,12 @@ function App() {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                tab === t.id || (tab === 'detail' && t.id === 'recommend') || (tab === 'deckbuilder' && t.id === 'recommend')
+                tab === t.id ||
+                (tab === 'detail' && t.id === 'recommend') ||
+                (tab === 'deckbuilder' && t.id === 'recommend')
                   ? 'border-blue-500 text-blue-400'
+                  : t.id === 'favorites' && favorites.size > 0
+                  ? 'border-transparent text-yellow-400/80 hover:text-yellow-300'
                   : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
             >
@@ -4550,6 +4815,16 @@ function App() {
           />
         </div>
 
+        <div style={{ display: tab === 'favorites' ? 'block' : 'none' }}>
+          <FavoritesTab
+            favorites={favorites}
+            onToggleFavorite={handleToggleFavorite}
+            onClearFavorites={handleClearFavorites}
+            onSelectCommander={handleSelectCommander}
+            onOpenDeckBuilder={handleOpenDeckBuilder}
+          />
+        </div>
+
         <div style={{ display: tab === 'mydecks' ? 'block' : 'none' }}>
           <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
         </div>
@@ -4568,6 +4843,8 @@ function App() {
               onBack={() => setTab('recommend')}
               onOpenDeckBuilder={handleOpenDeckBuilder}
               excludeInDecks={excludeInDecks}
+              favorites={favorites}
+              onToggleFavorite={handleToggleFavorite}
             />
           </div>
         )}
@@ -4578,6 +4855,8 @@ function App() {
               data={deckBuilderData}
               commander={selectedCommander}
               onBack={() => setTab('detail')}
+              favorites={favorites}
+              onToggleFavorite={handleToggleFavorite}
             />
           </div>
         )}
