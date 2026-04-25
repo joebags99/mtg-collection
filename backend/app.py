@@ -670,9 +670,10 @@ def get_all_commanders() -> list[dict]:
         for card in data.get("data", []):
             partner_type = _detect_partner_type(card)
             image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
+            normalized = normalize_card_name(card["name"])
             entry = {
                 "name": card["name"],
-                "name_normalized": normalize_card_name(card["name"]),
+                "name_normalized": normalized,
                 "color_identity": card.get("color_identity", []),
                 "image_uri": image_uris.get("normal", ""),
                 "art_crop": image_uris.get("art_crop", ""),
@@ -685,6 +686,12 @@ def get_all_commanders() -> list[dict]:
             if partner_type == "partner_variant":
                 entry["partner_variant_label"] = _extract_partner_variant_label(card)
             commanders.append(entry)
+            # Cache commander oracle text for functional tag scoring
+            if normalized not in scryfall_oracle_cache:
+                oracle = card.get("oracle_text", "")
+                if not oracle and card.get("card_faces"):
+                    oracle = " ".join(f.get("oracle_text", "") for f in card.get("card_faces", []))
+                scryfall_oracle_cache[normalized] = oracle.lower()
 
         if data.get("has_more"):
             url = data.get("next_page")
@@ -703,11 +710,12 @@ def get_all_commanders() -> list[dict]:
             break
         data = resp.json()
         for card in data.get("data", []):
-            if normalize_card_name(card["name"]) not in existing_names:
+            bg_norm = normalize_card_name(card["name"])
+            if bg_norm not in existing_names:
                 bg_image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
                 commanders.append({
                     "name": card["name"],
-                    "name_normalized": normalize_card_name(card["name"]),
+                    "name_normalized": bg_norm,
                     "color_identity": card.get("color_identity", []),
                     "image_uri": bg_image_uris.get("normal", ""),
                     "art_crop": bg_image_uris.get("art_crop", ""),
@@ -715,7 +723,12 @@ def get_all_commanders() -> list[dict]:
                     "partner_type": "background",
                     "type_line": card.get("type_line", ""),
                 })
-                existing_names.add(normalize_card_name(card["name"]))
+                existing_names.add(bg_norm)
+                if bg_norm not in scryfall_oracle_cache:
+                    oracle = card.get("oracle_text", "")
+                    if not oracle and card.get("card_faces"):
+                        oracle = " ".join(f.get("oracle_text", "") for f in card.get("card_faces", []))
+                    scryfall_oracle_cache[bg_norm] = oracle.lower()
         if data.get("has_more"):
             bg_url = data.get("next_page")
             bg_params = {}
@@ -1209,7 +1222,8 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
 
 
 def fetch_color_identities(card_names: list) -> set:
-    """Fetch color identities for a list of cards from Scryfall. Returns union of all colors found."""
+    """Fetch color identities for a list of cards from Scryfall. Returns union of all colors found.
+    Side-effect: populates scryfall_oracle_cache for all returned cards (free — same API call)."""
     colors = set()
     clean_names = [n.split("//")[0].strip() for n in card_names]
 
@@ -1227,6 +1241,13 @@ def fetch_color_identities(card_names: list) -> set:
                 for card in data.get("data", []):
                     for c in card.get("color_identity", []):
                         colors.add(c)
+                    # Cache oracle text while we have the data
+                    normalized = normalize_card_name(card.get("name", ""))
+                    if normalized and normalized not in scryfall_oracle_cache:
+                        oracle = card.get("oracle_text", "")
+                        if not oracle and card.get("card_faces"):
+                            oracle = card["card_faces"][0].get("oracle_text", "")
+                        scryfall_oracle_cache[normalized] = oracle.lower()
         except Exception as e:
             logger.error(f"Color identity fetch error: {e}")
         if i + 75 < len(clean_names):
@@ -1935,6 +1956,39 @@ async def get_commander_detail(
     }
 
 
+# Functional tag patterns for oracle-text-based scoring of cards EDHREC hasn't indexed.
+# Each tag maps to a list of regex patterns checked against lowercased oracle text.
+FUNCTIONAL_TAGS = {
+    "ramp":         [r"add \{", r"search your library for a.*land", r"put.*land.*onto the battlefield"],
+    "draw":         [r"draw a card", r"draw \w+ cards", r"draws? \w+ card"],
+    "removal":      [r"destroy target", r"exile target", r"return target.*to.*hand"],
+    "wipe":         [r"destroy all", r"exile all", r"each player sacrifices", r"deals \d+ damage to each creature"],
+    "tokens":       [r"create.*token", r"put.*token.*onto the battlefield"],
+    "sacrifice":    [r"sacrifice a", r"sacrifice an", r"when.*is put into a graveyard"],
+    "graveyard":    [r"from your graveyard", r"from a graveyard", r"put.*into your graveyard"],
+    "counters":     [r"put \w+ \+1/\+1 counter", r"proliferate", r"add a counter"],
+    "copy":         [r"copy target", r"create a copy of", r"copy of that spell"],
+    "etb":          [r"when.*enters( the battlefield)?", r"enters the battlefield"],
+    "lifegain":     [r"you gain \d+ life", r"gain \d+ life", r"lifelink"],
+    "reanimator":   [r"return target.*from.*graveyard.*battlefield", r"return.*creature.*graveyard.*play"],
+    "storm":        [r"storm", r"whenever you cast.*instant or sorcery", r"magecraft"],
+    "tribal":       [r"other \w+ you control get", r"of the chosen type", r"share a creature type"],
+    "flicker":      [r"exile.*then return.*to the battlefield", r"blink"],
+    "combat":       [r"double strike", r"trample", r"whenever.*attacks", r"combat damage"],
+}
+
+
+def _derive_functional_tags(oracle_text: str) -> set:
+    """Return the set of functional tags matching patterns in oracle_text (lowercased input expected)."""
+    matched = set()
+    for tag, patterns in FUNCTIONAL_TAGS.items():
+        for pat in patterns:
+            if re.search(pat, oracle_text):
+                matched.add(tag)
+                break
+    return matched
+
+
 @app.post("/api/recommendations/from-favorites")
 @rate_limit(RATE_LIMIT)
 async def recommendations_from_favorites(request: Request, body: dict):
@@ -1998,8 +2052,27 @@ async def recommendations_from_favorites(request: Request, body: dict):
                     cat = "Synergy" if section == "high_synergy" else section.replace("top_", "").replace("_", " ").title()
                     card_pool[n] = (weight, card["name"], cat)
 
+        # 3. New cards — recently released, so inclusion is artificially low; use higher synergy bonus
+        for card in synergy_data.get("new_cards", []):
+            n = card["name_normalized"]
+            if n in card_pool:
+                continue
+            inclusion_pct = card.get("inclusion", 0)
+            synergy_score = card.get("synergy", 0)
+            base = inclusion_pct / 100.0
+            # Higher bonus (0.6 vs 0.3) to compensate for artificially low inclusion rate
+            bonus = max(0.0, synergy_score / 100.0) * 0.6
+            weight = min(base + bonus, 0.85)
+            if weight > 0.02:
+                card_pool[n] = (weight, card["name"], "New")
+
         if not card_pool:
             continue
+
+        # Pre-compute commander's functional tags for oracle fallback scoring
+        cmd_norm = normalize_card_name(cmd["name"])
+        cmd_oracle = scryfall_oracle_cache.get(cmd_norm, "")
+        cmd_tags = _derive_functional_tags(cmd_oracle) if cmd_oracle else set()
 
         # --- Score favorites against the pool ---
         total_score = 0.0
@@ -2010,6 +2083,17 @@ async def recommendations_from_favorites(request: Request, body: dict):
                 weight, _, _ = card_pool[norm]
                 total_score += weight
                 matched_normalized.add(norm)
+            else:
+                # Oracle tag fallback: for cards EDHREC hasn't indexed, check functional overlap
+                # with the commander's own abilities (e.g., a new token spell vs a token commander)
+                fav_oracle = scryfall_oracle_cache.get(norm, "")
+                if fav_oracle and cmd_tags:
+                    fav_tags = _derive_functional_tags(fav_oracle)
+                    overlap = fav_tags & cmd_tags
+                    if overlap:
+                        bonus = min(len(overlap) * 0.15, 0.3)
+                        total_score += bonus
+                        matched_normalized.add(norm)
 
         if not matched_normalized:
             continue
@@ -2021,14 +2105,25 @@ async def recommendations_from_favorites(request: Request, body: dict):
 
         # --- Build expand preview ---
         # Matched favorites first (gold), then top non-land pool cards by weight
-        cmd_norm = normalize_card_name(cmd["name"])
         preview_cards = []
         seen_preview = set()
 
-        for norm in sorted(matched_normalized, key=lambda n: card_pool[n][0], reverse=True):
+        # Sort matched favorites: pool cards by weight first, oracle-tag-only matches last
+        def _fav_sort_key(n):
+            if n in card_pool:
+                return card_pool[n][0]
+            return 0.0  # oracle-tag fallback matches go after pool matches
+
+        for norm in sorted(matched_normalized, key=_fav_sort_key, reverse=True):
             if norm == cmd_norm:
                 continue
-            weight, name, cat = card_pool[norm]
+            if norm in card_pool:
+                weight, name, cat = card_pool[norm]
+            else:
+                # Oracle-tag matched — card isn't in EDHREC's pool yet
+                weight = 0.15
+                name = norm_to_display.get(norm, norm)
+                cat = "Functional"
             preview_cards.append({
                 "name": norm_to_display.get(norm, name),
                 "category": cat,
