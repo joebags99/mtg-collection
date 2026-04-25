@@ -1178,6 +1178,8 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
                             "name": card_name,
                             "name_normalized": normalize_card_name(card_name),
                             "category": card.get("type", card.get("category", "")),
+                            "inclusion": card.get("inclusion", 0),
+                            "synergy": card.get("synergy", 0),
                         })
 
         num_decks = 0
@@ -1964,31 +1966,89 @@ async def recommendations_from_favorites(request: Request, body: dict):
 
     results = []
     for cmd in commanders:
-        data = get_commander_avg_deck(cmd["name"])
-        deck_cards = set(data.get("deck_card_names", []))
-        if not deck_cards:
+        avg_data = get_commander_avg_deck(cmd["name"])
+        synergy_data = get_commander_synergy_cards(cmd["name"])
+
+        # --- Build weighted card pool ---
+        # Maps normalized_name -> (weight 0.0–1.0, display_name, category)
+        card_pool = {}
+
+        # 1. Avg deck cards — weight by inclusion rate (default 0.55 if unknown, since avg deck ≥50%)
+        for card in avg_data.get("decklist", []):
+            n = card["name_normalized"]
+            inclusion_pct = card.get("inclusion", 0)
+            weight = (inclusion_pct / 100.0) if inclusion_pct > 0 else 0.55
+            card_pool[n] = (weight, card["name"], card.get("category", ""))
+
+        # 2. High synergy + top-type cards — covers cards with 10–45% inclusion that are
+        #    uniquely synergistic (invisible to avg-deck-only matching)
+        for section in ["high_synergy", "top_creatures", "top_instants", "top_sorceries",
+                         "top_enchantments", "top_artifacts", "top_planeswalkers",
+                         "top_lands", "top_utility_lands", "top_mana_artifacts"]:
+            for card in synergy_data.get(section, []):
+                n = card["name_normalized"]
+                if n in card_pool:
+                    continue
+                inclusion_pct = card.get("inclusion", 0)
+                synergy_score = card.get("synergy", 0)
+                base = inclusion_pct / 100.0
+                bonus = max(0.0, synergy_score / 100.0) * 0.3
+                weight = min(base + bonus, 0.95)
+                if weight > 0.05:
+                    cat = "Synergy" if section == "high_synergy" else section.replace("top_", "").replace("_", " ").title()
+                    card_pool[n] = (weight, card["name"], cat)
+
+        if not card_pool:
             continue
 
-        matched_normalized = favorites_normalized & deck_cards
+        # --- Score favorites against the pool ---
+        total_score = 0.0
+        matched_normalized = set()
+
+        for norm in favorites_normalized:
+            if norm in card_pool:
+                weight, _, _ = card_pool[norm]
+                total_score += weight
+                matched_normalized.add(norm)
+
+        if not matched_normalized:
+            continue
+
+        max_score = float(len(favorites_normalized))
+        match_pct = round((total_score / max_score) * 100.0, 1)
         match_count = len(matched_normalized)
-        if match_count == 0:
-            continue
-
-        match_pct = round(match_count / len(favorites_normalized) * 100, 1)
         matched_display = sorted([norm_to_display[n] for n in matched_normalized if n in norm_to_display])
 
-        # Build a preview of top non-land cards from the avg deck for the expand panel
+        # --- Build expand preview ---
+        # Matched favorites first (gold), then top non-land pool cards by weight
+        cmd_norm = normalize_card_name(cmd["name"])
         preview_cards = []
-        for card in data.get("decklist", []):
-            cat = (card.get("category") or "").lower()
-            if cat in ("land", "lands"):
+        seen_preview = set()
+
+        for norm in sorted(matched_normalized, key=lambda n: card_pool[n][0], reverse=True):
+            if norm == cmd_norm:
                 continue
-            if card["name_normalized"] == normalize_card_name(cmd["name"]):
-                continue
+            weight, name, cat = card_pool[norm]
             preview_cards.append({
-                "name": card["name"],
-                "category": card.get("category", ""),
-                "is_favorite": card["name_normalized"] in favorites_normalized,
+                "name": norm_to_display.get(norm, name),
+                "category": cat,
+                "is_favorite": True,
+                "inclusion": round(weight * 100),
+            })
+            seen_preview.add(norm)
+
+        top_pool = sorted(
+            [(n, w, nm, c) for n, (w, nm, c) in card_pool.items()
+             if n not in seen_preview and n != cmd_norm and (c or "").lower() not in ("land", "lands")],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        for norm, weight, name, cat in top_pool:
+            preview_cards.append({
+                "name": name,
+                "category": cat,
+                "is_favorite": False,
+                "inclusion": round(weight * 100),
             })
             if len(preview_cards) >= 15:
                 break
@@ -1998,7 +2058,7 @@ async def recommendations_from_favorites(request: Request, body: dict):
             "color_identity": cmd["color_identity"],
             "image_uri": cmd["image_uri"],
             "edhrec_rank": cmd["edhrec_rank"],
-            "num_decks": data.get("num_decks", 0),
+            "num_decks": avg_data.get("num_decks", 0),
             "match_count": match_count,
             "total_favorites": len(favorites_normalized),
             "match_percentage": match_pct,
@@ -2008,7 +2068,7 @@ async def recommendations_from_favorites(request: Request, body: dict):
 
         time.sleep(0.05)
 
-    # Sort by match % descending, then by EDHREC rank ascending (more popular first on ties)
+    # Sort by weighted match % descending, EDHREC rank ascending on ties
     results.sort(key=lambda r: (r["match_percentage"], -r["edhrec_rank"]), reverse=True)
 
     return {

@@ -4560,7 +4560,9 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                     {/* Expanded preview panel */}
                     {isExpanded && cmd.preview_cards?.length > 0 && (
                       <div className="border-t border-gray-700 bg-gray-900/50 px-4 py-3">
-                        <p className="text-xs text-gray-500 mb-2">Top cards in the average {cmd.name} deck</p>
+                        <p className="text-xs text-gray-500 mb-2">
+                          Top cards for {cmd.name} — <span className="text-gray-600">% = how often played in this commander's decks</span>
+                        </p>
                         <div className="flex flex-wrap gap-1.5">
                           {cmd.preview_cards.map(card => {
                             const catStyle = CATEGORY_COLORS[card.category] || 'text-gray-400 bg-gray-700/30';
@@ -4572,10 +4574,15 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                                     ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/60'
                                     : `${catStyle} border-transparent`
                                 }`}
-                                title={card.category}
+                                title={card.category || ''}
                               >
                                 {card.is_favorite && <span className="text-yellow-400">★</span>}
                                 {card.name}
+                                {card.inclusion > 0 && (
+                                  <span className={`opacity-60 ${card.is_favorite ? '' : 'text-gray-500'}`}>
+                                    {card.inclusion}%
+                                  </span>
+                                )}
                               </span>
                             );
                           })}
