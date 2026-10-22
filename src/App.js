@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import './App.css';
 
 // In dev the backend runs separately on :8000; production builds are served by the
 // backend itself (see backend/serve.py), so default to same-origin requests.
@@ -14,6 +15,21 @@ function edhrecSlug(name) {
     .replace(/[^a-z0-9\s]/g, '')
     .trim()
     .replace(/\s+/g, '-');
+}
+
+// Card names are stored lowercased for matching; restore Magic-style title case for display.
+// Names that already contain capitals are left untouched.
+const LOWERCASE_NAME_WORDS = new Set([
+  'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'of', 'on', 'or', 'the', 'to', 'with',
+]);
+
+function displayCardName(name) {
+  if (!name || /[A-Z]/.test(name)) return name;
+  return name.split(' ').map((word, i) => {
+    if (i > 0 && LOWERCASE_NAME_WORDS.has(word)) return word;
+    // Capitalize each hyphenated part: "ur-dragon" -> "Ur-Dragon"
+    return word.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('-');
+  }).join(' ');
 }
 
 // Extract the card name from a decklist line, mirroring parse_card_line() in backend/app.py.
@@ -108,29 +124,35 @@ function AmbientBackground({ colors = [] }) {
     G: '#00733e',
   };
 
-  const activeColors = colors.length > 0
-    ? colors.map(c => colorValues[c] || '#3b82f6')
-    : ['#3b82f6', '#8b5cf6'];
+  const colorKey = colors.join('');
+  // Randomize once per color set; regenerating on every render made particles jump
+  const { particles, orbs } = React.useMemo(() => {
+    const activeColors = colorKey
+      ? colorKey.split('').map(c => colorValues[c] || '#3b82f6')
+      : ['#3b82f6', '#8b5cf6'];
+    return {
+      particles: Array.from({ length: 12 }, (_, i) => ({
+        id: i,
+        color: activeColors[i % activeColors.length],
+        size: 3 + Math.random() * 6,
+        left: Math.random() * 100,
+        delay: Math.random() * 25,
+        duration: 20 + Math.random() * 15,
+      })),
+      orbs: (activeColors.length > 1 ? activeColors : [...activeColors, '#8b5cf6']).slice(0, 2).map((color, i) => ({
+        color,
+        size: 400 + i * 150,
+        left: i === 0 ? '5%' : '70%',
+        top: i === 0 ? '10%' : '50%',
+        delay: i * 5,
+      })),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorKey]);
 
-  const particles = Array.from({ length: 12 }, (_, i) => ({
-    id: i,
-    color: activeColors[i % activeColors.length],
-    size: 3 + Math.random() * 6,
-    left: Math.random() * 100,
-    delay: Math.random() * 25,
-    duration: 20 + Math.random() * 15,
-  }));
-
-  const orbs = activeColors.slice(0, 2).map((color, i) => ({
-    color,
-    size: 250 + i * 100,
-    left: i === 0 ? '5%' : '75%',
-    top: i === 0 ? '10%' : '50%',
-    delay: i * 5,
-  }));
-
+  // Fixed full-viewport layer behind all content: the particles float up the whole screen
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+    <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
       {orbs.map((orb, i) => (
         <div
           key={`orb-${i}`}
@@ -173,8 +195,6 @@ function PageHero({ title, subtitle, commanders = [], stats = [], children, colo
 
   return (
     <div className="relative mb-8 overflow-hidden" style={{ zIndex: 1 }}>
-      <AmbientBackground colors={colors} />
-
       <div className="flex items-start justify-between gap-6 mb-4 flex-wrap">
         <div className="flex-1 min-w-0">
           <h1
@@ -309,7 +329,7 @@ function CardName({ name, className = '', favorites, onToggleFavorite }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShow(false)}
     >
-      {name}
+      {displayCardName(name)}
       {onToggleFavorite && (
         <button
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleFavorite(name); }}
@@ -807,11 +827,10 @@ function CollectionUpload({ onUploaded, collectionCount }) {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <h2 className="text-2xl font-bold">Upload Collection</h2>
-      <p className="text-gray-400">
-        Upload a CSV export from <strong>Archidekt</strong> or <strong>Moxfield</strong>,
-        or paste a card list. Your collection is saved locally in your browser.
-      </p>
+      <PageHero
+        title="Upload Collection"
+        subtitle={<>Upload a CSV export from <strong className="text-gray-300">Archidekt</strong> or <strong className="text-gray-300">Moxfield</strong>, or paste a card list. Your collection is saved locally in your browser.</>}
+      />
 
       {collectionCount > 0 && (
         <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 flex items-center justify-between">
@@ -1147,6 +1166,19 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
         </div>
       )}
 
+      {!loading && !fetched && !error && (
+        <div className="glass-panel rounded-xl p-10 text-center space-y-2">
+          <div className="flex justify-center gap-2 mb-4">
+            {ALL_COLORS.map(c => <ManaSymbol key={c} symbol={c} size={28} />)}
+          </div>
+          <p className="text-gray-200 font-medium">Find commanders you can build from what you already own</p>
+          <p className="text-sm text-gray-500 max-w-lg mx-auto">
+            Optionally narrow by color identity or name, then hit <span className="text-blue-400">Get Recommendations</span>.
+            The first run checks up to 200 commanders against EDHREC and can take a few minutes; repeat runs are much faster.
+          </p>
+        </div>
+      )}
+
       {!loading && fetched && results.length === 0 && (
         <p className="text-gray-500 text-center py-8">No commanders found with {minOwned}+ owned cards.</p>
       )}
@@ -1203,10 +1235,10 @@ function CommanderSearch({ collectionCount, onSelectCommander, compareList, onTo
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Search Commanders</h2>
-      <p className="text-gray-400">
-        Search any commander and see how close you are to their average EDHREC deck.
-      </p>
+      <PageHero
+        title="Search Commanders"
+        subtitle="Search any commander and see how close you are to their average EDHREC deck."
+      />
 
       <div className="bg-gray-800 rounded-lg p-4 space-y-3">
         <input
@@ -3448,7 +3480,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
       // Start editing - load full deck
       try {
         const deck = await apiGet(`/api/decks/${id}`);
-        const cardsText = Object.entries(deck.cards || {}).map(([n, q]) => `${q} ${n}`).join('\n');
+        const cardsText = Object.entries(deck.cards || {}).map(([n, q]) => `${q} ${displayCardName(n)}`).join('\n');
         setEditCards(cardsText);
         setEditingId(id);
         setInvalidCards([]);
@@ -3771,7 +3803,7 @@ function CollectionStats({ collectionCount }) {
   if (collectionCount === 0) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
+        <PageHero title="Collection Statistics" />
         <p className="text-gray-500 text-center py-12">Upload a collection to see your stats.</p>
       </div>
     );
@@ -4012,8 +4044,6 @@ function CollectionStats({ collectionCount }) {
 function AboutPage() {
   return (
     <div className="page-fade-in max-w-4xl mx-auto">
-      <AmbientBackground colorIdentity={['W', 'U', 'B', 'R', 'G']} />
-
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-amber-200 mb-2">About MTG Commander Recommender</h1>
         <p className="text-gray-400">Turn your card collection into your next Commander deck</p>
@@ -4262,8 +4292,6 @@ Arcane Signet`}
     const guide = guides.find(g => g.id === selectedGuide);
     return (
       <div className="page-fade-in max-w-4xl mx-auto">
-        <AmbientBackground colorIdentity={['U', 'G']} />
-
         <button
           onClick={() => setSelectedGuide(null)}
           className="text-blue-400 hover:text-blue-300 mb-6 flex items-center gap-2"
@@ -4285,8 +4313,6 @@ Arcane Signet`}
 
   return (
     <div className="page-fade-in max-w-5xl mx-auto">
-      <AmbientBackground colorIdentity={['U', 'G']} />
-
       {/* Hero Section */}
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-amber-200 mb-4">Commander Deck Building Guides</h1>
@@ -4499,7 +4525,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                 className="inline-flex items-center gap-1.5 bg-gray-700 border border-gray-600 rounded-full px-3 py-1 text-sm"
               >
                 <span className="text-yellow-400 text-xs">★</span>
-                {name}
+                {displayCardName(name)}
                 <button
                   onClick={() => onToggleFavorite(name)}
                   className="text-gray-500 hover:text-red-400 transition-colors ml-0.5 text-xs leading-none"
@@ -4599,7 +4625,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                       <div className="flex flex-wrap gap-1">
                         {cmd.matched_cards.map(card => (
                           <span key={card} className="text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-800/50 rounded px-1.5 py-0.5">
-                            ★ {card}
+                            ★ {displayCardName(card)}
                           </span>
                         ))}
                       </div>
@@ -4650,7 +4676,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                                 title={card.category || ''}
                               >
                                 {card.is_favorite && <span className="text-yellow-400">★</span>}
-                                {card.name}
+                                {displayCardName(card.name)}
                                 {card.inclusion > 0 && (
                                   <span className={`opacity-60 ${card.is_favorite ? '' : 'text-gray-500'}`}>
                                     {card.inclusion}%
@@ -4922,8 +4948,15 @@ function App() {
     { id: 'stats', label: 'Stats' },
   ];
 
+  // Tint the ambient background with the commander being viewed
+  const ambientColors = (tab === 'detail' || tab === 'deckbuilder') && selectedCommander
+    ? selectedCommander.color_identity || []
+    : [];
+
   return (
     <div className="min-h-screen">
+      <AmbientBackground colors={ambientColors} />
+
       {/* Auth Modal */}
       <AuthModal
         isOpen={showAuthModal}
