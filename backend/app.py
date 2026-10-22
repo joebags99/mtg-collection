@@ -527,6 +527,7 @@ deck_lists: dict[str, dict] = {}  # deck_id -> {id, name, commander, cards: {nor
 # Cache: commander_name -> {avg_deck, commander_data, timestamp}
 commander_cache: dict[str, dict] = {}
 CACHE_TTL = 3600  # 1 hour
+ERROR_CACHE_TTL = 1800  # remember EDHREC failures (e.g. no page for a commander) for 30 minutes
 
 # Price cache: normalized card name -> price in USD
 price_cache: dict[str, float] = {}
@@ -817,6 +818,12 @@ def require_commanders() -> list[dict]:
             detail="Couldn't load the commander list from Scryfall. Check the server log for details and try again.",
         )
     return commanders
+
+
+def standalone_commanders() -> list[dict]:
+    """Commanders that can lead a deck on their own. Backgrounds only pair with a
+    'Choose a Background' commander, and EDHREC has no average deck for them."""
+    return [c for c in require_commanders() if c.get("partner_type") != "background"]
 
 
 def get_cached_commanders() -> list[dict]:
@@ -1299,7 +1306,7 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         return result
     except Exception as e:
         logger.error(f"Error fetching EDHREC data for {commander_name}: {e}")
-        return {
+        result = {
             "commander": commander_name,
             "num_decks": 0,
             "themes": [],
@@ -1307,6 +1314,10 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
             "deck_card_names": [],
             "error": str(e),
         }
+        # Cache the failure briefly (backdated timestamp = shorter TTL) so repeated
+        # recommendation runs don't refetch a commander EDHREC doesn't have
+        commander_cache[cache_key] = {"data": result, "timestamp": time.time() - CACHE_TTL + ERROR_CACHE_TTL}
+        return result
 
 
 def fetch_color_identities(card_names: list) -> set:
@@ -1610,7 +1621,7 @@ async def get_collection_stats():
 
 @app.get("/api/commanders")
 def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
-    commanders = require_commanders()
+    commanders = standalone_commanders()
     results = commanders
 
     if color:
@@ -1808,7 +1819,7 @@ def validate_cards(body: dict):
 
 @app.get("/api/commanders/popular")
 def popular_commanders():
-    commanders = require_commanders()
+    commanders = standalone_commanders()
     top = sorted(commanders, key=lambda c: c["edhrec_rank"])[:50]
     return {"commanders": top}
 
@@ -2073,7 +2084,7 @@ def recommendations_from_favorites(request: Request, body: dict):
     detected_colors = fetch_color_identities(card_names)
 
     # Get all commanders and filter to those whose color identity is a superset of detected colors
-    commanders = require_commanders()
+    commanders = standalone_commanders()
     if detected_colors:
         commanders = [
             c for c in commanders
@@ -2257,7 +2268,7 @@ def get_recommendations(
 
     available = get_available_collection(exclude_in_decks)
 
-    commanders = require_commanders()
+    commanders = standalone_commanders()
 
     if color:
         color_set = set(color.upper())
@@ -2270,6 +2281,7 @@ def get_recommendations(
     commanders = sorted(commanders, key=lambda c: c["edhrec_rank"])[:200]
 
     results = []
+    no_deck_data = 0
     for cmd in commanders:
         cache_entry = commander_cache.get(f"{cmd['name']}||")
         was_cached = bool(cache_entry and time.time() - cache_entry["timestamp"] < CACHE_TTL)
@@ -2278,6 +2290,7 @@ def get_recommendations(
             time.sleep(0.1)  # be polite to EDHREC only when we actually hit it
         deck_cards = set(data.get("deck_card_names", []))
         if not deck_cards:
+            no_deck_data += 1
             continue
 
         owned_count = len(deck_cards & available)
@@ -2322,7 +2335,16 @@ def get_recommendations(
             r["missing_price"] = 0
 
     results.sort(key=lambda r: r["match_percentage"], reverse=True)
-    return {"results": results[:limit]}
+    logger.info(
+        f"Recommendations: checked {len(commanders)} commanders, {no_deck_data} had no EDHREC deck data, "
+        f"{len(results)} with {min_owned}+ owned cards (collection: {len(available)} available cards)"
+    )
+    return {
+        "results": results[:limit],
+        "checked": len(commanders),
+        "no_deck_data": no_deck_data,
+        "available_cards": len(available),
+    }
 
 
 @app.post("/api/compare")

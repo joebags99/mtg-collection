@@ -1041,6 +1041,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
   const [minOwned, setMinOwned] = useState(20);
   const [fetched, setFetched] = useState(false);
   const [sortBy, setSortBy] = useState('match_desc');
+  const [runInfo, setRunInfo] = useState(null); // {checked, no_deck_data, available_cards} from the last run
 
   const fetchRecommendations = useCallback(async () => {
     if (collectionCount === 0) {
@@ -1056,6 +1057,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
         {}
       );
       setResults(data.results || []);
+      setRunInfo(data.checked !== undefined ? data : null);
       setFetched(true);
     } catch (err) {
       setError(err.message);
@@ -1220,7 +1222,21 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
       )}
 
       {!loading && fetched && results.length === 0 && (
-        <p className="text-gray-500 text-center py-8">No commanders found with {minOwned}+ owned cards.</p>
+        <div className="glass-panel rounded-xl p-8 text-center space-y-2">
+          <p className="text-gray-300">No commanders found with {minOwned}+ owned cards.</p>
+          {runInfo && runInfo.checked > 0 && runInfo.no_deck_data === runInfo.checked ? (
+            <p className="text-sm text-red-300">
+              EDHREC returned no deck data for any of the {runInfo.checked} commanders checked, so nothing could be compared.
+              This is a problem reaching EDHREC, not your collection. Check the server log for details.
+            </p>
+          ) : runInfo ? (
+            <p className="text-sm text-gray-500">
+              Checked {runInfo.checked} commanders against {runInfo.available_cards.toLocaleString()} available cards
+              {runInfo.no_deck_data > 0 && ` (${runInfo.no_deck_data} had no EDHREC deck data)`}.
+              Try lowering "Min owned cards".
+            </p>
+          ) : null}
+        </div>
       )}
     </div>
   );
