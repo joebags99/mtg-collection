@@ -19,6 +19,7 @@ import jwt
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pyedhrec import EDHRec
 
 try:
@@ -227,6 +228,7 @@ def rate_limit(limit_string):
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    _load_card_data_from_disk()
 
 
 # --- Auth endpoints ---
@@ -500,6 +502,74 @@ def _log_scryfall_failure(resp, *args, **kwargs):
 
 scryfall.hooks["response"].append(_log_scryfall_failure)
 
+SCRYFALL_COLLECTION_URL = "https://api.scryfall.com/cards/collection"
+SCRYFALL_SEARCH_URL = "https://api.scryfall.com/cards/search"
+# Search and collection lookups are limited to about 2 requests/second
+SCRYFALL_MIN_INTERVAL = 0.55
+SCRYFALL_DEFAULT_COOLDOWN = 60
+_scryfall_lock = threading.Lock()
+_scryfall_last_request = 0.0
+_scryfall_blocked_until = 0.0
+
+
+class ScryfallUnavailable(Exception):
+    """Raised instead of sending a request while Scryfall has us rate limited."""
+
+
+def scryfall_request(method: str, url: str, **kwargs) -> requests.Response:
+    """Send every Scryfall API request through here.
+
+    Requests are spaced out to stay under Scryfall's limits. After a 429 nothing is
+    sent until the cooldown passes: Scryfall says retrying rate-limited requests can
+    get the client blocked (https://scryfall.com/docs/faqs/i-m-having-trouble-accessing-the-scryfall-api-or-i-m-blocked-17).
+    """
+    global _scryfall_last_request, _scryfall_blocked_until
+    with _scryfall_lock:  # held while waiting, so concurrent callers queue up in order
+        now = time.time()
+        if now < _scryfall_blocked_until:
+            raise ScryfallUnavailable(f"Scryfall rate limit: pausing requests for {int(_scryfall_blocked_until - now)}s more")
+        wait = _scryfall_last_request + SCRYFALL_MIN_INTERVAL - now
+        if wait > 0:
+            time.sleep(wait)
+        _scryfall_last_request = time.time()
+    kwargs.setdefault("timeout", 30)
+    resp = scryfall.request(method, url, **kwargs)
+    if resp.status_code == 429:
+        retry_after = resp.headers.get("Retry-After", "")
+        delay = int(retry_after) if retry_after.isdigit() else SCRYFALL_DEFAULT_COOLDOWN
+        with _scryfall_lock:
+            _scryfall_blocked_until = time.time() + delay
+        logger.warning(f"Scryfall rate limit hit; sending no Scryfall requests for {delay}s")
+        raise ScryfallUnavailable(f"Scryfall rate limit: pausing requests for {delay}s")
+    return resp
+
+
+# --- Disk cache: keeps Scryfall data across restarts so a restart doesn't re-download it ---
+CACHE_DIR = os.environ.get("CACHE_DIR") or os.path.join(os.path.dirname(os.path.abspath(DATABASE_PATH)), "cache")
+
+
+def _load_json_cache(name: str):
+    try:
+        with open(os.path.join(CACHE_DIR, name), encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.warning(f"Ignoring unreadable cache file {name}: {e}")
+        return None
+
+
+def _save_json_cache(name: str, data) -> None:
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        path = os.path.join(CACHE_DIR, name)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)  # atomic, so a crash never leaves a half-written cache
+    except Exception as e:
+        logger.warning(f"Couldn't write cache file {name}: {e}")
+
 
 def edhrec_slug(name: str) -> str:
     """Convert a card name to the EDHREC URL slug format.
@@ -528,11 +598,6 @@ deck_lists: dict[str, dict] = {}  # deck_id -> {id, name, commander, cards: {nor
 commander_cache: dict[str, dict] = {}
 CACHE_TTL = 3600  # 1 hour
 ERROR_CACHE_TTL = 1800  # remember EDHREC failures (e.g. no page for a commander) for 30 minutes
-
-# Price cache: normalized card name -> price in USD
-price_cache: dict[str, float] = {}
-PRICE_CACHE_TTL = 86400  # 24 hours
-_price_cache_time: float = 0
 
 # Synergy/type card cache
 synergy_cache: dict[str, dict] = {}
@@ -714,97 +779,77 @@ def _extract_partner_with_name(card: dict) -> str:
     return ""
 
 
-def get_all_commanders() -> list[dict]:
-    """Fetch all legal commanders from Scryfall bulk search, including partner info."""
-    commanders = []
-    url = "https://api.scryfall.com/cards/search"
-    params = {
-        "q": "is:commander f:commander",
-        "order": "edhrec",
-        "unique": "cards",
+def _commander_entry(card: dict, partner_type: str) -> dict:
+    image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
+    entry = {
+        "name": card["name"],
+        "name_normalized": normalize_card_name(card["name"]),
+        "color_identity": card.get("color_identity", []),
+        "image_uri": image_uris.get("normal", ""),
+        "art_crop": image_uris.get("art_crop", ""),
+        "edhrec_rank": card.get("edhrec_rank", 999999),
+        "partner_type": partner_type,
+        "type_line": card.get("type_line", ""),
     }
+    if partner_type == "partner_with":
+        entry["partner_with"] = _extract_partner_with_name(card)
+    if partner_type == "partner_variant":
+        entry["partner_variant_label"] = _extract_partner_variant_label(card)
+    return entry
 
+
+def _card_oracle(card: dict) -> str:
+    oracle = card.get("oracle_text", "")
+    if not oracle and card.get("card_faces"):
+        oracle = " ".join(f.get("oracle_text", "") for f in card["card_faces"])
+    return oracle.lower()
+
+
+def _search_all_pages(query: str, on_card) -> bool:
+    """Run a Scryfall search, calling on_card for every result. Returns False if any page failed."""
+    url, params = SCRYFALL_SEARCH_URL, {"q": query, "order": "edhrec", "unique": "cards"}
     while url:
-        resp = scryfall.get(url, params=params, timeout=30)
+        try:
+            resp = scryfall_request("GET", url, params=params)
+        except (ScryfallUnavailable, requests.RequestException) as e:
+            logger.error(f"Scryfall search '{query}' stopped: {e}")
+            return False
         if resp.status_code != 200:
-            logger.error(f"Scryfall error {resp.status_code} fetching commanders: {resp.text[:300]}")
-            break
+            return False
         data = resp.json()
         for card in data.get("data", []):
-            partner_type = _detect_partner_type(card)
-            image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
-            normalized = normalize_card_name(card["name"])
-            entry = {
-                "name": card["name"],
-                "name_normalized": normalized,
-                "color_identity": card.get("color_identity", []),
-                "image_uri": image_uris.get("normal", ""),
-                "art_crop": image_uris.get("art_crop", ""),
-                "edhrec_rank": card.get("edhrec_rank", 999999),
-                "partner_type": partner_type,
-                "type_line": card.get("type_line", ""),
-            }
-            if partner_type == "partner_with":
-                entry["partner_with"] = _extract_partner_with_name(card)
-            if partner_type == "partner_variant":
-                entry["partner_variant_label"] = _extract_partner_variant_label(card)
-            commanders.append(entry)
-            # Cache commander oracle text for functional tag scoring
-            if normalized not in scryfall_oracle_cache:
-                oracle = card.get("oracle_text", "")
-                if not oracle and card.get("card_faces"):
-                    oracle = " ".join(f.get("oracle_text", "") for f in card.get("card_faces", []))
-                scryfall_oracle_cache[normalized] = oracle.lower()
-
-        if data.get("has_more"):
-            url = data.get("next_page")
-            params = {}
-            time.sleep(0.1)
-        else:
-            url = None
-
-    # Second pass: fetch backgrounds (legendary enchantments with Background subtype)
-    bg_url = "https://api.scryfall.com/cards/search"
-    bg_params = {"q": "t:background t:legendary t:enchantment f:commander", "order": "edhrec", "unique": "cards"}
-    existing_names = {c["name_normalized"] for c in commanders}
-    while bg_url:
-        resp = scryfall.get(bg_url, params=bg_params, timeout=30)
-        if resp.status_code != 200:
-            logger.error(f"Scryfall error {resp.status_code} fetching backgrounds: {resp.text[:300]}")
-            break
-        data = resp.json()
-        for card in data.get("data", []):
-            bg_norm = normalize_card_name(card["name"])
-            if bg_norm not in existing_names:
-                bg_image_uris = card.get("image_uris") or (card.get("card_faces", [{}])[0].get("image_uris") or {})
-                commanders.append({
-                    "name": card["name"],
-                    "name_normalized": bg_norm,
-                    "color_identity": card.get("color_identity", []),
-                    "image_uri": bg_image_uris.get("normal", ""),
-                    "art_crop": bg_image_uris.get("art_crop", ""),
-                    "edhrec_rank": card.get("edhrec_rank", 999999),
-                    "partner_type": "background",
-                    "type_line": card.get("type_line", ""),
-                })
-                existing_names.add(bg_norm)
-                if bg_norm not in scryfall_oracle_cache:
-                    oracle = card.get("oracle_text", "")
-                    if not oracle and card.get("card_faces"):
-                        oracle = " ".join(f.get("oracle_text", "") for f in card.get("card_faces", []))
-                    scryfall_oracle_cache[bg_norm] = oracle.lower()
-        if data.get("has_more"):
-            bg_url = data.get("next_page")
-            bg_params = {}
-            time.sleep(0.1)
-        else:
-            bg_url = None
-
-    return commanders
+            on_card(card)
+        url, params = (data.get("next_page"), {}) if data.get("has_more") else (None, None)
+    return True
 
 
+def get_all_commanders() -> tuple[list[dict], dict[str, str], bool]:
+    """Fetch all legal commanders (plus Backgrounds) from Scryfall.
+    Returns (commanders, oracle text by normalized name, whether every page loaded)."""
+    commanders: list[dict] = []
+    oracle: dict[str, str] = {}
+    seen: set[str] = set()
+
+    def add(card: dict, partner_type: str):
+        entry = _commander_entry(card, partner_type)
+        if entry["name_normalized"] in seen:
+            return
+        seen.add(entry["name_normalized"])
+        commanders.append(entry)
+        oracle[entry["name_normalized"]] = _card_oracle(card)
+
+    complete = _search_all_pages("is:commander f:commander", lambda c: add(c, _detect_partner_type(c)))
+    if complete:
+        # Backgrounds aren't "is:commander" but pair with "Choose a Background" commanders
+        complete = _search_all_pages("t:background t:legendary t:enchantment f:commander", lambda c: add(c, "background"))
+    return commanders, oracle, complete
+
+
+COMMANDER_LIST_TTL = 86400          # a full commander list is good for a day
+INCOMPLETE_COMMANDER_LIST_TTL = 300  # a partial one is retried after 5 minutes
+COMMANDERS_CACHE_FILE = "commanders.json"
 _all_commanders: list[dict] = []
-_commanders_fetched_at: float = 0
+_commanders_expires_at: float = 0
 _commanders_lock = threading.Lock()
 
 
@@ -813,6 +858,11 @@ def require_commanders() -> list[dict]:
     Scryfall couldn't be reached, rather than returning an empty result."""
     commanders = get_cached_commanders()
     if not commanders:
+        if time.time() < _scryfall_blocked_until:
+            raise HTTPException(
+                status_code=503,
+                detail="Scryfall is rate limiting requests right now. Wait a minute, then try again.",
+            )
         raise HTTPException(
             status_code=502,
             detail="Couldn't load the commander list from Scryfall. Check the server log for details and try again.",
@@ -826,58 +876,147 @@ def standalone_commanders() -> list[dict]:
     return [c for c in require_commanders() if c.get("partner_type") != "background"]
 
 
+def _load_commanders_from_disk() -> bool:
+    global _all_commanders, _commanders_expires_at
+    cached = _load_json_cache(COMMANDERS_CACHE_FILE)
+    if not cached or time.time() - cached.get("fetched_at", 0) > COMMANDER_LIST_TTL:
+        return False
+    _all_commanders = cached["commanders"]
+    scryfall_oracle_cache.update(cached.get("oracle", {}))
+    _commanders_expires_at = cached["fetched_at"] + COMMANDER_LIST_TTL
+    logger.info(f"Loaded {len(_all_commanders)} commanders from cache")
+    return True
+
+
 def get_cached_commanders() -> list[dict]:
-    global _all_commanders, _commanders_fetched_at
-    if _all_commanders and (time.time() - _commanders_fetched_at <= 86400):
+    global _all_commanders, _commanders_expires_at
+    if _all_commanders and time.time() < _commanders_expires_at:
         return _all_commanders
     # Endpoints run in a thread pool; make concurrent cold-start requests share one fetch
     with _commanders_lock:
-        if not _all_commanders or (time.time() - _commanders_fetched_at > 86400):
-            logger.info("Fetching all commanders from Scryfall...")
-            _all_commanders = get_all_commanders()
-            _commanders_fetched_at = time.time()
-            logger.info(f"Fetched {len(_all_commanders)} commanders")
+        if _all_commanders and time.time() < _commanders_expires_at:
+            return _all_commanders
+        if not _all_commanders and _load_commanders_from_disk():
+            return _all_commanders
+        logger.info("Fetching all commanders from Scryfall...")
+        commanders, oracle, complete = get_all_commanders()
+        scryfall_oracle_cache.update(oracle)
+        if complete:
+            _all_commanders = commanders
+            _commanders_expires_at = time.time() + COMMANDER_LIST_TTL
+            _save_json_cache(COMMANDERS_CACHE_FILE, {"fetched_at": time.time(), "commanders": commanders, "oracle": oracle})
+            logger.info(f"Fetched {len(commanders)} commanders")
+        else:
+            # Keep whatever we have (a partial list beats none) but retry soon, and never save it
+            if len(commanders) > len(_all_commanders):
+                _all_commanders = commanders
+            _commanders_expires_at = time.time() + INCOMPLETE_COMMANDER_LIST_TTL
+            logger.warning(f"Commander list incomplete ({len(commanders)} loaded); retrying in {INCOMPLETE_COMMANDER_LIST_TTL // 60} minutes")
     return _all_commanders
 
 
-def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
-    """Fetch prices for multiple cards using Scryfall collection endpoint."""
-    global _price_cache_time
-    prices = {}
-    uncached = []
+# --- Card data: one Scryfall lookup per card covers type, mana, rules text, colors, price and image ---
+CARD_DATA_TTL = 86400  # prices change daily
+CARD_DATA_CACHE_FILE = "card_data.json"
+# normalized name -> {"found", "fetched_at", and when found: "type", "cmc", "mana_cost",
+#                     "oracle", "color_identity", "price", "image", "image_small"}
+card_data: dict[str, dict] = {}
 
+
+def _card_data_entry(card: dict) -> dict:
+    faces = card.get("card_faces") or []
+    image_uris = card.get("image_uris") or (faces[0].get("image_uris") if faces else None) or {}
+    mana_cost = card.get("mana_cost") or (faces[0].get("mana_cost", "") if faces else "")
+    prices = card.get("prices") or {}
+    usd = prices.get("usd") or prices.get("usd_foil")
+    return {
+        "found": True,
+        "fetched_at": time.time(),
+        "type": _parse_type_line(card.get("type_line", "")),
+        "cmc": card.get("cmc", 0),
+        "mana_cost": mana_cost,
+        "oracle": _card_oracle(card),
+        "color_identity": card.get("color_identity", []),
+        "price": float(usd) if usd else None,
+        "image": image_uris.get("normal", ""),
+        "image_small": image_uris.get("small", ""),
+    }
+
+
+def ensure_card_data(card_names: list[str]) -> dict[str, dict]:
+    """Return {normalized name: card data} for the given names, fetching only missing or
+    stale cards from Scryfall (75 per request). Names Scryfall doesn't know are
+    remembered too, so they aren't requested again until the entry expires."""
+    now = time.time()
+    lookup: dict[str, str] = {}  # normalized -> name to send to Scryfall
     for name in card_names:
-        normalized = normalize_card_name(name)
-        if normalized in price_cache and (time.time() - _price_cache_time < PRICE_CACHE_TTL):
-            prices[normalized] = price_cache[normalized]
-        else:
-            uncached.append(name)
+        norm = normalize_card_name(name)
+        if norm:
+            lookup.setdefault(norm, name.split("//")[0].strip())
+    stale = [n for n in lookup if n not in card_data or now - card_data[n]["fetched_at"] > CARD_DATA_TTL]
 
-    for i in range(0, len(uncached), 75):
-        batch = uncached[i:i+75]
-        identifiers = [{"name": name} for name in batch]
+    fetched = False
+    for i in range(0, len(stale), 75):
+        batch = stale[i:i + 75]
         try:
-            resp = scryfall.post(
-                "https://api.scryfall.com/cards/collection",
-                json={"identifiers": identifiers},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                for card in data.get("data", []):
-                    card_prices = card.get("prices", {})
-                    usd = card_prices.get("usd") or card_prices.get("usd_foil")
-                    if usd:
-                        normalized = normalize_card_name(card["name"])
-                        price_val = float(usd)
-                        price_cache[normalized] = price_val
-                        prices[normalized] = price_val
-                _price_cache_time = time.time()
-            time.sleep(0.1)
-        except Exception as e:
-            logger.error(f"Error fetching bulk prices: {e}")
+            resp = scryfall_request("POST", SCRYFALL_COLLECTION_URL, json={"identifiers": [{"name": lookup[n]} for n in batch]})
+        except ScryfallUnavailable as e:
+            logger.warning(f"Skipping remaining card lookups: {e}")
+            break
+        except requests.RequestException as e:
+            logger.error(f"Scryfall card lookup failed: {e}")
+            continue
+        if resp.status_code != 200:
+            continue
+        data = resp.json()
+        for card in data.get("data", []):
+            entry = _card_data_entry(card)
+            norm = normalize_card_name(card.get("name", ""))
+            card_data[norm] = entry
+            scryfall_oracle_cache[norm] = entry["oracle"]
+        for missing in data.get("not_found", []):
+            card_data[normalize_card_name(missing.get("name", ""))] = {"found": False, "fetched_at": now}
+        fetched = True
 
-    return prices
+    if fetched:
+        _save_json_cache(CARD_DATA_CACHE_FILE, card_data)
+    return {n: card_data[n] for n in lookup if n in card_data}
+
+
+def _load_card_data_from_disk() -> None:
+    cached = _load_json_cache(CARD_DATA_CACHE_FILE)
+    if not cached:
+        return
+    card_data.update(cached)
+    for norm, entry in cached.items():
+        if entry.get("found"):
+            scryfall_oracle_cache.setdefault(norm, entry.get("oracle", ""))
+    logger.info(f"Loaded data for {len(cached)} cards from cache")
+
+
+def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
+    """USD price by normalized name (cards without a price are omitted)."""
+    return {n: e["price"] for n, e in ensure_card_data(card_names).items() if e.get("found") and e.get("price") is not None}
+
+
+def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
+    """Card type category (Creature, Instant, ...) by normalized name."""
+    return {n: e["type"] for n, e in ensure_card_data(card_names).items() if e.get("found")}
+
+
+def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
+    """{"cmc", "mana_cost"} by normalized name."""
+    return {n: {"cmc": e["cmc"], "mana_cost": e["mana_cost"]}
+            for n, e in ensure_card_data(card_names).items() if e.get("found")}
+
+
+def fetch_color_identities(card_names: list) -> set:
+    """Union of the color identities of the given cards."""
+    colors = set()
+    for entry in ensure_card_data(card_names).values():
+        if entry.get("found"):
+            colors.update(entry.get("color_identity", []))
+    return colors
 
 
 def extract_cardview_names(cardviews) -> list[dict]:
@@ -958,103 +1097,7 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
     return result
 
 
-scryfall_type_cache = {}
-scryfall_oracle_cache = {}  # {normalized_name: oracle_text_string}
-scryfall_mana_cache = {}  # {card_name: {"cmc": float, "mana_cost": str}}
-
-
-def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
-    """Fetch cmc and mana_cost from Scryfall collection endpoint."""
-    result = {}
-    # Normalize names for consistent cache lookups
-    name_to_normalized = {n: normalize_card_name(n) for n in card_names}
-    uncached = [n for n in card_names if name_to_normalized[n] not in scryfall_mana_cache]
-    for n in card_names:
-        norm = name_to_normalized[n]
-        if norm in scryfall_mana_cache:
-            result[norm] = scryfall_mana_cache[norm]
-
-    for i in range(0, len(uncached), 75):
-        batch = uncached[i:i+75]
-        identifiers = [{"name": n} for n in batch]
-        try:
-            resp = scryfall.post(
-                "https://api.scryfall.com/cards/collection",
-                json={"identifiers": identifiers},
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                for card in resp.json().get("data", []):
-                    name = card.get("name", "")
-                    normalized = normalize_card_name(name)
-                    cmc = card.get("cmc", 0)
-                    mana_cost = card.get("mana_cost", "")
-                    type_line = card.get("type_line", "")
-                    # For DFCs, use front face mana cost
-                    if not mana_cost and card.get("card_faces"):
-                        mana_cost = card["card_faces"][0].get("mana_cost", "")
-                        cmc = card.get("cmc", 0)
-                    entry = {"cmc": cmc, "mana_cost": mana_cost}
-                    scryfall_mana_cache[normalized] = entry
-                    result[normalized] = entry
-                    # Also cache the type and oracle text while we're here
-                    if normalized not in scryfall_type_cache:
-                        card_type = _parse_type_line(type_line)
-                        scryfall_type_cache[normalized] = card_type
-                    if normalized not in scryfall_oracle_cache:
-                        oracle = card.get("oracle_text", "")
-                        if not oracle and card.get("card_faces"):
-                            oracle = card["card_faces"][0].get("oracle_text", "")
-                        scryfall_oracle_cache[normalized] = oracle
-            time.sleep(0.1)
-        except Exception as e:
-            logger.error(f"Scryfall mana fetch error: {e}")
-
-    return result
-
-
-def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
-    """Fetch card types from Scryfall collection endpoint for cards we can't classify locally."""
-    result = {}
-    # Normalize names for cache lookup
-    name_map = {normalize_card_name(n): n for n in card_names}  # normalized -> original
-    normalized_names = list(name_map.keys())
-
-    uncached = [n for n in normalized_names if n not in scryfall_type_cache]
-    # Return cached results first
-    for n in normalized_names:
-        if n in scryfall_type_cache:
-            result[n] = scryfall_type_cache[n]
-
-    # Batch fetch uncached cards from Scryfall
-    for i in range(0, len(uncached), 75):
-        batch = uncached[i:i+75]
-        # Use original names for Scryfall API
-        identifiers = [{"name": name_map.get(n, n)} for n in batch]
-        try:
-            resp = scryfall.post(
-                "https://api.scryfall.com/cards/collection",
-                json={"identifiers": identifiers},
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                for card in resp.json().get("data", []):
-                    name = card.get("name", "")
-                    normalized = normalize_card_name(name)
-                    type_line = card.get("type_line", "")
-                    card_type = _parse_type_line(type_line)
-                    scryfall_type_cache[normalized] = card_type
-                    result[normalized] = card_type
-                    # Also cache oracle text for functional classification
-                    oracle = card.get("oracle_text", "")
-                    if not oracle and "card_faces" in card:
-                        oracle = card["card_faces"][0].get("oracle_text", "")
-                    scryfall_oracle_cache[normalized] = oracle
-            time.sleep(0.1)
-        except Exception as e:
-            logger.error(f"Scryfall type fetch error: {e}")
-
-    return result
+scryfall_oracle_cache: dict[str, str] = {}  # normalized name -> lowercased oracle text
 
 
 def _parse_type_line(type_line: str) -> str:
@@ -1352,41 +1395,6 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         # recommendation runs don't refetch a commander EDHREC doesn't have
         commander_cache[cache_key] = {"data": result, "timestamp": time.time() - CACHE_TTL + ERROR_CACHE_TTL}
         return result
-
-
-def fetch_color_identities(card_names: list) -> set:
-    """Fetch color identities for a list of cards from Scryfall. Returns union of all colors found.
-    Side-effect: populates scryfall_oracle_cache for all returned cards (free — same API call)."""
-    colors = set()
-    clean_names = [n.split("//")[0].strip() for n in card_names]
-
-    for i in range(0, len(clean_names), 75):
-        batch = clean_names[i:i + 75]
-        identifiers = [{"name": n} for n in batch]
-        try:
-            resp = scryfall.post(
-                "https://api.scryfall.com/cards/collection",
-                json={"identifiers": identifiers},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                for card in data.get("data", []):
-                    for c in card.get("color_identity", []):
-                        colors.add(c)
-                    # Cache oracle text while we have the data
-                    normalized = normalize_card_name(card.get("name", ""))
-                    if normalized and normalized not in scryfall_oracle_cache:
-                        oracle = card.get("oracle_text", "")
-                        if not oracle and card.get("card_faces"):
-                            oracle = card["card_faces"][0].get("oracle_text", "")
-                        scryfall_oracle_cache[normalized] = oracle.lower()
-        except Exception as e:
-            logger.error(f"Color identity fetch error: {e}")
-        if i + 75 < len(clean_names):
-            time.sleep(0.1)
-
-    return colors
 
 
 # --- API Endpoints ---
@@ -1806,49 +1814,32 @@ def validate_cards(body: dict):
     if not card_names:
         return {"valid": [], "invalid": []}
 
-    valid = []
-    invalid = []
-
-    # Batch check via Scryfall collection endpoint (75 per batch)
-    # For DFCs like "Etali, Primal Conqueror // Etali, Primal Sickness", use front face only
-    cleaned_batch_map = {}  # cleaned_name -> [original_names]
+    # Uses the shared card cache, so cards already seen elsewhere cost no Scryfall request.
+    # Cards that couldn't be checked (Scryfall unreachable) are treated as valid rather than blocking the save.
+    known = ensure_card_data(card_names)
+    valid, invalid = [], []
     for name in card_names:
-        front = name.split("//")[0].strip() if "//" in name else name
-        cleaned_batch_map.setdefault(front, []).append(name)
-
-    cleaned_names = list(cleaned_batch_map.keys())
-
-    for i in range(0, len(cleaned_names), 75):
-        batch = cleaned_names[i:i+75]
-        identifiers = [{"name": name} for name in batch]
-        try:
-            resp = scryfall.post(
-                "https://api.scryfall.com/cards/collection",
-                json={"identifiers": identifiers},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                found_names = set()
-                for card in data.get("data", []):
-                    found_names.add(normalize_card_name(card["name"]))
-                for cleaned in batch:
-                    originals = cleaned_batch_map.get(cleaned, [cleaned])
-                    if normalize_card_name(cleaned) in found_names:
-                        valid.extend(originals)
-                    else:
-                        invalid.extend(originals)
-            else:
-                # If Scryfall fails, don't block — treat all as valid
-                for cleaned in batch:
-                    valid.extend(cleaned_batch_map.get(cleaned, [cleaned]))
-            time.sleep(0.1)
-        except Exception as e:
-            logger.error(f"Card validation error: {e}")
-            for cleaned in batch:
-                valid.extend(cleaned_batch_map.get(cleaned, [cleaned]))
-
+        entry = known.get(normalize_card_name(name))
+        (invalid if entry is not None and not entry.get("found") else valid).append(name)
     return {"valid": valid, "invalid": invalid}
+
+
+@app.get("/api/card-image")
+def card_image(name: str, version: str = "normal"):
+    """Redirect to a card's image on Scryfall's image servers (not rate limited).
+
+    The browser used to load images through api.scryfall.com/cards/named, one API
+    request per hover or Gallery card, which is how a page full of cards trips
+    Scryfall's rate limit. Here the image URL comes from the shared card cache,
+    usually already filled by the page that listed the card.
+    """
+    entry = ensure_card_data([name]).get(normalize_card_name(name))
+    if not entry or not entry.get("found"):
+        raise HTTPException(status_code=404, detail="Card image not found")
+    url = entry.get("image_small" if version == "small" else "image") or entry.get("image")
+    if not url:
+        raise HTTPException(status_code=404, detail="Card has no image")
+    return RedirectResponse(url, status_code=302, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/commanders/popular")
@@ -2024,8 +2015,8 @@ def get_commander_detail(
     if untyped_rec_names:
         rec_types = fetch_card_types_bulk(untyped_rec_names)
         for r in recommendations:
-            if not r["card_type"] and r["name"] in rec_types:
-                r["card_type"] = rec_types[r["name"]]
+            if not r["card_type"] and r["name_normalized"] in rec_types:
+                r["card_type"] = rec_types[r["name_normalized"]]
 
     # Fetch mana data (cmc, mana_cost) for recommendations
     rec_names = [r["name"] for r in recommendations]

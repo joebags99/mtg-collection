@@ -30,3 +30,7 @@ mtg_collection.db
 # Python
 __pycache__/
 *.pyc
+
+# Scryfall data cached by the backend
+/cache/
+/backend/cache/

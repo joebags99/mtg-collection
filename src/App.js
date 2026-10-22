@@ -6,6 +6,13 @@ import './App.css';
 const API = process.env.REACT_APP_API_URL ||
   (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
 
+// Card images come via the backend, which redirects to Scryfall's image servers using
+// its cached card data. Loading them from api.scryfall.com directly cost one rate-limited
+// API request per hover or Gallery card.
+function cardImageUrl(name, small = false) {
+  return `${API}/api/card-image?name=${encodeURIComponent(name)}&version=${small ? 'small' : 'normal'}`;
+}
+
 // EDHREC URL slug, mirroring edhrec_slug() in backend/app.py
 function edhrecSlug(name) {
   return name.split('//')[0]
@@ -327,7 +334,7 @@ function CardName({ name, className = '', favorites, onToggleFavorite }) {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const ref = useRef(null);
-  const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(name)}`;
+  const imgSrc = cardImageUrl(name);
   const isFav = favorites && favorites.has(name.toLowerCase());
 
   const handleMouseEnter = (e) => {
@@ -1510,7 +1517,7 @@ function canHaveMultiple(name) {
 }
 
 function DeckCardImage({ name, small }) {
-  const src = `https://api.scryfall.com/cards/named?format=image&version=${small ? 'small' : 'normal'}&exact=${encodeURIComponent(name)}`;
+  const src = cardImageUrl(name, small);
   return <img src={src} alt={name} className="rounded-lg shadow-lg" loading="lazy" />;
 }
 
@@ -1519,7 +1526,7 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
   const [imgPos, setImgPos] = useState({ x: 0, y: 0 });
   const ref = useRef(null);
   const STRIP_HEIGHT = 32;
-  const imgSrc = `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(card.name)}`;
+  const imgSrc = cardImageUrl(card.name);
 
   const handleMouseEnter = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
