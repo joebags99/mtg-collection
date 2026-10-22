@@ -12,6 +12,10 @@ services:
       - CORS_ORIGINS=*
       - REDIS_URL=redis://redis:6379/0
       - RATE_LIMIT=30/minute
+      - DATABASE_PATH=/data/mtg_collection.db
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+    volumes:
+      - app_data:/data
     depends_on:
       - redis
     restart: unless-stopped
@@ -26,3 +30,4 @@ services:
 
 volumes:
   redis_data:
+  app_data:

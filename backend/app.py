@@ -8,6 +8,7 @@ import logging
 import unicodedata
 import sqlite3
 import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from datetime import datetime, timedelta
@@ -46,6 +47,9 @@ REDIS_URL = os.environ.get("REDIS_URL", "")
 RATE_LIMIT = os.environ.get("RATE_LIMIT", "30/minute")
 JWT_SECRET = os.environ.get("JWT_SECRET", "mtg-collection-secret-change-in-production")
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "mtg_collection.db")
+
+if JWT_SECRET == "mtg-collection-secret-change-in-production":
+    logger.warning("JWT_SECRET is not set; using the insecure default. Set JWT_SECRET in production.")
 
 # --- Database setup ---
 def get_db():
@@ -105,6 +109,12 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     """)
+
+    # Migration: decks saved before partner support have no partner column
+    try:
+        cursor.execute("ALTER TABLE user_decks ADD COLUMN partner TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
     conn.commit()
     conn.close()
@@ -345,13 +355,14 @@ async def save_user_decks(body: dict, user: dict = Depends(require_user)):
     # Insert new decks
     for deck_id, deck in decks.items():
         cursor.execute("""
-            INSERT INTO user_decks (user_id, deck_id, name, commander, cards_json, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO user_decks (user_id, deck_id, name, commander, partner, cards_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (
             user_id,
             deck_id,
             deck.get("name", ""),
             deck.get("commander", ""),
+            deck.get("partner", "") or "",
             json.dumps(deck.get("cards", {}))
         ))
 
@@ -369,7 +380,7 @@ async def get_user_decks(user: dict = Depends(require_user)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT deck_id, name, commander, cards_json, updated_at
+        SELECT deck_id, name, commander, partner, cards_json, updated_at
         FROM user_decks WHERE user_id = ?
     """, (user_id,))
     rows = cursor.fetchall()
@@ -381,6 +392,7 @@ async def get_user_decks(user: dict = Depends(require_user)):
             "id": row["deck_id"],
             "name": row["name"],
             "commander": row["commander"],
+            "partner": row["partner"],
             "cards": json.loads(row["cards_json"]),
         }
 
@@ -402,7 +414,7 @@ async def get_all_user_data(user: dict = Depends(require_user)):
 
     # Get decks
     cursor.execute("""
-        SELECT deck_id, name, commander, cards_json
+        SELECT deck_id, name, commander, partner, cards_json
         FROM user_decks WHERE user_id = ?
     """, (user_id,))
     deck_rows = cursor.fetchall()
@@ -420,6 +432,7 @@ async def get_all_user_data(user: dict = Depends(require_user)):
             "id": row["deck_id"],
             "name": row["name"],
             "commander": row["commander"],
+            "partner": row["partner"],
             "cards": json.loads(row["cards_json"]),
         }
 
@@ -547,22 +560,54 @@ def parse_csv_collection(content: str) -> dict[str, int]:
     return cards
 
 
-def parse_text_collection(content: str) -> dict[str, int]:
-    """Parse text format: '1 Card Name' or just 'Card Name' per line. Returns dict name -> qty."""
+# Section headers used by Moxfield, Archidekt and MTG Arena text exports
+_SECTION_HEADERS = {
+    "commander", "commanders", "companion", "deck", "decklist", "main", "mainboard",
+    "sideboard", "maybeboard", "considering", "tokens",
+}
+
+
+def parse_card_line(line: str) -> Optional[tuple[str, int]]:
+    """Parse one decklist line into (normalized_name, qty), or None for blank/header lines.
+    Handles '1 Sol Ring', '1x Sol Ring', and export decorations such as set codes,
+    collector numbers, foil markers and Archidekt categories:
+    '1 Sol Ring (CMR) 472 *F*', '1x Sol Ring (cmr) 472 [Ramp]'.
+    """
+    line = line.strip()
+    if not line or line.startswith(("//", "#")):
+        return None
+    if line.endswith(":") or line.lower() in _SECTION_HEADERS:
+        return None
+    match = re.match(r"^(\d+)x?\s+(.+)", line, re.IGNORECASE)
+    if match:
+        qty = int(match.group(1))
+        name = match.group(2)
+    else:
+        qty = 1
+        name = line
+    name = re.sub(r"\s*\[[^\]]*\]\s*$", "", name)          # Archidekt [Category]
+    name = re.sub(r"\s+\*[A-Za-z]+\*", "", name)              # *F* / *E* foil markers
+    name = re.sub(r"\s+\([A-Za-z0-9]{2,6}\)(\s+\S+)?\s*$", "", name)  # (SET) 123
+    name = normalize_card_name(name)
+    if not name:
+        return None
+    return name, qty
+
+
+def parse_card_lines(content: str) -> dict[str, int]:
+    """Parse a multi-line card list. Returns dict of normalized card name -> quantity."""
     cards: dict[str, int] = {}
     for line in content.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        match = re.match(r"^(\d+)x?\s+(.+)", line)
-        if match:
-            qty = int(match.group(1))
-            name = normalize_card_name(match.group(2))
-        else:
-            qty = 1
-            name = normalize_card_name(line)
-        cards[name] = cards.get(name, 0) + qty
+        parsed = parse_card_line(line)
+        if parsed:
+            name, qty = parsed
+            cards[name] = cards.get(name, 0) + qty
     return cards
+
+
+def parse_text_collection(content: str) -> dict[str, int]:
+    """Parse text format: '1 Card Name' or just 'Card Name' per line. Returns dict name -> qty."""
+    return parse_card_lines(content)
 
 
 def get_cards_in_decks() -> dict[str, dict]:
@@ -741,15 +786,20 @@ def get_all_commanders() -> list[dict]:
 
 _all_commanders: list[dict] = []
 _commanders_fetched_at: float = 0
+_commanders_lock = threading.Lock()
 
 
 def get_cached_commanders() -> list[dict]:
     global _all_commanders, _commanders_fetched_at
-    if not _all_commanders or (time.time() - _commanders_fetched_at > 86400):
-        logger.info("Fetching all commanders from Scryfall...")
-        _all_commanders = get_all_commanders()
-        _commanders_fetched_at = time.time()
-        logger.info(f"Fetched {len(_all_commanders)} commanders")
+    if _all_commanders and (time.time() - _commanders_fetched_at <= 86400):
+        return _all_commanders
+    # Endpoints run in a thread pool; make concurrent cold-start requests share one fetch
+    with _commanders_lock:
+        if not _all_commanders or (time.time() - _commanders_fetched_at > 86400):
+            logger.info("Fetching all commanders from Scryfall...")
+            _all_commanders = get_all_commanders()
+            _commanders_fetched_at = time.time()
+            logger.info(f"Fetched {len(_all_commanders)} commanders")
     return _all_commanders
 
 
@@ -1139,6 +1189,14 @@ def classify_functional_category(
     return "utility"
 
 
+def is_commander_data_cached(commander_name: str) -> bool:
+    """True if the default avg deck and synergy data for a commander are both fresh in cache."""
+    now = time.time()
+    avg = commander_cache.get(f"{commander_name}||")
+    syn = synergy_cache.get(commander_name)
+    return bool(avg and now - avg["timestamp"] < CACHE_TTL and syn and now - syn["timestamp"] < CACHE_TTL)
+
+
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
     """Get average deck for a commander from EDHREC, with caching."""
     cache_key = f"{commander_name}|{budget or ''}|{theme or ''}"
@@ -1315,9 +1373,7 @@ async def get_collection():
 @app.post("/api/collection/restore")
 async def restore_collection(body: dict):
     cards = body.get("cards", {})
-    if not cards:
-        raise HTTPException(status_code=400, detail="No cards provided")
-
+    # An empty list/dict clears the collection
     collection.clear()
     # Support both old format (list of strings) and new format (dict name->qty)
     if isinstance(cards, list):
@@ -1336,13 +1392,13 @@ async def restore_collection(body: dict):
 
 # --- Deck List Management ---
 @app.get("/api/decks")
-async def list_decks():
+def list_decks():
     result = [_enrich_deck_response(deck) for deck in deck_lists.values()]
     return {"decks": result}
 
 
 @app.post("/api/decks")
-async def create_deck(body: dict):
+def create_deck(body: dict):
     name = body.get("name", "").strip()
     commander = body.get("commander", "").strip()
     partner = body.get("partner", "").strip()
@@ -1352,21 +1408,7 @@ async def create_deck(body: dict):
 
     deck_id = f"deck_{int(time.time() * 1000)}"
 
-    # Parse card list
-    cards: dict[str, int] = {}
-    if cards_text:
-        for line in cards_text.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            match = re.match(r"^(\d+)x?\s+(.+)", line)
-            if match:
-                qty = int(match.group(1))
-                card_name = normalize_card_name(match.group(2))
-            else:
-                qty = 1
-                card_name = normalize_card_name(line)
-            cards[card_name] = cards.get(card_name, 0) + qty
+    cards = parse_card_lines(cards_text) if cards_text else {}
 
     deck_lists[deck_id] = {
         "id": deck_id,
@@ -1379,14 +1421,14 @@ async def create_deck(body: dict):
 
 
 @app.get("/api/decks/{deck_id}")
-async def get_deck(deck_id: str):
+def get_deck(deck_id: str):
     if deck_id not in deck_lists:
         raise HTTPException(status_code=404, detail="Deck not found")
     return _enrich_deck_response(deck_lists[deck_id])
 
 
 @app.put("/api/decks/{deck_id}")
-async def update_deck(deck_id: str, body: dict):
+def update_deck(deck_id: str, body: dict):
     if deck_id not in deck_lists:
         raise HTTPException(status_code=404, detail="Deck not found")
 
@@ -1398,20 +1440,7 @@ async def update_deck(deck_id: str, body: dict):
     if "partner" in body:
         deck["partner"] = body["partner"].strip() if body["partner"] else ""
     if "cards_text" in body:
-        cards: dict[str, int] = {}
-        for line in body["cards_text"].strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            match = re.match(r"^(\d+)x?\s+(.+)", line)
-            if match:
-                qty = int(match.group(1))
-                card_name = normalize_card_name(match.group(2))
-            else:
-                qty = 1
-                card_name = normalize_card_name(line)
-            cards[card_name] = cards.get(card_name, 0) + qty
-        deck["cards"] = cards
+        deck["cards"] = parse_card_lines(body["cards_text"])
     return _enrich_deck_response(deck)
 
 
@@ -1542,7 +1571,7 @@ async def get_collection_stats():
 
 
 @app.get("/api/commanders")
-async def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
+def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
     commanders = get_cached_commanders()
     results = commanders
 
@@ -1558,7 +1587,7 @@ async def list_commanders(color: Optional[str] = None, search: Optional[str] = N
 
 
 @app.get("/api/commanders/search_autocomplete")
-async def search_commanders_autocomplete(q: str = ""):
+def search_commanders_autocomplete(q: str = ""):
     """Fast autocomplete search for commander names."""
     if len(q) < 2:
         return {"results": []}
@@ -1664,7 +1693,7 @@ def _get_compatible_partners(commander: dict) -> list[dict]:
 
 
 @app.get("/api/commander/{commander_name:path}/partners")
-async def get_commander_partners(commander_name: str):
+def get_commander_partners(commander_name: str):
     """Get compatible partner commanders for a given commander."""
     commanders = get_cached_commanders()
     front_face = commander_name.split("//")[0].strip()
@@ -1688,7 +1717,7 @@ async def get_commander_partners(commander_name: str):
 
 
 @app.post("/api/cards/validate")
-async def validate_cards(body: dict):
+def validate_cards(body: dict):
     """Validate a list of card names against Scryfall. Returns recognized and unrecognized cards."""
     card_names = body.get("cards", [])
     if not card_names:
@@ -1740,7 +1769,7 @@ async def validate_cards(body: dict):
 
 
 @app.get("/api/commanders/popular")
-async def popular_commanders():
+def popular_commanders():
     commanders = get_cached_commanders()
     top = sorted(commanders, key=lambda c: c["edhrec_rank"])[:50]
     return {"commanders": top}
@@ -1748,7 +1777,7 @@ async def popular_commanders():
 
 @app.get("/api/commander/{commander_name:path}")
 @rate_limit(RATE_LIMIT)
-async def get_commander_detail(
+def get_commander_detail(
     request: Request,
     commander_name: str,
     budget: Optional[str] = None,
@@ -1981,6 +2010,7 @@ FUNCTIONAL_TAGS = {
 def _derive_functional_tags(oracle_text: str) -> set:
     """Return the set of functional tags matching patterns in oracle_text (lowercased input expected)."""
     matched = set()
+    oracle_text = oracle_text.lower()  # oracle cache entries aren't consistently lowercased
     for tag, patterns in FUNCTIONAL_TAGS.items():
         for pat in patterns:
             if re.search(pat, oracle_text):
@@ -1991,7 +2021,7 @@ def _derive_functional_tags(oracle_text: str) -> set:
 
 @app.post("/api/recommendations/from-favorites")
 @rate_limit(RATE_LIMIT)
-async def recommendations_from_favorites(request: Request, body: dict):
+def recommendations_from_favorites(request: Request, body: dict):
     """Find commanders that synergize with a list of favorite cards."""
     card_names = body.get("card_names", [])
     limit = body.get("limit", 40)
@@ -2020,8 +2050,11 @@ async def recommendations_from_favorites(request: Request, body: dict):
 
     results = []
     for cmd in commanders:
+        was_cached = is_commander_data_cached(cmd["name"])
         avg_data = get_commander_avg_deck(cmd["name"])
         synergy_data = get_commander_synergy_cards(cmd["name"])
+        if not was_cached:
+            time.sleep(0.05)  # be polite to EDHREC only when we actually hit it
 
         # --- Build weighted card pool ---
         # Maps normalized_name -> (weight 0.0–1.0, display_name, category)
@@ -2161,8 +2194,6 @@ async def recommendations_from_favorites(request: Request, body: dict):
             "preview_cards": preview_cards,
         })
 
-        time.sleep(0.05)
-
     # Sort by weighted match % descending, EDHREC rank ascending on ties
     results.sort(key=lambda r: (r["match_percentage"], -r["edhrec_rank"]), reverse=True)
 
@@ -2175,7 +2206,7 @@ async def recommendations_from_favorites(request: Request, body: dict):
 
 @app.post("/api/recommendations")
 @rate_limit(RATE_LIMIT)
-async def get_recommendations(
+def get_recommendations(
     request: Request,
     color: Optional[str] = None,
     search: Optional[str] = None,
@@ -2202,7 +2233,11 @@ async def get_recommendations(
 
     results = []
     for cmd in commanders:
+        cache_entry = commander_cache.get(f"{cmd['name']}||")
+        was_cached = bool(cache_entry and time.time() - cache_entry["timestamp"] < CACHE_TTL)
         data = get_commander_avg_deck(cmd["name"])
+        if not was_cached:
+            time.sleep(0.1)  # be polite to EDHREC only when we actually hit it
         deck_cards = set(data.get("deck_card_names", []))
         if not deck_cards:
             continue
@@ -2229,8 +2264,6 @@ async def get_recommendations(
                 "match_percentage": round(owned_count / max(total, 1) * 100, 1),
                 "_missing_names": missing_names,
             })
-
-        time.sleep(0.1)
 
     # Fetch prices for all missing cards across all results
     all_missing = set()

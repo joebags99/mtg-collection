@@ -1,6 +1,41 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 
-const API = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// In dev the backend runs separately on :8000; production builds are served by the
+// backend itself (see backend/serve.py), so default to same-origin requests.
+const API = process.env.REACT_APP_API_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
+
+// EDHREC URL slug, mirroring edhrec_slug() in backend/app.py
+function edhrecSlug(name) {
+  return name.split('//')[0]
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/-/g, ' ')
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+}
+
+// Extract the card name from a decklist line, mirroring parse_card_line() in backend/app.py.
+// Strips quantities, set codes, collector numbers, foil markers and Archidekt categories.
+// Returns null for blank lines, comments and section headers ("Sideboard", "Commander:", ...).
+const SECTION_HEADERS = new Set([
+  'commander', 'commanders', 'companion', 'deck', 'decklist', 'main', 'mainboard',
+  'sideboard', 'maybeboard', 'considering', 'tokens',
+]);
+
+function parseCardLineName(line) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#')) return null;
+  if (trimmed.endsWith(':') || SECTION_HEADERS.has(trimmed.toLowerCase())) return null;
+  const m = trimmed.match(/^(\d+)x?\s+(.+)/i);
+  const name = (m ? m[2] : trimmed)
+    .replace(/\s*\[[^\]]*\]\s*$/, '')
+    .replace(/\s+\*[A-Za-z]+\*/g, '')
+    .replace(/\s+\([A-Za-z0-9]{2,6}\)(\s+\S+)?\s*$/, '')
+    .trim();
+  return name || null;
+}
 
 // --- Color Identity Helpers ---
 const COLOR_MAP = {
@@ -36,26 +71,6 @@ function ManaSymbol({ symbol, size = 20 }) {
         e.target.style.display = 'none';
       }}
     />
-  );
-}
-
-// Parse mana cost string like "{2}{U}{U}" into array of symbols
-function parseManaSymbols(manaCost) {
-  if (!manaCost) return [];
-  const matches = manaCost.match(/\{([^}]+)\}/g);
-  if (!matches) return [];
-  return matches.map(m => m.replace(/[{}]/g, ''));
-}
-
-function ManaCost({ cost, size = 18 }) {
-  const symbols = parseManaSymbols(cost);
-  if (symbols.length === 0) return null;
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      {symbols.map((sym, i) => (
-        <ManaSymbol key={i} symbol={sym} size={size} />
-      ))}
-    </span>
   );
 }
 
@@ -440,7 +455,7 @@ function loadFavorites() {
 
 // --- API helpers ---
 async function apiGet(path, params = {}) {
-  const url = new URL(API + path);
+  const url = new URL(API + path, window.location.origin);
   Object.entries(params).forEach(([k, v]) => {
     if (v !== null && v !== undefined && v !== '') url.searchParams.set(k, v);
   });
@@ -469,6 +484,25 @@ async function apiPost(path, body) {
   } catch (networkErr) {
     console.error(`Network error calling ${path}:`, networkErr);
     throw new Error(`Network error: Cannot reach server at ${API}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'API error');
+  }
+  return res.json();
+}
+
+async function apiSend(method, path, body) {
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (networkErr) {
+    console.error(`Network error calling ${path}:`, networkErr);
+    throw new Error(`Network error: Cannot reach server at ${API || window.location.origin}. Is the backend running?`);
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -756,10 +790,19 @@ function CollectionUpload({ onUploaded, collectionCount }) {
     setLoading(false);
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
+    if (!window.confirm('Clear your entire collection? This also removes it from your synced account if you are logged in.')) return;
+    setError('');
+    try {
+      // Clear the server copy too, otherwise it reappears on the next page load
+      await apiPost('/api/collection/restore', { cards: {} });
+    } catch (err) {
+      setError(err.message);
+      return;
+    }
     localStorage.removeItem(STORAGE_KEY);
     setResult(null);
-    onUploaded({ count: 0, cards: [] });
+    onUploaded({ count: 0, cards: {} });
   };
 
   return (
@@ -921,8 +964,9 @@ function sortResults(results, sortBy) {
   switch (sortBy) {
     case 'match_desc': return sorted.sort((a, b) => b.match_percentage - a.match_percentage);
     case 'match_asc': return sorted.sort((a, b) => a.match_percentage - b.match_percentage);
-    case 'price_asc': return sorted.sort((a, b) => (a.missing_price || 9999) - (b.missing_price || 9999));
-    case 'price_desc': return sorted.sort((a, b) => (b.missing_price || 0) - (a.missing_price || 0));
+    // $0 means nothing left to buy, so it must sort first, not be treated as "unknown"
+    case 'price_asc': return sorted.sort((a, b) => (a.missing_price ?? 9999) - (b.missing_price ?? 9999));
+    case 'price_desc': return sorted.sort((a, b) => (b.missing_price ?? 0) - (a.missing_price ?? 0));
     case 'edhrec': return sorted.sort((a, b) => (a.edhrec_rank || 9999) - (b.edhrec_rank || 9999));
     case 'owned_desc': return sorted.sort((a, b) => b.owned_count - a.owned_count);
     default: return sorted;
@@ -980,17 +1024,20 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
   // Get top 3 commanders for the hero display
   const topCommanders = sortedResults.slice(0, 3);
 
+  const knownPrices = results.map(r => r.missing_price).filter(p => p != null);
+  const heroStats = fetched && results.length > 0 ? [
+    { value: results.length, label: 'Commanders Found' },
+    { value: `${Math.max(...results.map(r => r.match_percentage || 0))}%`, label: 'Best Match' },
+    ...(knownPrices.length > 0 ? [{ value: `$${Math.min(...knownPrices).toFixed(0)}`, label: 'Cheapest Build' }] : []),
+  ] : [];
+
   return (
     <div className="space-y-6">
       <PageHero
         title="Commander Recommendations"
         subtitle={`Based on your collection of ${collectionCount.toLocaleString()} cards, ranked by how many cards you already own in each commander's average EDHREC deck.`}
         commanders={topCommanders}
-        stats={fetched ? [
-          { value: results.length, label: 'Commanders Found' },
-          { value: `${Math.max(...results.map(r => r.match_percentage || 0))}%`, label: 'Best Match' },
-          { value: `$${Math.min(...results.filter(r => r.missing_price).map(r => r.missing_price || 999)).toFixed(0)}`, label: 'Cheapest Build' }
-        ] : []}
+        stats={heroStats}
       />
 
       {/* Filters */}
@@ -1688,9 +1735,10 @@ function classifyFunctionalCategory(card) {
 // Basic lands for each color identity
 const COLOR_TO_BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
 
-function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite }) {
+function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onDeckSaved }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
+  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | {ok, message}
   const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
 
   // Deck composition settings
@@ -1916,6 +1964,22 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite }) {
     const text = includedCards.map(c => `${c.qty} ${c.name}`).join('\n');
     setExportText(text);
     navigator.clipboard.writeText(text).catch(() => {});
+  };
+
+  const handleSaveDeck = async () => {
+    const name = window.prompt('Save this build to My Decks as:', commander.name);
+    if (!name || !name.trim()) return;
+    const lines = includedCards.map(c => `${c.qty} ${c.name}`);
+    // The commander is part of the 100 and occupies a physical copy, so make sure it's listed
+    if (!includedCards.some(c => c.isCommander)) lines.unshift(`1 ${commander.name}`);
+    setSaveStatus('saving');
+    try {
+      await apiPost('/api/decks', { name: name.trim(), commander: commander.name, cards_text: lines.join('\n') });
+      setSaveStatus({ ok: true, message: `Saved "${name.trim()}" to My Decks.` });
+      onDeckSaved?.();
+    } catch (err) {
+      setSaveStatus({ ok: false, message: `Couldn't save deck: ${err.message}` });
+    }
   };
 
   // Apply composition targets: actually perform the removals/adds to the deck
@@ -2271,11 +2335,27 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
+          <button
+            onClick={handleSaveDeck}
+            disabled={saveStatus === 'saving'}
+            className="bg-purple-700 hover:bg-purple-600 disabled:opacity-60 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {saveStatus === 'saving' ? 'Saving…' : 'Save to My Decks'}
+          </button>
           <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
         </div>
       </div>
+
+      {saveStatus && saveStatus !== 'saving' && (
+        <div className={`rounded-lg p-3 text-sm flex items-center justify-between ${
+          saveStatus.ok ? 'bg-green-900/40 border border-green-700 text-green-300' : 'bg-red-900/40 border border-red-700 text-red-300'
+        }`}>
+          <span>{saveStatus.message}</span>
+          <button onClick={() => setSaveStatus(null)} className="text-xs text-gray-400 hover:text-white">Dismiss</button>
+        </div>
+      )}
 
       {exportText && (
         <div className="bg-gray-800 rounded-lg p-4 space-y-2">
@@ -2939,7 +3019,11 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
               </div>
               <div className="flex items-center gap-3">
                 <a
-                  href={`https://edhrec.com/commanders/${commander.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')}`}
+                  href={`https://edhrec.com/commanders/${
+                    selectedPartner
+                      ? [edhrecSlug(commander.name), edhrecSlug(selectedPartner.name)].sort().join('-')
+                      : edhrecSlug(commander.name)
+                  }`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-gray-300 transition-colors"
@@ -3247,7 +3331,7 @@ function DeckBadges({ inDecks }) {
 }
 
 // --- My Decks ---
-function MyDecks({ onDecksChanged, decksReady }) {
+function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
   const [decks, setDecks] = useState({});
   const [newName, setNewName] = useState('');
   const [newCommander, setNewCommander] = useState('');
@@ -3259,7 +3343,8 @@ function MyDecks({ onDecksChanged, decksReady }) {
   const [validating, setValidating] = useState(false);
   const [invalidCards, setInvalidCards] = useState([]);
 
-  // Load decks only after restore is complete
+  // Load decks after restore is complete, and again whenever decks change elsewhere
+  // (saved from the Deck Builder, restored on login)
   useEffect(() => {
     if (!decksReady) return;
     apiGet('/api/decks').then(data => {
@@ -3268,18 +3353,10 @@ function MyDecks({ onDecksChanged, decksReady }) {
       setDecks(deckMap);
       saveDecks(deckMap);
     }).catch(() => {});
-  }, [decksReady]);
+  }, [decksReady, refreshKey]);
 
-  // Parse card names from text
-  const parseCardNames = (text) => {
-    return text.trim().split('\n')
-      .map(l => l.trim())
-      .filter(l => l)
-      .map(l => {
-        const m = l.match(/^(\d+)x?\s+(.+)/);
-        return m ? m[2].trim() : l.trim();
-      });
-  };
+  // Parse card names from text (same rules the backend uses when saving)
+  const parseCardNames = (text) => text.split('\n').map(parseCardLineName).filter(Boolean);
 
   const validateAndAdd = async () => {
     if (!newName.trim()) return;
@@ -3322,8 +3399,9 @@ function MyDecks({ onDecksChanged, decksReady }) {
   };
 
   const handleDelete = async (id) => {
+    if (!window.confirm(`Delete "${decks[id]?.name || 'this deck'}"? This can't be undone.`)) return;
     try {
-      await fetch(`${API}/api/decks/${id}`, { method: 'DELETE' });
+      await apiSend('DELETE', `/api/decks/${id}`);
       const updated = { ...decks };
       delete updated[id];
       setDecks(updated);
@@ -3358,12 +3436,7 @@ function MyDecks({ onDecksChanged, decksReady }) {
 
       // Save
       try {
-        const res = await fetch(`${API}/api/decks/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cards_text: editCards }),
-        });
-        const deck = await res.json();
+        const deck = await apiSend('PUT', `/api/decks/${id}`, { cards_text: editCards });
         const updated = { ...decks, [id]: deck };
         setDecks(updated);
         saveDecks(updated);
@@ -4371,7 +4444,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
           </h2>
           {favList.length > 0 && (
             <button
-              onClick={onClearFavorites}
+              onClick={() => { if (window.confirm(`Remove all ${favList.length} favorites?`)) onClearFavorites(); }}
               className="text-xs text-gray-500 hover:text-red-400 transition-colors"
             >
               Clear all
@@ -4614,6 +4687,9 @@ function App() {
   const [excludeInDecks, setExcludeInDecks] = useState(false);
   const [deckCount, setDeckCount] = useState(0);
   const [decksReady, setDecksReady] = useState(false);
+  const [decksVersion, setDecksVersion] = useState(0); // bump to make My Decks reload
+  // Tab to return to from commander detail (Recommendations, Search, Find My Commander, Compare)
+  const [detailReturnTab, setDetailReturnTab] = useState('recommend');
 
   // Favorites state
   const [favorites, setFavorites] = useState(() => loadFavorites());
@@ -4650,7 +4726,20 @@ function App() {
     if (savedUser && savedToken) {
       // Verify token is still valid
       apiAuthGet('/api/auth/me')
-        .then(data => setUser(data.user))
+        .then(data => {
+          setUser(data.user);
+          // Pick up favorites starred on other devices
+          return apiAuthGet('/api/user/favorites').then(fav => {
+            const serverFavs = (fav.cards || []).map(n => n.toLowerCase());
+            if (serverFavs.length === 0) return;
+            setFavorites(prev => {
+              const merged = new Set([...prev, ...serverFavs]);
+              if (merged.size === prev.size) return prev;
+              saveFavorites(merged);
+              return merged;
+            });
+          }).catch(() => {});
+        })
         .catch(() => {
           clearAuth();
           setUser(null);
@@ -4658,9 +4747,11 @@ function App() {
     }
   }, []);
 
-  // Sync to server when logged in and data changes
+  // Sync to server when logged in and data changes.
+  // Checks the stored token rather than `user` state so it also works right after
+  // login, before the setUser() re-render has happened.
   const syncToServer = useCallback(async () => {
-    if (!user) return;
+    if (!loadAuthToken()) return;
 
     setSyncStatus('syncing');
     try {
@@ -4670,6 +4761,7 @@ function App() {
       await Promise.all([
         apiAuthPost('/api/user/collection/save', { cards: collection }),
         apiAuthPost('/api/user/decks/save', { decks }),
+        apiAuthPost('/api/user/favorites/save', { cards: [...loadFavorites()] }),
       ]);
 
       setSyncStatus('synced');
@@ -4679,7 +4771,22 @@ function App() {
       setSyncStatus('error');
       setTimeout(() => setSyncStatus(''), 3000);
     }
-  }, [user]);
+  }, []);
+
+  // Save favorites to the account shortly after they change (debounced so starring
+  // several cards in a row results in one request). Only reacts to favorites changing,
+  // never to login state, so a fresh browser can't overwrite the account's list.
+  const lastFavorites = useRef(favorites);
+  useEffect(() => {
+    if (lastFavorites.current === favorites) return;
+    lastFavorites.current = favorites;
+    if (!loadAuthToken()) return;
+    const timer = setTimeout(() => {
+      apiAuthPost('/api/user/favorites/save', { cards: [...favorites] })
+        .catch(err => console.error('Favorites sync failed:', err));
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [favorites]);
 
   // Handle login - load user data from server
   const handleLogin = async (loggedInUser, token) => {
@@ -4688,6 +4795,12 @@ function App() {
     try {
       // Load user data from server
       const data = await apiAuthGet('/api/user/data');
+
+      // Favorites are low-stakes, so merge local and account favorites rather than pick one
+      const serverFavs = (data.favorites?.cards || []).map(n => n.toLowerCase());
+      const mergedFavs = new Set([...loadFavorites(), ...serverFavs]);
+      setFavorites(mergedFavs);
+      saveFavorites(mergedFavs);
 
       // If server has data, use it; otherwise sync local data to server
       if (data.collection.count > 0 || data.decks.count > 0) {
@@ -4701,10 +4814,11 @@ function App() {
           saveDecks(data.decks.decks);
           await apiPost('/api/decks/restore', { decks: data.decks.decks });
           setDeckCount(data.decks.count);
+          setDecksVersion(v => v + 1);
         }
         if (data.collection.count > 0) setTab('recommend');
       } else {
-        // Server is empty - sync local data up
+        // Server is empty - sync local data up (includes the merged favorites)
         await syncToServer();
       }
     } catch (err) {
@@ -4758,6 +4872,7 @@ function App() {
   };
 
   const handleSelectCommander = (cmd) => {
+    if (tab !== 'detail' && tab !== 'deckbuilder') setDetailReturnTab(tab);
     setSelectedCommander(cmd);
     setTab('detail');
   };
@@ -4772,6 +4887,7 @@ function App() {
   };
 
   const handleOpenDeckBuilder = (data, cmd) => {
+    if (tab !== 'detail' && tab !== 'deckbuilder') setDetailReturnTab(tab);
     if (cmd) setSelectedCommander(cmd);
     setDeckBuilderData(data);
     setTab('deckbuilder');
@@ -4781,6 +4897,18 @@ function App() {
     apiGet('/api/decks').then(data => {
       setDeckCount((data.decks || []).length);
       // Auto-sync to server if logged in
+      if (user) syncToServer();
+    }).catch(() => {});
+  };
+
+  // Deck saved from the Deck Builder: persist locally, refresh My Decks, then sync
+  const handleDeckSaved = () => {
+    apiGet('/api/decks').then(data => {
+      const deckMap = {};
+      (data.decks || []).forEach(d => { deckMap[d.id] = d; });
+      saveDecks(deckMap);
+      setDeckCount(Object.keys(deckMap).length);
+      setDecksVersion(v => v + 1);
       if (user) syncToServer();
     }).catch(() => {});
   };
@@ -4885,8 +5013,7 @@ function App() {
               onClick={() => setTab(t.id)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 tab === t.id ||
-                (tab === 'detail' && t.id === 'recommend') ||
-                (tab === 'deckbuilder' && t.id === 'recommend')
+                ((tab === 'detail' || tab === 'deckbuilder') && t.id === detailReturnTab)
                   ? 'border-blue-500 text-blue-400'
                   : t.id === 'favorites' && favorites.size > 0
                   ? 'border-transparent text-yellow-400/80 hover:text-yellow-300'
@@ -4962,7 +5089,7 @@ function App() {
         </div>
 
         <div style={{ display: tab === 'mydecks' ? 'block' : 'none' }}>
-          <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} />
+          <MyDecks onDecksChanged={handleDecksChanged} decksReady={decksReady} refreshKey={decksVersion} />
         </div>
 
         {tab === 'stats' && (
@@ -4976,7 +5103,7 @@ function App() {
             <CommanderDetail
               commander={selectedCommander}
               collectionCount={collectionCount}
-              onBack={() => setTab('recommend')}
+              onBack={() => setTab(detailReturnTab)}
               onOpenDeckBuilder={handleOpenDeckBuilder}
               excludeInDecks={excludeInDecks}
               favorites={favorites}
@@ -4993,6 +5120,7 @@ function App() {
               onBack={() => setTab('detail')}
               favorites={favorites}
               onToggleFavorite={handleToggleFavorite}
+              onDeckSaved={handleDeckSaved}
             />
           </div>
         )}
