@@ -6,8 +6,9 @@ beforeEach(() => {
   global.fetch = jest.fn(() => Promise.reject(new Error('offline')));
 });
 
-test('renders the app shell without a backend', () => {
+test('opens on the Home welcome screen without a backend', () => {
   render(<App />);
   expect(screen.getByText('MTG Commander Recommender')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Upload Collection' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Home' })).toBeInTheDocument();
+  expect(screen.getByText('Start by loading your collection')).toBeInTheDocument();
 });

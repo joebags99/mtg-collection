@@ -90,6 +90,27 @@ function ManaSymbol({ symbol, size = 20 }) {
   );
 }
 
+// Parse mana cost string like "{2}{U}{U}" into array of symbols.
+// Split cards ("{1}{U} // {3}{R}") keep the front face only.
+function parseManaSymbols(manaCost) {
+  if (!manaCost) return [];
+  const matches = manaCost.split('//')[0].match(/\{([^}]+)\}/g);
+  if (!matches) return [];
+  return matches.map(m => m.replace(/[{}]/g, ''));
+}
+
+function ManaCost({ cost, size = 16 }) {
+  const symbols = parseManaSymbols(cost);
+  if (symbols.length === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-0.5 flex-shrink-0">
+      {symbols.map((sym, i) => (
+        <ManaSymbol key={i} symbol={sym} size={size} />
+      ))}
+    </span>
+  );
+}
+
 function getColorGlow(colors) {
   if (!colors || colors.length === 0) return 'rgba(128,128,128,0.3)';
   const glowColors = {
@@ -129,7 +150,7 @@ function AmbientBackground({ colors = [] }) {
   const { particles, orbs } = React.useMemo(() => {
     const activeColors = colorKey
       ? colorKey.split('').map(c => colorValues[c] || '#3b82f6')
-      : ['#3b82f6', '#8b5cf6'];
+      : ['#c38f25', '#8b5cf6'];
     return {
       particles: Array.from({ length: 12 }, (_, i) => ({
         id: i,
@@ -191,14 +212,14 @@ function PageHero({ title, subtitle, commanders = [], stats = [], children, colo
   const colors = colorIdentity.length > 0 ? colorIdentity :
     commanders.length > 0 ? (commanders[0]?.color_identity || []) : [];
 
-  const glowColor = colors.length > 0 ? getColorGlow(colors) : 'rgba(59, 130, 246, 0.6)';
+  const glowColor = colors.length > 0 ? getColorGlow(colors) : 'rgba(220, 170, 58, 0.7)';
 
   return (
     <div className="relative mb-8 overflow-hidden" style={{ zIndex: 1 }}>
       <div className="flex items-start justify-between gap-6 mb-4 flex-wrap">
         <div className="flex-1 min-w-0">
           <h1
-            className="text-3xl font-black tracking-tight glow-underline inline-block pb-2"
+            className="font-display text-3xl font-bold tracking-wide text-accent-50 glow-underline inline-block pb-2"
             style={{ '--glow-color': glowColor }}
           >
             {title}
@@ -325,7 +346,7 @@ function CardName({ name, className = '', favorites, onToggleFavorite }) {
   return (
     <span
       ref={ref}
-      className={`inline-flex items-center gap-1 cursor-pointer hover:text-blue-400 transition-colors ${className}`}
+      className={`inline-flex items-center gap-1 cursor-pointer hover:text-accent-300 transition-colors ${className}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShow(false)}
     >
@@ -378,6 +399,7 @@ const DECKS_STORAGE_KEY = 'mtg_decks';
 const AUTH_TOKEN_KEY = 'mtg_auth_token';
 const AUTH_USER_KEY = 'mtg_auth_user';
 const FAVORITES_STORAGE_KEY = 'mtg_favorites';
+const RECENT_COMMANDERS_KEY = 'mtg_recent_commanders';
 
 function saveAuthToken(token) {
   try {
@@ -460,6 +482,24 @@ function saveFavorites(favs) {
     localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...favs]));
   } catch (e) {
     console.error('Failed to save favorites:', e);
+  }
+}
+
+function loadRecentCommanders() {
+  try {
+    const data = localStorage.getItem(RECENT_COMMANDERS_KEY);
+    if (data) return JSON.parse(data);
+  } catch (e) {
+    console.error('Failed to load recent commanders:', e);
+  }
+  return [];
+}
+
+function saveRecentCommanders(list) {
+  try {
+    localStorage.setItem(RECENT_COMMANDERS_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error('Failed to save recent commanders:', e);
   }
 }
 
@@ -628,7 +668,7 @@ function CommanderAutocomplete({ value, onChange, placeholder, className }) {
       />
       {loading && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2">
-          <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />
+          <div className="w-3 h-3 border border-accent-400 border-t-transparent rounded-full animate-spin" />
         </div>
       )}
       {showDropdown && results.length > 0 && (
@@ -833,10 +873,10 @@ function CollectionUpload({ onUploaded, collectionCount }) {
       />
 
       {collectionCount > 0 && (
-        <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 flex items-center justify-between">
-          <p className="text-blue-300">
+        <div className="bg-accent-900/30 border border-accent-700 rounded-lg p-4 flex items-center justify-between">
+          <p className="text-accent-200">
             Collection loaded: <strong>{collectionCount}</strong> unique cards
-            {loadCollection() && <span className="text-blue-400/70 text-sm ml-2">(saved in browser)</span>}
+            {loadCollection() && <span className="text-accent-300/70 text-sm ml-2">(saved in browser)</span>}
           </p>
           <button
             onClick={handleClear}
@@ -854,7 +894,7 @@ function CollectionUpload({ onUploaded, collectionCount }) {
           type="file"
           accept=".csv,.txt"
           onChange={handleFile}
-          className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-500"
+          className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-accent-600 file:text-white file:cursor-pointer hover:file:bg-accent-500"
         />
       </div>
 
@@ -866,12 +906,12 @@ function CollectionUpload({ onUploaded, collectionCount }) {
           onChange={e => setText(e.target.value)}
           placeholder={"1 Sol Ring\n1 Rhystic Study\n1 Swords to Plowshares\n..."}
           rows={8}
-          className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+          className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-accent-500"
         />
         <button
           onClick={handleText}
           disabled={loading || !text.trim()}
-          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+          className="bg-accent-600 hover:bg-accent-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
         >
           {loading ? 'Processing...' : 'Upload'}
         </button>
@@ -1068,7 +1108,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Commander name..."
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500"
             />
           </div>
           <div>
@@ -1077,7 +1117,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
               type="number"
               value={minOwned}
               onChange={e => setMinOwned(parseInt(e.target.value) || 0)}
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-blue-500"
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-accent-500"
             />
           </div>
           <div>
@@ -1110,7 +1150,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
           <button
             onClick={fetchRecommendations}
             disabled={loading}
-            className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-5 py-1.5 rounded font-medium"
+            className="bg-accent-600 hover:bg-accent-500 disabled:bg-gray-600 px-5 py-1.5 rounded font-medium"
           >
             {loading ? 'Loading...' : fetched ? 'Refresh' : 'Get Recommendations'}
           </button>
@@ -1134,7 +1174,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
             <select
               value={sortBy}
               onChange={e => setSortBy(e.target.value)}
-              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-accent-500"
             >
               {SORT_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1173,7 +1213,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
           </div>
           <p className="text-gray-200 font-medium">Find commanders you can build from what you already own</p>
           <p className="text-sm text-gray-500 max-w-lg mx-auto">
-            Optionally narrow by color identity or name, then hit <span className="text-blue-400">Get Recommendations</span>.
+            Optionally narrow by color identity or name, then hit <span className="text-accent-300">Get Recommendations</span>.
             The first run checks up to 200 commanders against EDHREC and can take a few minutes; repeat runs are much faster.
           </p>
         </div>
@@ -1245,7 +1285,7 @@ function CommanderSearch({ collectionCount, onSelectCommander, compareList, onTo
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Type a commander name (min 2 characters)..."
-          className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-500"
         />
         <div className="flex gap-1 items-center">
           <span className="text-xs text-gray-400 mr-2">Filter:</span>
@@ -1331,6 +1371,7 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                       <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      <ManaCost cost={card.mana_cost} size={14} />
                       <DeckBadges inDecks={card.in_decks} />
                       {card.qty_owned > 1 && (
                         <span className="text-[10px] text-gray-500" title={`${card.qty_owned} owned, ${card.qty_in_decks || 0} in decks`}>
@@ -1372,6 +1413,7 @@ function CardListByType({ ownedCards, missingCards, showOwned, showMissing, tota
                       <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      <ManaCost cost={card.mana_cost} size={14} />
                       <DeckBadges inDecks={card.in_decks} />
                       <span className="text-xs text-yellow-400/70">
                         {card.price ? `$${card.price.toFixed(2)}` : ''}
@@ -1443,7 +1485,7 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
       {/* The card strip: show quantity + name */}
       <div
         className={`flex items-center gap-1 px-1.5 cursor-pointer rounded-t border border-gray-700 ${
-          hovered ? 'bg-gray-600 border-blue-500' : 'bg-gray-800'
+          hovered ? 'bg-gray-600 border-accent-400' : 'bg-gray-800'
         }`}
         style={{ height: `${STRIP_HEIGHT}px` }}
       >
@@ -1622,7 +1664,7 @@ function DeckStats({ cards }) {
 
       {/* Average CMC */}
       <div className="text-center">
-        <span className="text-3xl font-bold text-blue-400">{avgCmc}</span>
+        <span className="text-3xl font-bold text-accent-300">{avgCmc}</span>
         <p className="text-xs text-gray-500 mt-0.5">Avg. Mana Value</p>
       </div>
 
@@ -2131,6 +2173,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                     {card.isCommander && <span className="text-xs text-yellow-400 bg-yellow-900/30 px-1.5 py-0.5 rounded">cmdr</span>}
                   </div>
                   <div className="flex items-center gap-2">
+                    <ManaCost cost={card.mana_cost} size={14} />
                     <DeckBadges inDecks={card.in_decks} />
                     {canHaveMultiple(card.name) ? (
                       <div className="flex items-center gap-1">
@@ -2169,6 +2212,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
               <div className="flex items-center gap-2">
                 <AvailDot card={card} />
                 <CardName name={card.name} className="text-sm text-gray-400" favorites={favorites} onToggleFavorite={onToggleFavorite} />
+                <ManaCost cost={card.mana_cost} size={14} />
                 <DeckBadges inDecks={card.in_decks} />
               </div>
               <button
@@ -2291,7 +2335,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
 
   return (
     <div className="space-y-6">
-      <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
+      <button onClick={onBack} className="text-accent-300 hover:underline">← Back to Detail</button>
 
       {/* Enhanced header with color glow */}
       <div
@@ -2308,7 +2352,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
             />
           )}
           <div>
-            <h2 className="text-2xl font-bold flex items-center gap-3">
+            <h2 className="font-display text-2xl font-bold tracking-wide flex items-center gap-3">
               Deck Builder
               <ColorBadge colors={commander.color_identity} />
             </h2>
@@ -2350,7 +2394,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                 key={v.id}
                 onClick={() => setViewMode(v.id)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  viewMode === v.id ? 'bg-accent-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`}
               >
                 {v.label}
@@ -2370,11 +2414,11 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
           <button
             onClick={handleSaveDeck}
             disabled={saveStatus === 'saving'}
-            className="bg-purple-700 hover:bg-purple-600 disabled:opacity-60 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className="bg-accent-600 hover:bg-accent-500 disabled:opacity-60 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             {saveStatus === 'saving' ? 'Saving…' : 'Save to My Decks'}
           </button>
-          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          <button onClick={handleExport} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
         </div>
@@ -2654,7 +2698,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                             <span className="text-green-400 flex-shrink-0">+</span>
                             <span className="text-green-400 truncate">{a.qty > 1 ? `${a.qty}x ` : ''}{a.name}</span>
                             <span className="text-gray-600 text-[10px] flex-shrink-0">({a.category})</span>
-                            {a.owned && <span className="text-[9px] text-blue-400 bg-blue-400/10 px-1 rounded flex-shrink-0">owned</span>}
+                            {a.owned && <span className="text-[9px] text-accent-300 bg-accent-400/10 px-1 rounded flex-shrink-0">owned</span>}
                           </div>
                         ))}
                       </div>
@@ -2712,7 +2756,7 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
   if (error) {
     return (
       <div>
-        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
+        <button onClick={onBack} className="text-accent-300 hover:underline mb-4">← Back</button>
         <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
       </div>
     );
@@ -2722,7 +2766,7 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
 
   return (
     <div className="space-y-6">
-      <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+      <button onClick={onBack} className="text-accent-300 hover:underline">← Back</button>
 
       {/* Hero header with all commanders */}
       <PageHero
@@ -2768,7 +2812,7 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
                   />
                 )}
                 <h3
-                  className="font-bold text-center cursor-pointer hover:text-blue-400 mt-3 text-lg"
+                  className="font-bold text-center cursor-pointer hover:text-accent-300 mt-3 text-lg"
                   onClick={() => onSelectCommander(orig || { name: cmd.name })}
                 >
                   {cmd.name}
@@ -2968,7 +3012,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
   if (error) {
     return (
       <div>
-        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
+        <button onClick={onBack} className="text-accent-300 hover:underline mb-4">← Back</button>
         <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
       </div>
     );
@@ -3012,7 +3056,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       )}
 
       <div className="relative z-10 space-y-6">
-        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+        <button onClick={onBack} className="text-accent-300 hover:underline">← Back</button>
 
         {/* Header */}
         <div className="flex gap-6 items-start">
@@ -3043,7 +3087,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
           <div className="space-y-3 flex-1">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-3xl font-bold">
+                <h2 className="font-display text-3xl font-bold tracking-wide text-accent-50">
                   {commander.name}
                   {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
                 </h2>
@@ -3107,7 +3151,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
                 onClick={() => setBudget(opt.value)}
                 className={`px-3 py-1 rounded text-sm ${
                   budget === opt.value
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-accent-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
               >
@@ -3123,7 +3167,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
             <select
               value={theme}
               onChange={e => setTheme(e.target.value)}
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500"
             >
               <option value="">All themes</option>
               {data.themes.map(t => (
@@ -3138,7 +3182,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
         <div className="ml-auto flex gap-2">
           <button
             onClick={() => onOpenDeckBuilder(data)}
-            className="bg-purple-700 hover:bg-purple-600 px-3 py-1.5 rounded text-sm font-medium"
+            className="bg-accent-600 hover:bg-accent-500 px-3 py-1.5 rounded text-sm font-medium"
           >
             Deck Builder
           </button>
@@ -3150,7 +3194,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
           </button>
           <button
             onClick={() => handleExport('missing')}
-            className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1.5 rounded text-sm"
+            className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm"
           >
             Export Missing Cards
           </button>
@@ -3225,7 +3269,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
               <select
                 value={recSort}
                 onChange={e => setRecSort(e.target.value)}
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-accent-500"
               >
                 <option value="synergy_desc">Highest Synergy</option>
                 <option value="synergy_asc">Lowest Synergy</option>
@@ -3237,7 +3281,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
               <select
                 value={recFilter}
                 onChange={e => setRecFilter(e.target.value)}
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-accent-500"
               >
                 <option value="all">All</option>
                 <option value="owned">In Collection</option>
@@ -3249,7 +3293,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
               <select
                 value={recTypeFilter}
                 onChange={e => setRecTypeFilter(e.target.value)}
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-accent-500"
               >
                 <option value="all">All Types</option>
                 {recTypes.map(t => (
@@ -3306,6 +3350,10 @@ function AvailDot({ card }) {
   const inDecks = card.qty_in_decks || 0;
   const deckNames = (card.in_decks || []).map(d => d.name).join(', ');
 
+  // Auto-added basic lands are assumed owned
+  if (card.isBasicLand) {
+    return <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Basic land" />;
+  }
   if (owned === 0) {
     return <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Not owned" />;
   }
@@ -3512,7 +3560,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
             <input
               value={newName} onChange={e => setNewName(e.target.value)}
               placeholder="e.g. Ur-Dragon Tribal"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500"
             />
           </div>
           <div className="flex-1">
@@ -3521,7 +3569,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
               value={newCommander}
               onChange={v => { setNewCommander(v); setNewPartner(null); }}
               placeholder="e.g. The Ur-Dragon"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500"
             />
           </div>
         </div>
@@ -3538,7 +3586,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
             value={newCards} onChange={e => { setNewCards(e.target.value); setInvalidCards([]); }}
             placeholder={"1 Sol Ring\n1 Command Tower\n1 Arcane Signet\n..."}
             rows={8}
-            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-accent-500"
           />
         </div>
         {invalidCards.length > 0 && (
@@ -3551,7 +3599,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
         )}
         <button
           onClick={validateAndAdd} disabled={!newName.trim() || validating}
-          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+          className="bg-accent-600 hover:bg-accent-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
         >
           {validating ? 'Validating cards...' : 'Add Deck'}
         </button>
@@ -3636,7 +3684,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
                 <textarea
                   value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
                   rows={8}
-                  className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono focus:outline-none focus:border-blue-500"
+                  className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono focus:outline-none focus:border-accent-500"
                 />
                 {invalidCards.length > 0 && (
                   <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
@@ -3728,7 +3776,7 @@ function AuthModal({ isOpen, onClose, onLogin }) {
               value={username}
               onChange={e => setUsername(e.target.value)}
               placeholder="Enter username"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-500"
               required
               minLength={3}
               autoFocus
@@ -3742,7 +3790,7 @@ function AuthModal({ isOpen, onClose, onLogin }) {
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="Enter password"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-500"
               required
               minLength={4}
             />
@@ -3757,7 +3805,7 @@ function AuthModal({ isOpen, onClose, onLogin }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium transition-colors"
+            className="w-full bg-accent-600 hover:bg-accent-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium transition-colors"
           >
             {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create Account'}
           </button>
@@ -3767,14 +3815,14 @@ function AuthModal({ isOpen, onClose, onLogin }) {
           {mode === 'login' ? (
             <>
               Don't have an account?{' '}
-              <button onClick={() => { setMode('register'); setError(''); }} className="text-blue-400 hover:underline">
+              <button onClick={() => { setMode('register'); setError(''); }} className="text-accent-300 hover:underline">
                 Create one
               </button>
             </>
           ) : (
             <>
               Already have an account?{' '}
-              <button onClick={() => { setMode('login'); setError(''); }} className="text-blue-400 hover:underline">
+              <button onClick={() => { setMode('login'); setError(''); }} className="text-accent-300 hover:underline">
                 Login
               </button>
             </>
@@ -3818,7 +3866,7 @@ function CollectionStats({ collectionCount }) {
       <div className="space-y-6">
         <h2 className="text-2xl font-bold">Collection Statistics</h2>
         <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
-        <button onClick={loadStats} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">
+        <button onClick={loadStats} className="bg-accent-600 hover:bg-accent-500 px-4 py-2 rounded text-sm">
           Retry
         </button>
       </div>
@@ -3852,7 +3900,7 @@ function CollectionStats({ collectionCount }) {
             </div>
             <button
               onClick={loadStats}
-              className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors animated-border"
+              className="bg-accent-600 hover:bg-accent-500 px-6 py-3 rounded-lg font-medium transition-colors animated-border"
             >
               Load Statistics
             </button>
@@ -4040,322 +4088,156 @@ function CollectionStats({ collectionCount }) {
   );
 }
 
-// --- About Page ---
-function AboutPage() {
+// --- Home Dashboard ---
+
+function StatTile({ value, label, onClick }) {
   return (
-    <div className="page-fade-in max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-amber-200 mb-2">About MTG Commander Recommender</h1>
-        <p className="text-gray-400">Turn your card collection into your next Commander deck</p>
-        <div className="h-px bg-gradient-to-r from-amber-500/50 to-transparent mt-4" />
-      </div>
-
-      <div className="space-y-8">
-        <section>
-          <h2 className="text-2xl font-bold text-amber-300 mb-4">What is MTG Commander Recommender?</h2>
-          <p className="text-gray-300 leading-relaxed mb-4">
-            MTG Commander Recommender is a free tool designed for Magic: The Gathering players who want to build
-            Commander (EDH) decks using cards they already own.
-          </p>
-          <p className="text-gray-300 leading-relaxed mb-4">
-            Instead of browsing decklists and buying singles, MTG Commander Recommender analyzes your existing
-            collection and recommends commanders that synergize with the cards you have. It's the perfect solution
-            for players looking to:
-          </p>
-          <ul className="list-disc list-inside text-gray-300 space-y-2 ml-4">
-            <li>Build new decks without buying more cards</li>
-            <li>Find unexpected commanders that match their collection</li>
-            <li>Discover synergies they didn't know existed</li>
-            <li>Make the most of their bulk collection</li>
-          </ul>
-        </section>
-
-        <section>
-          <h2 className="text-2xl font-bold text-amber-300 mb-4">How It Works</h2>
-
-          <div className="space-y-6">
-            <div className="glass-panel rounded-xl p-5">
-              <h3 className="text-lg font-bold text-white mb-2">Step 1: Export Your Collection</h3>
-              <p className="text-gray-300">
-                Export your card collection from popular tools like Archidekt, Moxfield, Manabox, or Dragon Shield.
-                MTG Commander Recommender supports CSV exports and simple card lists.
-              </p>
-            </div>
-
-            <div className="glass-panel rounded-xl p-5">
-              <h3 className="text-lg font-bold text-white mb-2">Step 2: Paste and Analyze</h3>
-              <p className="text-gray-300">
-                Paste your collection into MTG Commander Recommender. The algorithm compares your cards against
-                the synergy data for over 1,500 commanders.
-              </p>
-            </div>
-
-            <div className="glass-panel rounded-xl p-5">
-              <h3 className="text-lg font-bold text-white mb-2">Step 3: Get Recommendations</h3>
-              <p className="text-gray-300">
-                See which commanders you can build with your existing cards. View match percentages, estimated
-                costs to complete, and detailed decklists.
-              </p>
-            </div>
-
-            <div className="glass-panel rounded-xl p-5">
-              <h3 className="text-lg font-bold text-white mb-2">Step 4: Build Your Deck</h3>
-              <p className="text-gray-300">
-                Use the deck builder to customize your deck, adjust card counts, and export your final list
-                to your favorite deck building platform.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-2xl font-bold text-amber-300 mb-4">Data Sources</h2>
-          <p className="text-gray-300 leading-relaxed">
-            MTG Commander Recommender uses data from <a href="https://edhrec.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">EDHREC</a> for
-            average decklists and synergy scores, and <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Scryfall</a> for
-            card data and pricing information.
-          </p>
-        </section>
-
-        <section className="glass-panel rounded-xl p-6 text-center">
-          <h2 className="text-xl font-bold text-white mb-2">Ready to Start?</h2>
-          <p className="text-gray-300 mb-4">
-            Upload your collection and discover which commanders are waiting to be built!
-          </p>
-        </section>
-      </div>
-    </div>
+    <button
+      onClick={onClick}
+      className="glass-panel rounded-xl px-5 py-4 text-left hover:border-accent-600/60 transition-colors"
+    >
+      <div className="font-display text-3xl font-bold text-accent-100">{value}</div>
+      <div className="text-xs text-gray-400 uppercase tracking-wider mt-1">{label}</div>
+    </button>
   );
 }
 
-// --- Guides Page ---
-function GuidesPage({ onNavigate }) {
-  const [selectedGuide, setSelectedGuide] = useState(null);
+function HomeDashboard({ collectionCount, favorites, recentCommanders, decksReady, refreshKey, onNavigate, onSelectCommander }) {
+  const [decks, setDecks] = useState([]);
 
-  const guides = [
-    {
-      id: 'recommendations',
-      title: 'Reading Your Commander Recommendations',
-      description: 'Learn how to interpret the metrics and choose the best commander for your collection. Understand Match Percentage, synergy scores, and how to evaluate your options.',
-      readTime: '5 min read',
-      content: (
-        <div className="space-y-6">
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Understanding Match Percentage</h3>
-            <p className="text-gray-300 mb-4">
-              The match percentage shows how many cards from the average EDHREC decklist you already own.
-              A higher percentage means you can build the deck with fewer purchases.
-            </p>
-            <ul className="list-disc list-inside text-gray-300 space-y-2 ml-4">
-              <li><span className="text-green-400">60%+</span> - Excellent match, very few cards needed</li>
-              <li><span className="text-yellow-400">40-59%</span> - Good match, moderate investment needed</li>
-              <li><span className="text-gray-400">Below 40%</span> - Lower match, more cards to acquire</li>
-            </ul>
-          </section>
+  useEffect(() => {
+    if (!decksReady) return;
+    apiGet('/api/decks').then(data => setDecks(data.decks || [])).catch(() => setDecks(Object.values(loadDecks())));
+  }, [decksReady, refreshKey]);
 
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Cost to Complete</h3>
-            <p className="text-gray-300 mb-4">
-              This shows the estimated cost of cards you're missing based on current Scryfall prices.
-              Use this to find budget-friendly options or identify expensive staples you might want to proxy.
-            </p>
-          </section>
+  // Total copies isn't tracked in state, so derive it from the saved collection
+  const totalCopies = React.useMemo(() => {
+    const saved = loadCollection();
+    if (!saved || Array.isArray(saved)) return Array.isArray(saved) ? saved.length : 0;
+    return Object.values(saved).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
+  }, [collectionCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Filtering and Sorting</h3>
-            <p className="text-gray-300 mb-4">
-              Use the color filters to narrow down by color identity. Sort by match percentage to find
-              your best options, or by price to find the cheapest decks to complete.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Comparing Commanders</h3>
-            <p className="text-gray-300">
-              Can't decide between commanders? Use the compare feature to see them side by side.
-              Select 2-3 commanders and compare their card overlap, unique cards, and completion costs.
-            </p>
-          </section>
-        </div>
-      )
-    },
-    {
-      id: 'exporting',
-      title: 'Exporting Your Collection: Step-by-Step Guide',
-      description: 'Detailed instructions for exporting your card collection from popular platforms like Archidekt, Moxfield, Manabox, and Dragon Shield Scanner.',
-      readTime: '7 min read',
-      content: (
-        <div className="space-y-6">
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">From Moxfield</h3>
-            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
-              <li>Go to your collection page on Moxfield</li>
-              <li>Click the "Export" button (download icon)</li>
-              <li>Select "CSV" format</li>
-              <li>Copy the contents or download the file</li>
-              <li>Paste into MTG Commander Recommender</li>
-            </ol>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">From Archidekt</h3>
-            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
-              <li>Navigate to your collection</li>
-              <li>Click "Export" in the menu</li>
-              <li>Choose "Text" or "CSV" format</li>
-              <li>Copy the exported list</li>
-              <li>Paste into MTG Commander Recommender</li>
-            </ol>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">From Manabox</h3>
-            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
-              <li>Open Manabox app and go to your collection</li>
-              <li>Tap the share/export button</li>
-              <li>Select "Export as CSV" or "Plain text"</li>
-              <li>Copy or share the exported list</li>
-              <li>Paste into MTG Commander Recommender</li>
-            </ol>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">From Dragon Shield Scanner</h3>
-            <ol className="list-decimal list-inside text-gray-300 space-y-2 ml-4">
-              <li>Open Dragon Shield app</li>
-              <li>Go to your collection folder</li>
-              <li>Tap "Export" or the share icon</li>
-              <li>Choose CSV or text format</li>
-              <li>Paste into MTG Commander Recommender</li>
-            </ol>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Simple Card List</h3>
-            <p className="text-gray-300 mb-4">
-              You can also paste a simple list with one card per line. Quantities are optional:
-            </p>
-            <pre className="bg-gray-800 rounded p-4 text-sm text-gray-300 font-mono">
-{`4 Lightning Bolt
-2 Counterspell
-Sol Ring
-Arcane Signet`}
-            </pre>
-          </section>
-        </div>
-      )
-    },
-    {
-      id: 'deckbuilder',
-      title: 'Using the Deck Builder',
-      description: 'Learn how to customize your deck, adjust card counts, add lands, and export your finished decklist.',
-      readTime: '4 min read',
-      content: (
-        <div className="space-y-6">
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Starting a Build</h3>
-            <p className="text-gray-300 mb-4">
-              From the commander detail page, click "Open in Deck Builder" to start customizing your deck.
-              The builder will pre-populate with the average decklist, highlighting cards you own.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Adding and Removing Cards</h3>
-            <p className="text-gray-300 mb-4">
-              Click cards to toggle them in/out of your deck. The card counter at the top shows your
-              current total. Commander decks need exactly 100 cards (including your commander).
-            </p>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">View Modes</h3>
-            <p className="text-gray-300 mb-4">
-              Switch between Grid view (visual) and Stacks view (organized by type) to see your deck
-              from different perspectives. Use the mana curve chart to balance your deck's costs.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="text-xl font-bold text-amber-300 mb-3">Exporting Your Deck</h3>
-            <p className="text-gray-300">
-              When you're done, use the Export button to copy your decklist. You can import this into
-              Moxfield, Archidekt, or any other deck building platform.
-            </p>
-          </section>
-        </div>
-      )
-    }
-  ];
-
-  if (selectedGuide) {
-    const guide = guides.find(g => g.id === selectedGuide);
+  if (collectionCount === 0) {
     return (
-      <div className="page-fade-in max-w-4xl mx-auto">
-        <button
-          onClick={() => setSelectedGuide(null)}
-          className="text-blue-400 hover:text-blue-300 mb-6 flex items-center gap-2"
-        >
-          <span>←</span> Back to Guides
-        </button>
-
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-amber-200 mb-2">{guide.title}</h1>
-          <p className="text-gray-500 text-sm">{guide.readTime}</p>
-        </div>
-
-        <div className="glass-panel rounded-xl p-6">
-          {guide.content}
+      <div className="space-y-6">
+        <PageHero
+          title="Welcome"
+          subtitle="Load your collection and this app will find the Commander decks you're closest to building, track what's committed to your decks, and help you build new ones."
+        />
+        <div className="glass-panel rounded-xl p-10 text-center space-y-4">
+          <div className="flex justify-center gap-2">
+            {ALL_COLORS.map(c => <ManaSymbol key={c} symbol={c} size={32} />)}
+          </div>
+          <p className="text-gray-200 font-medium">Start by loading your collection</p>
+          <button
+            onClick={() => onNavigate('upload')}
+            className="bg-accent-600 hover:bg-accent-500 px-5 py-2 rounded-lg font-medium transition-colors"
+          >
+            Upload Collection
+          </button>
         </div>
       </div>
     );
   }
 
+  const quickActions = [
+    { id: 'recommend', title: 'Get Recommendations', text: 'Commanders ranked by how much of their deck you already own.' },
+    { id: 'favorites', title: 'Find My Commander', text: 'Pick commanders around the cards you love.' },
+    { id: 'search', title: 'Search Commanders', text: 'Check how close you are to any commander.' },
+    { id: 'upload', title: 'Update Collection', text: 'Re-import after opening packs or trading.' },
+  ];
+
   return (
-    <div className="page-fade-in max-w-5xl mx-auto">
-      {/* Hero Section */}
-      <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-amber-200 mb-4">Commander Deck Building Guides</h1>
-        <p className="text-gray-400 max-w-2xl mx-auto">
-          Learn everything you need to know about building Commander decks,
-          understanding your recommendations, and making the most of MTG Commander Recommender.
-        </p>
+    <div className="space-y-8">
+      <PageHero title="Your Collection" subtitle="Everything at a glance. Pick up where you left off." />
+
+      <div className="grid grid-cols-4 gap-4">
+        <StatTile value={collectionCount.toLocaleString()} label="Unique Cards" onClick={() => onNavigate('stats')} />
+        <StatTile value={totalCopies.toLocaleString()} label="Total Cards" onClick={() => onNavigate('stats')} />
+        <StatTile value={decks.length} label="Decks" onClick={() => onNavigate('mydecks')} />
+        <StatTile value={favorites.size} label="Favorites" onClick={() => onNavigate('favorites')} />
       </div>
 
-      {/* Guide Cards */}
-      <div className="grid md:grid-cols-2 gap-6 mb-12">
-        {guides.map(guide => (
+      <div className="grid grid-cols-4 gap-4">
+        {quickActions.map(a => (
           <button
-            key={guide.id}
-            onClick={() => setSelectedGuide(guide.id)}
-            className="glass-panel rounded-xl p-6 text-left hover:bg-gray-800/50 transition-colors group"
+            key={a.id}
+            onClick={() => onNavigate(a.id)}
+            className="glass-panel rounded-xl p-4 text-left group hover:border-accent-600/60 transition-colors"
           >
-            <h2 className="text-xl font-bold text-white mb-3 group-hover:text-amber-200 transition-colors">
-              {guide.title}
-            </h2>
-            <p className="text-gray-400 text-sm mb-4 leading-relaxed">
-              {guide.description}
-            </p>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-500">{guide.readTime}</span>
-              <span className="text-blue-400 text-sm group-hover:translate-x-1 transition-transform">
-                Read →
-              </span>
-            </div>
+            <div className="font-semibold text-gray-100 group-hover:text-accent-200 transition-colors">{a.title} →</div>
+            <div className="text-xs text-gray-400 mt-1 leading-relaxed">{a.text}</div>
           </button>
         ))}
       </div>
 
-      {/* Help Section */}
-      <div className="glass-panel rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-white mb-3">Need More Help?</h2>
-        <p className="text-gray-400">
-          Have questions that aren't covered in our guides?{' '}
-          <button onClick={() => onNavigate('about')} className="text-blue-400 hover:underline">
-            Visit our About page
-          </button>{' '}
-          to learn more about MTG Commander Recommender.
-        </p>
+      <div className="grid grid-cols-2 gap-6">
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <SectionHeader color="#dcaa3a" count={decks.length}>Your Decks</SectionHeader>
+            {decks.length > 0 && (
+              <button onClick={() => onNavigate('mydecks')} className="text-xs text-accent-300 hover:text-accent-200">Manage →</button>
+            )}
+          </div>
+          {decks.length === 0 ? (
+            <p className="glass-panel rounded-xl p-6 text-sm text-gray-500">
+              No decks yet. Add one under <button onClick={() => onNavigate('mydecks')} className="text-accent-300 hover:underline">My Decks</button>, or save one from the Deck Builder.
+            </p>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              {decks.slice(0, 6).map(deck => (
+                <button
+                  key={deck.id}
+                  onClick={() => onNavigate('mydecks')}
+                  className="relative h-28 rounded-xl overflow-hidden text-left group"
+                  style={{ boxShadow: `0 4px 16px ${getColorGlow(deck.color_identity)}` }}
+                >
+                  {deck.art_crop ? (
+                    <img src={deck.art_crop} alt="" className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  ) : (
+                    <div className="absolute inset-0 bg-gray-800" />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                  <div className="absolute bottom-0 left-0 right-0 p-2">
+                    <div className="text-sm font-semibold truncate">{deck.name}</div>
+                    <div className="text-[10px] text-gray-300 truncate">{deck.commander || 'No commander'} · {deck.card_count || 0} cards</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <SectionHeader color="purple" count={recentCommanders.length}>Recently Viewed</SectionHeader>
+          {recentCommanders.length === 0 ? (
+            <p className="glass-panel rounded-xl p-6 text-sm text-gray-500">
+              Commanders you open will show up here so you can jump back to them.
+            </p>
+          ) : (
+            <div className="grid grid-cols-4 gap-3">
+              {recentCommanders.slice(0, 8).map(cmd => (
+                <button
+                  key={cmd.name}
+                  onClick={() => onSelectCommander(cmd)}
+                  className="group text-left"
+                  title={cmd.name}
+                >
+                  {cmd.image_uri ? (
+                    <img
+                      src={cmd.image_uri}
+                      alt={cmd.name}
+                      className="w-full rounded-lg group-hover:-translate-y-1 transition-transform"
+                      style={{ boxShadow: `0 4px 14px ${getColorGlow(cmd.color_identity)}` }}
+                    />
+                  ) : (
+                    <div className="aspect-[5/7] rounded-lg bg-gray-800 flex items-center justify-center p-2 text-xs text-center">{cmd.name}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
@@ -4480,7 +4362,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
 
         {/* Card search */}
         <div ref={searchRef} className="relative">
-          <div className="flex items-center gap-2 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
+          <div className="flex items-center gap-2 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 focus-within:border-accent-500 transition-colors">
             <span className="text-gray-500 text-sm">☆</span>
             <input
               value={cardSearch}
@@ -4490,7 +4372,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
               className="flex-1 bg-transparent text-sm outline-none placeholder-gray-600"
             />
             {searchLoading && (
-              <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+              <div className="w-3 h-3 border border-accent-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
             )}
           </div>
           {showSuggestions && cardSuggestions.length > 0 && (
@@ -4543,7 +4425,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
             <button
               onClick={handleFind}
               disabled={loading}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2 rounded-lg font-medium text-sm transition-colors"
+              className="bg-accent-600 hover:bg-accent-500 disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2 rounded-lg font-medium text-sm transition-colors"
             >
               {loading ? 'Searching...' : 'Find My Commander'}
             </button>
@@ -4562,7 +4444,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
 
       {loading && (
         <div className="flex items-center justify-center py-12 text-gray-400 gap-3">
-          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-accent-400 border-t-transparent rounded-full animate-spin" />
           <span>Checking commanders against your favorites&hellip;</span>
         </div>
       )}
@@ -4641,7 +4523,7 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
                         <button
                           onClick={() => handleBuildDeck(cmd)}
                           disabled={buildingDeck === cmd.name}
-                          className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
+                          className="text-xs bg-accent-700 hover:bg-accent-600 disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
                         >
                           {buildingDeck === cmd.name ? 'Loading…' : 'Build Deck'}
                         </button>
@@ -4705,7 +4587,8 @@ function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectC
 // --- Main App ---
 
 function App() {
-  const [tab, setTab] = useState('upload');
+  const [tab, setTab] = useState('home');
+  const [recentCommanders, setRecentCommanders] = useState(() => loadRecentCommanders());
   const [collectionCount, setCollectionCount] = useState(0);
   const [selectedCommander, setSelectedCommander] = useState(null);
   const [compareList, setCompareList] = useState([]);
@@ -4842,7 +4725,7 @@ function App() {
           setDeckCount(data.decks.count);
           setDecksVersion(v => v + 1);
         }
-        if (data.collection.count > 0) setTab('recommend');
+        if (data.collection.count > 0) setTab('home');
       } else {
         // Server is empty - sync local data up (includes the merged favorites)
         await syncToServer();
@@ -4865,7 +4748,6 @@ function App() {
     if (saved) {
       apiPost('/api/collection/restore', { cards: saved }).then(data => {
         setCollectionCount(data.count || 0);
-        if (data.count > 0) setTab('recommend');
       }).catch(() => {
         apiGet('/api/collection').then(data => {
           setCollectionCount(data.count || 0);
@@ -4901,6 +4783,13 @@ function App() {
     if (tab !== 'detail' && tab !== 'deckbuilder') setDetailReturnTab(tab);
     setSelectedCommander(cmd);
     setTab('detail');
+    // Remember for the Home dashboard (only the fields needed to reopen and display it)
+    const { name, image_uri, art_crop, color_identity, partner_type } = cmd;
+    setRecentCommanders(prev => {
+      const next = [{ name, image_uri, art_crop, color_identity, partner_type }, ...prev.filter(c => c.name !== name)].slice(0, 8);
+      saveRecentCommanders(next);
+      return next;
+    });
   };
 
   const handleToggleCompare = (cmd) => {
@@ -4940,6 +4829,7 @@ function App() {
   };
 
   const tabs = [
+    { id: 'home', label: 'Home' },
     { id: 'upload', label: 'Upload Collection' },
     { id: 'recommend', label: 'Recommendations' },
     { id: 'search', label: 'Search' },
@@ -4967,27 +4857,9 @@ function App() {
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
-            <nav className="flex items-center gap-6">
-              <button
-                onClick={() => setTab('guides')}
-                className={`text-sm font-medium transition-colors ${
-                  tab === 'guides' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                Guides
-              </button>
-              <button
-                onClick={() => setTab('about')}
-                className={`text-sm font-medium transition-colors ${
-                  tab === 'about' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                About
-              </button>
-            </nav>
-          </div>
+          <button onClick={() => setTab('home')} className="text-left">
+            <h1 className="font-display text-xl font-bold tracking-wide text-accent-200">MTG Commander Recommender</h1>
+          </button>
           <div className="flex items-center gap-4">
             {collectionCount > 0 && (
               <span className="text-sm text-gray-400">
@@ -5013,7 +4885,7 @@ function App() {
                 </span>
                 <button
                   onClick={syncToServer}
-                  className="text-xs text-blue-400 hover:text-blue-300"
+                  className="text-xs text-accent-300 hover:text-accent-200"
                   title="Sync to cloud"
                 >
                   Sync
@@ -5028,7 +4900,7 @@ function App() {
             ) : (
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-sm font-medium transition-colors"
+                className="bg-accent-600 hover:bg-accent-500 px-3 py-1.5 rounded text-sm font-medium transition-colors"
               >
                 Login / Sign Up
               </button>
@@ -5047,7 +4919,7 @@ function App() {
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 tab === t.id ||
                 ((tab === 'detail' || tab === 'deckbuilder') && t.id === detailReturnTab)
-                  ? 'border-blue-500 text-blue-400'
+                  ? 'border-accent-400 text-accent-300'
                   : t.id === 'favorites' && favorites.size > 0
                   ? 'border-transparent text-yellow-400/80 hover:text-yellow-300'
                   : 'border-transparent text-gray-400 hover:text-gray-200'
@@ -5086,6 +4958,20 @@ function App() {
 
       {/* Content - tabs stay mounted to preserve state */}
       <main className="max-w-7xl mx-auto px-6 py-8">
+        {tab === 'home' && (
+          <div className="page-fade-in">
+            <HomeDashboard
+              collectionCount={collectionCount}
+              favorites={favorites}
+              recentCommanders={recentCommanders}
+              decksReady={decksReady}
+              refreshKey={decksVersion}
+              onNavigate={setTab}
+              onSelectCommander={handleSelectCommander}
+            />
+          </div>
+        )}
+
         <div style={{ display: tab === 'upload' ? 'block' : 'none' }}>
           <CollectionUpload onUploaded={handleUploaded} collectionCount={collectionCount} />
         </div>
@@ -5168,17 +5054,6 @@ function App() {
           </div>
         )}
 
-        {tab === 'about' && (
-          <div className="page-fade-in">
-            <AboutPage />
-          </div>
-        )}
-
-        {tab === 'guides' && (
-          <div className="page-fade-in">
-            <GuidesPage onNavigate={setTab} />
-          </div>
-        )}
       </main>
     </div>
   );
