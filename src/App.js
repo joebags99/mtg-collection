@@ -1824,6 +1824,7 @@ function classifyFunctionalCategory(card) {
 
 // Basic lands for each color identity
 const COLOR_TO_BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
+const BASIC_LAND_NAMES = new Set([...Object.values(COLOR_TO_BASICS), 'Wastes'].map(n => n.toLowerCase()));
 
 function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onDeckSaved }) {
   const [deck, setDeck] = useState([]);
@@ -1844,7 +1845,12 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
 
       const initial = [...data.owned_cards, ...data.missing_cards].map(c => {
         const isCommander = (c.name_normalized || c.name?.toLowerCase()) === commanderNorm;
-        const card = { ...c, included: true, qty: 1, isCommander };
+        const card = { ...c, included: true, qty: isCommander ? 1 : (c.qty || 1), isCommander };
+        // EDHREC decks include basics; treat them like the auto-filled ones (assumed owned)
+        if (BASIC_LAND_NAMES.has((c.name || '').toLowerCase())) {
+          card.isBasicLand = true;
+          card.owned = true;
+        }
         card.functional_category = classifyFunctionalCategory(card);
         return card;
       });
@@ -3013,9 +3019,9 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
     const allCards = [...data.owned_cards, ...data.missing_cards];
     let text;
     if (type === 'full') {
-      text = allCards.map(c => `1 ${c.name}`).join('\n');
+      text = allCards.map(c => `${c.qty || 1} ${c.name}`).join('\n');
     } else {
-      text = data.missing_cards.map(c => `1 ${c.name}`).join('\n');
+      text = data.missing_cards.map(c => `${c.qty || 1} ${c.name}`).join('\n');
     }
     setExportText(text);
     navigator.clipboard.writeText(text).catch(() => {});

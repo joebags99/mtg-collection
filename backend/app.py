@@ -1234,6 +1234,64 @@ def is_commander_data_cached(commander_name: str) -> bool:
     return bool(avg and now - avg["timestamp"] < CACHE_TTL and syn and now - syn["timestamp"] < CACHE_TTL)
 
 
+def _deck_entry(name: str, qty: int = 1, category: str = "", **extra) -> dict:
+    return {"name": name, "name_normalized": normalize_card_name(name), "qty": qty, "category": category, **extra}
+
+
+def parse_avg_decklist(raw) -> list[dict]:
+    """Normalize an EDHREC average deck into [{name, name_normalized, qty, category, ...}].
+
+    Current format (grouped by card type, commander listed separately):
+        {"commander_v2": [["Atraxa, Praetors' Voice", 1]],
+         "cards": {"Artifact": [["Sol Ring", 1], ...], "Land": [["Forest", 4], ...]}}
+    Older format: a list of "1 Sol Ring" strings or {"name": ...} dicts.
+    Raises ValueError on anything else, so a format change is reported instead of
+    silently producing decks that match nothing.
+    """
+    if not raw:
+        return []
+    entries = []
+    if isinstance(raw, dict):
+        if not isinstance(raw.get("cards"), dict):
+            raise ValueError(f"Unrecognized EDHREC average deck format (keys: {sorted(raw)[:10]})")
+        commanders = raw.get("commander_v2") or [[n, 1] for n in raw.get("commander") or []]
+        for name, qty in commanders:
+            entries.append(_deck_entry(name, qty))  # card type is looked up later
+        for type_name, cards in raw["cards"].items():
+            category = _parse_type_line(type_name)
+            for card in cards:
+                if isinstance(card, (list, tuple)) and card:
+                    entries.append(_deck_entry(card[0], int(card[1]) if len(card) > 1 else 1, category))
+                elif isinstance(card, str):
+                    entries.append(_deck_entry(card, 1, category))
+                elif isinstance(card, dict) and card.get("name"):
+                    entries.append(_deck_entry(card["name"], int(card.get("qty", 1)), category))
+    elif isinstance(raw, list):
+        for card in raw:
+            if isinstance(card, str):
+                match = re.match(r"^(\d+)x?\s+(.+)", card.strip())
+                if match:
+                    entries.append(_deck_entry(match.group(2), int(match.group(1))))
+                else:
+                    entries.append(_deck_entry(card.strip()))
+            elif isinstance(card, dict) and card.get("name"):
+                entries.append(_deck_entry(
+                    card["name"], 1, card.get("type", card.get("category", "")),
+                    inclusion=card.get("inclusion", 0), synergy=card.get("synergy", 0),
+                ))
+    else:
+        raise ValueError(f"Unrecognized EDHREC average deck format ({type(raw).__name__})")
+
+    # One entry per card, summing quantities if a name appears twice
+    merged: dict[str, dict] = {}
+    for entry in entries:
+        if entry["name_normalized"] in merged:
+            merged[entry["name_normalized"]]["qty"] += entry["qty"]
+        else:
+            merged[entry["name_normalized"]] = entry
+    return list(merged.values())
+
+
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
     """Get average deck for a commander from EDHREC, with caching."""
     cache_key = f"{commander_name}|{budget or ''}|{theme or ''}"
@@ -1263,32 +1321,8 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
                         "count": t.get("count", 0),
                     })
 
-        # Extract card names from average deck
-        deck_cards = set()
-        decklist = []
-        if avg_deck and avg_deck.get("decklist"):
-            for card in avg_deck["decklist"]:
-                if isinstance(card, str):
-                    card_raw = card.strip()
-                    qty_match = re.match(r"^\d+x?\s+(.+)", card_raw)
-                    card_name = qty_match.group(1) if qty_match else card_raw
-                    deck_cards.add(normalize_card_name(card_name))
-                    decklist.append({
-                        "name": card_name,
-                        "name_normalized": normalize_card_name(card_name),
-                        "category": "",
-                    })
-                elif isinstance(card, dict):
-                    card_name = card.get("name", "")
-                    if card_name:
-                        deck_cards.add(normalize_card_name(card_name))
-                        decklist.append({
-                            "name": card_name,
-                            "name_normalized": normalize_card_name(card_name),
-                            "category": card.get("type", card.get("category", "")),
-                            "inclusion": card.get("inclusion", 0),
-                            "synergy": card.get("synergy", 0),
-                        })
+        decklist = parse_avg_decklist(avg_deck.get("decklist") if avg_deck else None)
+        deck_cards = {c["name_normalized"] for c in decklist}
 
         num_decks = 0
         if cmd_data:
