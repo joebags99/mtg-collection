@@ -400,6 +400,7 @@ const AUTH_TOKEN_KEY = 'mtg_auth_token';
 const AUTH_USER_KEY = 'mtg_auth_user';
 const FAVORITES_STORAGE_KEY = 'mtg_favorites';
 const RECENT_COMMANDERS_KEY = 'mtg_recent_commanders';
+const COLOR_COUNTS_KEY = 'mtg_rec_color_counts';
 
 function saveAuthToken(token) {
   try {
@@ -1042,6 +1043,20 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
   const [fetched, setFetched] = useState(false);
   const [sortBy, setSortBy] = useState('match_desc');
   const [runInfo, setRunInfo] = useState(null); // {checked, no_deck_data, available_cards} from the last run
+  // Number of colors in the identity (0 = colorless); remembered between visits
+  const [colorCounts, setColorCounts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(COLOR_COUNTS_KEY)) || []; } catch { return []; }
+  });
+
+  const toggleColorCount = (n) => {
+    setColorCounts(prev => {
+      const next = prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n].sort();
+      try { localStorage.setItem(COLOR_COUNTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  // Picking exact colors already fixes the count, so the count filter only applies without them
+  const countFilterActive = colorFilter.length === 0 && colorCounts.length > 0;
 
   const fetchRecommendations = useCallback(async () => {
     if (collectionCount === 0) {
@@ -1052,8 +1067,9 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
     setError('');
     try {
       const color = colorFilter.length > 0 ? colorFilter.join('') : null;
+      const counts = countFilterActive ? colorCounts.join(',') : null;
       const data = await apiPost(
-        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${search ? '&search=' + encodeURIComponent(search) : ''}${excludeInDecks ? '&exclude_in_decks=true' : ''}`,
+        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${counts ? '&color_counts=' + counts : ''}${search ? '&search=' + encodeURIComponent(search) : ''}${excludeInDecks ? '&exclude_in_decks=true' : ''}`,
         {}
       );
       setResults(data.results || []);
@@ -1063,7 +1079,7 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
       setError(err.message);
     }
     setLoading(false);
-  }, [collectionCount, colorFilter, minOwned, search, excludeInDecks]);
+  }, [collectionCount, colorFilter, colorCounts, countFilterActive, minOwned, search, excludeInDecks]);
 
   // Auto-refetch when excludeInDecks toggle changes (if already fetched)
   useEffect(() => {
@@ -1145,6 +1161,38 @@ function Recommendations({ collectionCount, onSelectCommander, compareList, onTo
                   className="text-xs text-gray-400 hover:text-white ml-2"
                 >
                   Clear
+                </button>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              Number of Colors
+              {colorFilter.length > 0 && colorCounts.length > 0 && (
+                <span className="text-gray-600"> (not used while specific colors are picked)</span>
+              )}
+            </label>
+            <div className={`flex gap-1 ${colorFilter.length > 0 ? 'opacity-40' : ''}`}>
+              {[0, 1, 2, 3, 4, 5].map(n => (
+                <button
+                  key={n}
+                  onClick={() => toggleColorCount(n)}
+                  title={n === 0 ? 'Colorless' : `${n}-color commanders`}
+                  className={`h-8 rounded text-sm font-semibold transition-all ${n === 0 ? 'px-2' : 'w-8'} ${
+                    colorCounts.includes(n)
+                      ? 'bg-accent-600 text-white ring-2 ring-accent-300'
+                      : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500'
+                  }`}
+                >
+                  {n === 0 ? 'C' : n}
+                </button>
+              ))}
+              {colorCounts.length > 0 && (
+                <button
+                  onClick={() => { setColorCounts([]); try { localStorage.removeItem(COLOR_COUNTS_KEY); } catch { /* ignore */ } }}
+                  className="text-xs text-gray-400 hover:text-white ml-2"
+                >
+                  Any
                 </button>
               )}
             </div>

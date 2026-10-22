@@ -2296,6 +2296,7 @@ def get_recommendations(
     min_owned: int = 20,
     limit: int = 50,
     exclude_in_decks: bool = False,
+    color_counts: Optional[str] = None,
 ):
     if not collection:
         raise HTTPException(status_code=400, detail="No collection uploaded. Upload your collection first.")
@@ -2307,6 +2308,15 @@ def get_recommendations(
     if color:
         color_set = set(color.upper())
         commanders = [c for c in commanders if set(c["color_identity"]) == color_set]
+
+    # Number of colors in the identity, e.g. "3" or "3,4" (0 = colorless). Applied before
+    # the popularity cut below, so it yields the top commanders *of that size*.
+    if color_counts:
+        try:
+            wanted = {int(n) for n in color_counts.split(",") if n.strip()}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="color_counts must be numbers from 0 to 5, e.g. 3,4")
+        commanders = [c for c in commanders if len(c["color_identity"]) in wanted]
 
     if search:
         search_lower = search.lower()
