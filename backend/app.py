@@ -483,6 +483,23 @@ async def get_user_favorites(user: dict = Depends(require_user)):
 
 edhrec = EDHRec()
 
+# Scryfall rejects requests that use an HTTP library's default User-Agent (HTTP 400),
+# and requires an Accept header: https://scryfall.com/docs/api
+scryfall = requests.Session()
+scryfall.headers.update({
+    "User-Agent": "MTGCommanderRecommender/1.0",
+    "Accept": "application/json;q=0.9,*/*;q=0.8",
+})
+
+
+def _log_scryfall_failure(resp, *args, **kwargs):
+    # Several batch lookups skip non-200 responses, so make every rejection visible
+    if resp.status_code >= 400:
+        logger.error(f"Scryfall {resp.request.method} {resp.url} -> {resp.status_code}: {resp.text[:300]}")
+
+
+scryfall.hooks["response"].append(_log_scryfall_failure)
+
 
 def edhrec_slug(name: str) -> str:
     """Convert a card name to the EDHREC URL slug format.
@@ -707,9 +724,9 @@ def get_all_commanders() -> list[dict]:
     }
 
     while url:
-        resp = requests.get(url, params=params)
+        resp = scryfall.get(url, params=params, timeout=30)
         if resp.status_code != 200:
-            logger.error(f"Scryfall error: {resp.status_code}")
+            logger.error(f"Scryfall error {resp.status_code} fetching commanders: {resp.text[:300]}")
             break
         data = resp.json()
         for card in data.get("data", []):
@@ -750,8 +767,9 @@ def get_all_commanders() -> list[dict]:
     bg_params = {"q": "t:background t:legendary t:enchantment f:commander", "order": "edhrec", "unique": "cards"}
     existing_names = {c["name_normalized"] for c in commanders}
     while bg_url:
-        resp = requests.get(bg_url, params=bg_params)
+        resp = scryfall.get(bg_url, params=bg_params, timeout=30)
         if resp.status_code != 200:
+            logger.error(f"Scryfall error {resp.status_code} fetching backgrounds: {resp.text[:300]}")
             break
         data = resp.json()
         for card in data.get("data", []):
@@ -789,6 +807,18 @@ _commanders_fetched_at: float = 0
 _commanders_lock = threading.Lock()
 
 
+def require_commanders() -> list[dict]:
+    """Commander list for endpoints that are useless without it: fail loudly when
+    Scryfall couldn't be reached, rather than returning an empty result."""
+    commanders = get_cached_commanders()
+    if not commanders:
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't load the commander list from Scryfall. Check the server log for details and try again.",
+        )
+    return commanders
+
+
 def get_cached_commanders() -> list[dict]:
     global _all_commanders, _commanders_fetched_at
     if _all_commanders and (time.time() - _commanders_fetched_at <= 86400):
@@ -820,7 +850,7 @@ def fetch_prices_bulk(card_names: list[str]) -> dict[str, float]:
         batch = uncached[i:i+75]
         identifiers = [{"name": name} for name in batch]
         try:
-            resp = requests.post(
+            resp = scryfall.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
                 timeout=15,
@@ -941,7 +971,7 @@ def fetch_card_mana_bulk(card_names: list[str]) -> dict[str, dict]:
         batch = uncached[i:i+75]
         identifiers = [{"name": n} for n in batch]
         try:
-            resp = requests.post(
+            resp = scryfall.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
                 timeout=30,
@@ -995,7 +1025,7 @@ def fetch_card_types_bulk(card_names: list[str]) -> dict[str, str]:
         # Use original names for Scryfall API
         identifiers = [{"name": name_map.get(n, n)} for n in batch]
         try:
-            resp = requests.post(
+            resp = scryfall.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
                 timeout=30,
@@ -1289,7 +1319,7 @@ def fetch_color_identities(card_names: list) -> set:
         batch = clean_names[i:i + 75]
         identifiers = [{"name": n} for n in batch]
         try:
-            resp = requests.post(
+            resp = scryfall.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
                 timeout=15,
@@ -1509,6 +1539,14 @@ async def get_collection_stats():
         logger.error(f"Failed to fetch prices: {e}")
         prices = {}
 
+    # Without card data every card would show as a 0-mana colorless "Other";
+    # report the failure instead of presenting that as real stats
+    if not types and not mana:
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't load card data from Scryfall. Check the server log for details and try again.",
+        )
+
     cards = []
     total_value = 0
     type_counts = {}
@@ -1572,7 +1610,7 @@ async def get_collection_stats():
 
 @app.get("/api/commanders")
 def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
-    commanders = get_cached_commanders()
+    commanders = require_commanders()
     results = commanders
 
     if color:
@@ -1739,7 +1777,7 @@ def validate_cards(body: dict):
         batch = cleaned_names[i:i+75]
         identifiers = [{"name": name} for name in batch]
         try:
-            resp = requests.post(
+            resp = scryfall.post(
                 "https://api.scryfall.com/cards/collection",
                 json={"identifiers": identifiers},
                 timeout=15,
@@ -1770,7 +1808,7 @@ def validate_cards(body: dict):
 
 @app.get("/api/commanders/popular")
 def popular_commanders():
-    commanders = get_cached_commanders()
+    commanders = require_commanders()
     top = sorted(commanders, key=lambda c: c["edhrec_rank"])[:50]
     return {"commanders": top}
 
@@ -2035,7 +2073,7 @@ def recommendations_from_favorites(request: Request, body: dict):
     detected_colors = fetch_color_identities(card_names)
 
     # Get all commanders and filter to those whose color identity is a superset of detected colors
-    commanders = get_cached_commanders()
+    commanders = require_commanders()
     if detected_colors:
         commanders = [
             c for c in commanders
@@ -2219,7 +2257,7 @@ def get_recommendations(
 
     available = get_available_collection(exclude_in_decks)
 
-    commanders = get_cached_commanders()
+    commanders = require_commanders()
 
     if color:
         color_set = set(color.upper())
