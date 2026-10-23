@@ -3326,8 +3326,13 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
       )}
 
       {data.error && (
-        <div className="bg-yellow-900/50 border border-yellow-700 rounded p-3 text-yellow-300 text-sm">
-          Note: {data.error}
+        <div className="bg-yellow-900/50 border border-yellow-700 rounded p-3 text-sm space-y-1">
+          <p className="text-yellow-200 font-medium">
+            {/404/.test(data.error)
+              ? "EDHREC doesn't have a page for this commander yet, so there's no average deck to compare against."
+              : "Couldn't load this commander's EDHREC data."}
+          </p>
+          <p className="text-xs text-yellow-500/80">{data.error}</p>
         </div>
       )}
 

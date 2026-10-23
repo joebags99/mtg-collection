@@ -495,17 +495,74 @@ _edhrec_last_request = 0.0
 _edhrec_get = edhrec._get
 
 
-def _paced_edhrec_get(*args, **kwargs):
+def _paced_edhrec_get(uri, query_params=None, return_type="json"):
     global _edhrec_last_request
     with _edhrec_lock:
         wait = _edhrec_last_request + EDHREC_MIN_INTERVAL - time.time()
         if wait > 0:
             time.sleep(wait)
         _edhrec_last_request = time.time()
-    return _edhrec_get(*args, **kwargs)
+    try:
+        return _edhrec_get(uri, query_params=query_params, return_type=return_type)
+    except requests.HTTPError as e:
+        # EDHREC's data URLs embed a Next.js build id that changes whenever the site is
+        # redeployed; with a stale id every page 404s. Re-discover it and retry once.
+        status = e.response.status_code if e.response is not None else None
+        old_id = edhrec.current_build_id
+        if status == 404 and old_id and f"/_next/data/{old_id}/" in uri and _refresh_edhrec_build_id():
+            retry_uri = uri.replace(f"/_next/data/{old_id}/", f"/_next/data/{edhrec.current_build_id}/")
+            return _paced_edhrec_get(retry_uri, query_params=query_params, return_type=return_type)
+        raise
 
 
 edhrec._get = _paced_edhrec_get
+
+_edhrec_build_id_checked_at = 0.0
+
+
+def _discover_edhrec_build_id() -> Optional[str]:
+    """Read EDHREC's current Next.js build id from its HTML. pyedhrec only looks for a
+    __NEXT_DATA__ block on the homepage with a pattern that breaks on newlines, and then
+    falls back to a hard-coded id from whenever the library was released."""
+    for page in ("https://edhrec.com/", "https://edhrec.com/commanders/atraxa-praetors-voice"):
+        try:
+            html = _paced_edhrec_get(page, return_type="raw").decode("utf-8", "ignore")
+        except Exception as e:
+            logger.warning(f"Couldn't load {page} to find EDHREC's build id: {e}")
+            continue
+        for pattern in (r'"buildId"\s*:\s*"([^"]+)"', r'/_next/static/([^/"\']+)/_buildManifest\.js'):
+            match = re.search(pattern, html)
+            if match:
+                return match.group(1)
+    return None
+
+
+def _refresh_edhrec_build_id(force: bool = False) -> bool:
+    """Re-discover the build id. Returns True if it changed. Rate limited to once a
+    minute so a commander EDHREC genuinely lacks doesn't trigger a re-check per request."""
+    global _edhrec_build_id_checked_at
+    if not force and time.time() - _edhrec_build_id_checked_at < 60:
+        return False
+    _edhrec_build_id_checked_at = time.time()
+    old_id = edhrec.current_build_id
+    new_id = _discover_edhrec_build_id()
+    if new_id and new_id != old_id:
+        edhrec.current_build_id = new_id
+        logger.info(f"EDHREC build id: {old_id or '(none)'} -> {new_id}")
+        return True
+    return False
+
+
+def _check_edhrec_build_id():
+    if not edhrec.current_build_id:
+        _refresh_edhrec_build_id(force=True)
+        if not edhrec.current_build_id:
+            logger.error("Couldn't determine EDHREC's build id; falling back to pyedhrec's built-in one, which is probably stale")
+            edhrec.current_build_id = edhrec.default_build_id
+    return True
+
+
+edhrec.check_build_id = _check_edhrec_build_id
 
 # Scryfall rejects requests that use an HTTP library's default User-Agent (HTTP 400),
 # and requires an Accept header: https://scryfall.com/docs/api
@@ -1125,6 +1182,15 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
         "top_utility_lands": edhrec.get_top_utility_lands,
         "top_mana_artifacts": edhrec.get_top_mana_artifacts,
     }
+
+    # All eleven lists come from one EDHREC page. Load it once; if that fails there's
+    # nothing to extract, and retrying it eleven times just hammers EDHREC.
+    try:
+        edhrec.get_commander_data(formatted)
+    except Exception as e:
+        logger.error(f"Error fetching EDHREC page for {commander_name}: {e}")
+        synergy_cache[cache_key] = {"data": result, "timestamp": time.time() - CACHE_TTL + ERROR_CACHE_TTL}
+        return result
 
     for key, method in method_map.items():
         try:
