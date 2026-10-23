@@ -569,24 +569,62 @@ EDHREC_CARDLIST_TAGS = {
 }
 
 
+# Fallback when tags don't match: recognise a list by words in its visible heading.
+# Order matters: "mana artifacts" must win over "artifacts", "utility lands" over "lands".
+EDHREC_HEADER_HINTS = [
+    ("top_mana_artifacts", ("mana artifact", "mana rock")),
+    ("top_utility_lands", ("utility land",)),
+    ("high_synergy", ("synergy", "lift")),
+    ("new_cards", ("new card",)),
+    ("top_creatures", ("creature",)),
+    ("top_instants", ("instant",)),
+    ("top_sorceries", ("sorcer",)),
+    ("top_enchantments", ("enchantment",)),
+    ("top_artifacts", ("artifact",)),
+    ("top_planeswalkers", ("planeswalker",)),
+    ("top_lands", ("land",)),
+]
+_logged_cardlist_shapes: set[str] = set()
+
+
 def edhrec_cardlists(page: dict) -> dict[str, list]:
     """Pull the typed card lists out of a commander page: {our key: [cardview, ...]}."""
-    lists = ((page.get("container") or {}).get("json_dict") or {}).get("cardlists") or []
+    json_dict = (page.get("container") or {}).get("json_dict") or {}
+    lists = json_dict.get("cardlists") or page.get("cardlists") or []
+    lists = [cl for cl in lists if isinstance(cl, dict)]
+    result = {key: [] for key in EDHREC_CARDLIST_TAGS}
+
     by_tag = {}
     for cl in lists:
-        if isinstance(cl, dict):
-            tag = str(cl.get("tag", "")).lower().replace(" ", "")
-            by_tag.setdefault(tag, cl.get("cardviews") or [])
-    result = {}
+        by_tag.setdefault(str(cl.get("tag", "")).lower().replace(" ", ""), cl)
+    claimed = set()
     for key, tags in EDHREC_CARDLIST_TAGS.items():
-        result[key] = next((by_tag[t] for t in tags if t in by_tag), [])
-    if not result["high_synergy"]:
-        # Unknown tag spelling: fall back to any list whose header mentions synergy or lift
-        for cl in lists:
-            header = str(cl.get("header", "")).lower() if isinstance(cl, dict) else ""
-            if "synergy" in header or "lift" in header:
-                result["high_synergy"] = cl.get("cardviews") or []
+        for tag in tags:
+            if tag in by_tag and id(by_tag[tag]) not in claimed:
+                result[key] = by_tag[tag].get("cardviews") or []
+                claimed.add(id(by_tag[tag]))
                 break
+    # Anything the tags didn't place: go by the heading text
+    for cl in lists:
+        if id(cl) in claimed:
+            continue
+        header = str(cl.get("header", "")).lower()
+        for key, hints in EDHREC_HEADER_HINTS:
+            if not result[key] and any(h in header for h in hints):
+                result[key] = cl.get("cardviews") or []
+                claimed.add(id(cl))
+                break
+
+    # Log the page's list names once per shape so a future rename is visible in the server log
+    shape = " | ".join(f"{cl.get('header')}[{cl.get('tag')}]" for cl in lists) or "(no cardlists)"
+    if shape not in _logged_cardlist_shapes:
+        _logged_cardlist_shapes.add(shape)
+        matched = [k for k, v in result.items() if v]
+        logger.info(f"EDHREC commander page lists: {shape} -> matched {matched}")
+        if lists and not matched:
+            logger.warning("EDHREC card lists found but none recognised; see the names above")
+        if not lists:
+            logger.warning(f"EDHREC commander page has no card lists; json_dict keys: {list(json_dict)[:20]}, page keys: {list(page)[:20]}")
     return result
 
 
