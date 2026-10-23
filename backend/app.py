@@ -766,8 +766,15 @@ def _load_edhrec_cache_from_disk() -> None:
     now = time.time()
     for store, key in ((commander_cache, "commanders"), (synergy_cache, "synergy")):
         for name, entry in cached.get(key, {}).items():
-            if now - entry.get("timestamp", 0) < CACHE_TTL:
-                store.setdefault(name, entry)
+            data = entry.get("data") or {}
+            if now - entry.get("timestamp", 0) >= CACHE_TTL or data.get("error"):
+                continue
+            # An entry with no cards at all is a failure that slipped through; refetch it
+            if key == "synergy" and not any(data.get(k) for k in EDHREC_CARDLIST_TAGS):
+                continue
+            if key == "commanders" and not data.get("decklist"):
+                continue
+            store.setdefault(name, entry)
     logger.info(f"Loaded EDHREC data for {len(commander_cache)} commanders from cache")
 
 
@@ -1211,10 +1218,14 @@ def extract_cardview_names(cardviews) -> list[dict]:
                 score = score or 0
                 if score_type == "synergy" and abs(score) <= 1:
                     score = round(score * 100, 1)  # fraction -> percent
-                inclusion = cv.get("inclusion") or 0
+                # Inclusion rate: the redesigned page gives num_decks / potential_decks
+                inclusion = cv.get("inclusion")
                 potential = cv.get("potential_decks") or 0
+                if inclusion is None:
+                    inclusion = cv.get("num_decks") or 0
                 if potential and inclusion <= potential:
                     inclusion = round(inclusion / potential * 100, 1)  # deck count -> percent
+                inclusion = inclusion or 0
                 results.append({
                     "name": name,
                     "name_normalized": normalize_card_name(name),
@@ -1262,6 +1273,7 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
         page = edhrec_commander_page(formatted)
     except Exception as e:
         logger.error(f"Error fetching EDHREC page for {commander_name}: {e}")
+        result["error"] = str(e)  # keeps the failure out of the disk cache
         synergy_cache[cache_key] = {"data": result, "timestamp": time.time() - CACHE_TTL + ERROR_CACHE_TTL}
         return result
 
