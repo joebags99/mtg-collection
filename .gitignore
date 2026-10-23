@@ -34,3 +34,4 @@ __pycache__/
 # Scryfall data cached by the backend
 /cache/
 /backend/cache/
+edhrec_probe_output.txt
