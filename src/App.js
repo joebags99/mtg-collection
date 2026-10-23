@@ -353,7 +353,7 @@ function CardName({ name, className = '', favorites, onToggleFavorite }) {
   return (
     <span
       ref={ref}
-      className={`inline-flex items-center gap-1 cursor-pointer hover:text-accent-300 transition-colors ${className}`}
+      className={`group/name inline-flex items-center gap-1 cursor-pointer hover:text-accent-300 transition-colors ${className}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShow(false)}
     >
@@ -361,7 +361,9 @@ function CardName({ name, className = '', favorites, onToggleFavorite }) {
       {onToggleFavorite && (
         <button
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleFavorite(name); }}
-          className={`text-xs leading-none transition-colors flex-shrink-0 ${isFav ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
+          className={`text-xs leading-none transition-all flex-shrink-0 ${
+            isFav ? 'text-yellow-400' : 'text-gray-500 hover:text-yellow-400 opacity-0 group-hover/name:opacity-100'
+          }`}
           title={isFav ? 'Remove from favorites' : 'Add to favorites'}
         >
           {isFav ? '★' : '☆'}
@@ -877,7 +879,7 @@ function CollectionUpload({ onUploaded, collectionCount }) {
     <div className="max-w-2xl mx-auto space-y-6">
       <PageHero
         title="Upload Collection"
-        subtitle={<>Upload a CSV export from <strong className="text-gray-300">Archidekt</strong> or <strong className="text-gray-300">Moxfield</strong>, or paste a card list. Your collection is saved locally in your browser.</>}
+        subtitle={<>Upload a CSV export from <strong className="text-gray-300">Archidekt</strong> or <strong className="text-gray-300">Moxfield</strong>, or paste a card list. Each upload <strong className="text-gray-300">replaces</strong> your current collection, so export your whole collection rather than just new cards.</>}
       />
 
       {collectionCount > 0 && (
@@ -992,7 +994,7 @@ function CommanderCard({ commander, onClick, selectable, selected, onToggleCompa
           </div>
         )}
         <div className="p-3 space-y-1.5">
-          <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
+          <h3 className={`font-bold text-sm leading-tight ${selectable && !commander.image_uri ? 'pr-7' : ''}`}>{commander.name}</h3>
           <div className="flex items-center justify-between">
             <ColorBadge colors={commander.color_identity} />
             {commander.num_decks > 0 && (
@@ -1885,6 +1887,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
   const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | {ok, message}
+  const [saveName, setSaveName] = useState(null); // null = name field closed
   const [viewMode, setViewMode] = useState('list'); // list, gallery, stacks
 
   // Deck composition settings
@@ -2118,15 +2121,16 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
   };
 
   const handleSaveDeck = async () => {
-    const name = window.prompt('Save this build to My Decks as:', commander.name);
-    if (!name || !name.trim()) return;
+    const name = (saveName || '').trim();
+    if (!name) return;
+    setSaveName(null);
     const lines = includedCards.map(c => `${c.qty} ${c.name}`);
     // The commander is part of the 100 and occupies a physical copy, so make sure it's listed
     if (!includedCards.some(c => c.isCommander)) lines.unshift(`1 ${commander.name}`);
     setSaveStatus('saving');
     try {
-      await apiPost('/api/decks', { name: name.trim(), commander: commander.name, cards_text: lines.join('\n') });
-      setSaveStatus({ ok: true, message: `Saved "${name.trim()}" to My Decks.` });
+      await apiPost('/api/decks', { name, commander: commander.name, cards_text: lines.join('\n') });
+      setSaveStatus({ ok: true, message: `Saved "${name}" to My Decks.` });
       onDeckSaved?.();
     } catch (err) {
       setSaveStatus({ ok: false, message: `Couldn't save deck: ${err.message}` });
@@ -2489,7 +2493,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
             </svg>
           </button>
           <button
-            onClick={handleSaveDeck}
+            onClick={() => { setSaveStatus(null); setSaveName(saveName === null ? commander.name : null); }}
             disabled={saveStatus === 'saving'}
             className="bg-accent-600 hover:bg-accent-500 disabled:opacity-60 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
@@ -2500,6 +2504,26 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
           </button>
         </div>
       </div>
+
+      {saveName !== null && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); handleSaveDeck(); }}
+          className="glass-panel rounded-lg p-3 flex items-center gap-3"
+        >
+          <label className="text-sm text-gray-300 whitespace-nowrap">Save as</label>
+          <input
+            autoFocus
+            value={saveName}
+            onChange={e => setSaveName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setSaveName(null); }}
+            className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500"
+          />
+          <button type="submit" disabled={!saveName.trim()} className="bg-accent-600 hover:bg-accent-500 disabled:opacity-50 px-4 py-1.5 rounded text-sm font-medium">
+            Save
+          </button>
+          <button type="button" onClick={() => setSaveName(null)} className="text-sm text-gray-400 hover:text-white">Cancel</button>
+        </form>
+      )}
 
       {saveStatus && saveStatus !== 'saving' && (
         <div className={`rounded-lg p-3 text-sm flex items-center justify-between ${
@@ -3220,12 +3244,13 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
           <div className="flex gap-1">
             {[
               { value: '', label: 'Any' },
-              { value: 'budget', label: '$' },
-              { value: 'expensive', label: '$$$' },
+              { value: 'budget', label: 'Budget', title: "EDHREC's budget average deck" },
+              { value: 'expensive', label: 'Expensive', title: "EDHREC's expensive average deck" },
             ].map(opt => (
               <button
                 key={opt.value}
                 onClick={() => setBudget(opt.value)}
+                title={opt.title}
                 className={`px-3 py-1 rounded text-sm ${
                   budget === opt.value
                     ? 'bg-accent-600 text-white'
@@ -3291,6 +3316,12 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
             className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
             onFocus={e => e.target.select()}
           />
+        </div>
+      )}
+
+      {theme && data.theme_applied === false && !data.error && (
+        <div className="bg-yellow-900/40 border border-yellow-700/60 rounded p-3 text-yellow-200 text-sm">
+          EDHREC has no separate average deck for this theme, so this is the overall average deck.
         </div>
       )}
 
@@ -3490,6 +3521,7 @@ function DeckBadges({ inDecks }) {
 // --- My Decks ---
 function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
   const [decks, setDecks] = useState({});
+  const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState('');
   const [newCommander, setNewCommander] = useState('');
   const [newPartner, setNewPartner] = useState(null);
@@ -3552,6 +3584,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
       onDecksChanged();
       setNewName(''); setNewCommander(''); setNewPartner(null); setNewCards('');
       setInvalidCards([]);
+      setShowAddForm(false);
     } catch (e) { setError(e.message); }
   };
 
@@ -3628,9 +3661,25 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
         ] : []}
       />
 
-      {/* Add new deck */}
+      {/* Add new deck: open by default only until the first deck exists */}
+      {!showAddForm && deckList.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="bg-accent-600 hover:bg-accent-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            + Add Deck
+          </button>
+        </div>
+      )}
+      {(showAddForm || deckList.length === 0) && (
       <div className="bg-gray-800/80 backdrop-blur rounded-xl p-6 space-y-4 border border-gray-700/50">
-        <SectionHeader color="blue">Add New Deck</SectionHeader>
+        <div className="flex items-center justify-between">
+          <SectionHeader color="blue">Add New Deck</SectionHeader>
+          {deckList.length > 0 && (
+            <button onClick={() => setShowAddForm(false)} className="text-xs text-gray-400 hover:text-white">Cancel</button>
+          )}
+        </div>
         <div className="flex gap-3">
           <div className="flex-1">
             <label className="block text-xs text-gray-400 mb-1">Deck Name *</label>
@@ -3681,12 +3730,13 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
           {validating ? 'Validating cards...' : 'Add Deck'}
         </button>
       </div>
+      )}
 
       {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
 
       {/* Deck list */}
-      {Object.values(decks).length === 0 && (
-        <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
+      {deckList.length === 0 && (
+        <p className="text-gray-500 text-center py-8">No decks yet. Add one above, or save a build from the Deck Builder.</p>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 grid-stagger">
@@ -3696,7 +3746,13 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
           boxShadow: `0 0 20px 2px ${glow}, inset 0 0 20px 0px ${glow}`,
         };
         return (
-        <div key={deck.id} className="relative bg-gray-800 rounded-xl overflow-hidden transition-all hover:scale-[1.02]" style={glowStyle}>
+        <div
+          key={deck.id}
+          className={`relative bg-gray-800 rounded-xl overflow-hidden transition-all ${
+            editingId === deck.id ? 'sm:col-span-2 lg:col-span-3' : 'hover:scale-[1.02]'
+          }`}
+          style={glowStyle}
+        >
           {/* Commander art banner */}
           {deck.art_crop && (
             <div className="absolute inset-0 z-0">
@@ -3737,7 +3793,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
               {deck.color_identity && deck.color_identity.length > 0 && (
                 <ColorBadge colors={deck.color_identity} />
               )}
-              <span className="text-xs text-gray-500">{deck.card_count || 0} cards</span>
+              <span className="text-xs text-gray-500">{deck.card_count || 0} {deck.card_count === 1 ? "card" : "cards"}</span>
             </div>
             <div className="flex gap-2 justify-center mt-3">
               <button
@@ -3760,7 +3816,7 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
               <div className="mt-3 space-y-2">
                 <textarea
                   value={editCards} onChange={e => { setEditCards(e.target.value); setInvalidCards([]); }}
-                  rows={8}
+                  rows={16}
                   className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono focus:outline-none focus:border-accent-500"
                 />
                 {invalidCards.length > 0 && (
@@ -3779,18 +3835,6 @@ function MyDecks({ onDecksChanged, decksReady, refreshKey }) {
       })}
       </div>
 
-      {/* Legend */}
-      {Object.values(decks).length > 0 && (
-        <div className="bg-gray-800/50 rounded-lg p-4 space-y-2">
-          <h4 className="text-sm font-medium text-gray-400">Availability Legend</h4>
-          <div className="flex flex-wrap gap-4 text-xs text-gray-400">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -4940,7 +4984,7 @@ function App() {
           <div className="flex items-center gap-4">
             {collectionCount > 0 && (
               <span className="text-sm text-gray-400">
-                {collectionCount} cards
+                {collectionCount.toLocaleString()} cards
               </span>
             )}
             {/* Sync status */}

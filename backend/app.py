@@ -229,6 +229,7 @@ def rate_limit(limit_string):
 async def startup_event():
     init_db()
     _load_card_data_from_disk()
+    _load_edhrec_cache_from_disk()
 
 
 # --- Auth endpoints ---
@@ -485,6 +486,27 @@ async def get_user_favorites(user: dict = Depends(require_user)):
 
 edhrec = EDHRec()
 
+# EDHREC has no public API or published limits; pyedhrec reads the JSON its site uses.
+# Space those requests out so a 200-commander run never bursts (pyedhrec itself caches
+# each page for 24 hours in memory, and we persist our derived data below).
+EDHREC_MIN_INTERVAL = 0.25
+_edhrec_lock = threading.Lock()
+_edhrec_last_request = 0.0
+_edhrec_get = edhrec._get
+
+
+def _paced_edhrec_get(*args, **kwargs):
+    global _edhrec_last_request
+    with _edhrec_lock:
+        wait = _edhrec_last_request + EDHREC_MIN_INTERVAL - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _edhrec_last_request = time.time()
+    return _edhrec_get(*args, **kwargs)
+
+
+edhrec._get = _paced_edhrec_get
+
 # Scryfall rejects requests that use an HTTP library's default User-Agent (HTTP 400),
 # and requires an Accept header: https://scryfall.com/docs/api
 scryfall = requests.Session()
@@ -596,11 +618,32 @@ collection: dict[str, int] = {}  # normalized_name -> quantity owned
 deck_lists: dict[str, dict] = {}  # deck_id -> {id, name, commander, cards: {normalized_name: qty}}
 # Cache: commander_name -> {avg_deck, commander_data, timestamp}
 commander_cache: dict[str, dict] = {}
-CACHE_TTL = 3600  # 1 hour
+CACHE_TTL = 86400  # EDHREC average decks change slowly; a day matches pyedhrec's own cache
 ERROR_CACHE_TTL = 1800  # remember EDHREC failures (e.g. no page for a commander) for 30 minutes
+EDHREC_CACHE_FILE = "edhrec.json"
 
 # Synergy/type card cache
 synergy_cache: dict[str, dict] = {}
+
+
+def _load_edhrec_cache_from_disk() -> None:
+    cached = _load_json_cache(EDHREC_CACHE_FILE)
+    if not cached:
+        return
+    now = time.time()
+    for store, key in ((commander_cache, "commanders"), (synergy_cache, "synergy")):
+        for name, entry in cached.get(key, {}).items():
+            if now - entry.get("timestamp", 0) < CACHE_TTL:
+                store.setdefault(name, entry)
+    logger.info(f"Loaded EDHREC data for {len(commander_cache)} commanders from cache")
+
+
+def _save_edhrec_cache_to_disk() -> None:
+    """Persist successful EDHREC lookups (failures are retried, so they're left out)."""
+    now = time.time()
+    fresh = lambda store: {k: v for k, v in store.items()
+                           if now - v.get("timestamp", 0) < CACHE_TTL and not v.get("data", {}).get("error")}
+    _save_json_cache(EDHREC_CACHE_FILE, {"commanders": fresh(commander_cache), "synergy": fresh(synergy_cache)})
 
 
 def normalize_card_name(name: str) -> str:
@@ -1335,6 +1378,32 @@ def parse_avg_decklist(raw) -> list[dict]:
     return list(merged.values())
 
 
+def _extract_themes(cmd_data) -> list[dict]:
+    """Theme links from an EDHREC commander page. The page JSON has carried these in
+    different places, so check each and normalize to {name, slug, count}."""
+    if not cmd_data:
+        return []
+    candidates = []
+    container = cmd_data.get("container") or {}
+    json_dict = container.get("json_dict") or {}
+    candidates.extend(json_dict.get("themes") or [])
+    tribelinks = (cmd_data.get("panels") or {}).get("tribelinks") or {}
+    candidates.extend(tribelinks.get("themes") or [])
+    themes, seen = [], set()
+    for t in candidates:
+        if not isinstance(t, dict):
+            continue
+        name = t.get("name") or t.get("value") or ""
+        slug = t.get("slug") or ""
+        if not slug:
+            href = t.get("href-suffix") or t.get("href") or ""
+            slug = href.rstrip("/").split("/")[-1] if href else edhrec_slug(name)
+        if name and slug and slug not in seen:
+            seen.add(slug)
+            themes.append({"name": name, "slug": slug, "count": t.get("count", 0)})
+    return themes
+
+
 def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str = None) -> dict:
     """Get average deck for a commander from EDHREC, with caching."""
     cache_key = f"{commander_name}|{budget or ''}|{theme or ''}"
@@ -1347,22 +1416,25 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         name_for_edhrec = commander_name.split("//")[0].strip()
         formatted = edhrec_slug(name_for_edhrec)
 
-        avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
+        theme_applied = False
+        avg_deck = None
+        if theme:
+            # pyedhrec's public method has no theme parameter, but its URL builder does
+            # (edhrec.com/average-decks/<commander>/<theme>). Fall back to the plain
+            # average deck if EDHREC has no page for that theme, and say so.
+            try:
+                uri, params = edhrec._build_nextjs_uri("average-decks", formatted, theme=theme, budget=budget)
+                themed = edhrec._get_nextjs_data(edhrec._get(uri, query_params=params)) or {}
+                if themed.get("deck"):
+                    avg_deck = {"decklist": themed["deck"]}
+                    theme_applied = True
+            except Exception as e:
+                logger.warning(f"No EDHREC average deck for {formatted} / theme '{theme}': {e}")
+        if avg_deck is None:
+            avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
         cmd_data = edhrec.get_commander_data(formatted)
 
-        # Extract themes
-        themes = []
-        if cmd_data:
-            container = cmd_data.get("container", {})
-            json_dict = container.get("json_dict", {})
-            theme_links = json_dict.get("themes", [])
-            for t in (theme_links or []):
-                if isinstance(t, dict):
-                    themes.append({
-                        "name": t.get("name", ""),
-                        "slug": t.get("slug", ""),
-                        "count": t.get("count", 0),
-                    })
+        themes = _extract_themes(cmd_data)
 
         decklist = parse_avg_decklist(avg_deck.get("decklist") if avg_deck else None)
         deck_cards = {c["name_normalized"] for c in decklist}
@@ -1375,6 +1447,7 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
             "commander": commander_name,
             "num_decks": num_decks,
             "themes": themes,
+            "theme_applied": theme_applied,
             "decklist": decklist,
             "deck_card_names": list(deck_cards),
         }
@@ -2042,11 +2115,13 @@ def get_commander_detail(
 
     # Sort recommendations by synergy descending
     recommendations.sort(key=lambda r: r.get("synergy", 0), reverse=True)
+    _save_edhrec_cache_to_disk()
 
     return {
         "commander": data["commander"],
         "num_decks": data.get("num_decks", 0),
         "themes": data.get("themes", []),
+        "theme_applied": data.get("theme_applied", False),
         "total_cards": len(data.get("decklist", [])),
         "owned_count": len(owned),
         "missing_count": len(missing),
@@ -2271,6 +2346,7 @@ def recommendations_from_favorites(request: Request, body: dict):
     # Sort by weighted match % descending, EDHREC rank ascending on ties
     results.sort(key=lambda r: (r["match_percentage"], -r["edhrec_rank"]), reverse=True)
 
+    _save_edhrec_cache_to_disk()
     return {
         "results": results[:limit],
         "detected_colors": sorted(list(detected_colors)),
@@ -2370,6 +2446,7 @@ def get_recommendations(
             r["missing_price"] = 0
 
     results.sort(key=lambda r: r["match_percentage"], reverse=True)
+    _save_edhrec_cache_to_disk()
     logger.info(
         f"Recommendations: checked {len(commanders)} commanders, {no_deck_data} had no EDHREC deck data, "
         f"{len(results)} with {min_owned}+ owned cards (collection: {len(available)} available cards)"
