@@ -3432,7 +3432,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
                 <div className="flex items-center gap-3 text-xs">
                   {card.synergy != null && (
                     <span className={`font-medium ${card.synergy > 0 ? 'text-green-400' : 'text-gray-400'}`}>
-                      {card.synergy > 0 ? '+' : ''}{card.synergy}% synergy
+                      {card.score_type === 'lift' ? `${card.synergy} lift` : `${card.synergy > 0 ? '+' : ''}${card.synergy}% synergy`}
                     </span>
                   )}
                   {card.inclusion != null && (

@@ -22,7 +22,7 @@ BUILD_DIR = os.path.join(ROOT, "build")
 # Inputs that require a frontend rebuild when they change
 FRONTEND_SOURCES = ["src", "public", "package.json", "tailwind.config.js"]
 # Import names of the backend's requirements, to detect a missing install
-REQUIRED_MODULES = ["fastapi", "uvicorn", "pyedhrec", "multipart", "requests", "slowapi", "bcrypt", "jwt"]
+REQUIRED_MODULES = ["fastapi", "uvicorn", "multipart", "requests", "slowapi", "bcrypt", "jwt"]
 
 
 def log(msg):

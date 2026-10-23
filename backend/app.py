@@ -20,7 +20,6 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from pyedhrec import EDHRec
 
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -484,85 +483,124 @@ async def get_user_favorites(user: dict = Depends(require_user)):
     return {"cards": cards, "count": len(cards), "updated_at": row["updated_at"]}
 
 
-edhrec = EDHRec()
-
-# EDHREC has no public API or published limits; pyedhrec reads the JSON its site uses.
-# Space those requests out so a 200-commander run never bursts (pyedhrec itself caches
-# each page for 24 hours in memory, and we persist our derived data below).
+# --- EDHREC ---
+# EDHREC has no public API. Its site reads plain JSON from json.edhrec.com, one file per
+# page (https://json.edhrec.com/pages/<page path>.json), and that is what we read too.
+# The pyedhrec library used Next.js data routes that disappeared in EDHREC's October 2026
+# redesign. There are no published limits, so requests are spaced out and results cached.
+EDHREC_JSON_BASE = "https://json.edhrec.com/pages"
 EDHREC_MIN_INTERVAL = 0.25
+_edhrec_session = requests.Session()
+_edhrec_session.headers.update({
+    # json.edhrec.com answered the probe with a browser User-Agent; keep the same shape
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+    "Accept": "application/json",
+})
 _edhrec_lock = threading.Lock()
 _edhrec_last_request = 0.0
-_edhrec_get = edhrec._get
 
 
-def _paced_edhrec_get(uri, query_params=None, return_type="json"):
+class EdhrecNotFound(Exception):
+    """EDHREC has no page at this path (e.g. a commander with no decks yet)."""
+
+
+def edhrec_fetch_page(path: str) -> dict:
+    """Fetch one EDHREC page's JSON, e.g. 'commanders/fire-lord-zuko' or
+    'average-decks/atraxa-praetors-voice/counters/budget'."""
     global _edhrec_last_request
     with _edhrec_lock:
         wait = _edhrec_last_request + EDHREC_MIN_INTERVAL - time.time()
         if wait > 0:
             time.sleep(wait)
         _edhrec_last_request = time.time()
-    try:
-        return _edhrec_get(uri, query_params=query_params, return_type=return_type)
-    except requests.HTTPError as e:
-        # EDHREC's data URLs embed a Next.js build id that changes whenever the site is
-        # redeployed; with a stale id every page 404s. Re-discover it and retry once.
-        status = e.response.status_code if e.response is not None else None
-        old_id = edhrec.current_build_id
-        if status == 404 and old_id and f"/_next/data/{old_id}/" in uri and _refresh_edhrec_build_id():
-            retry_uri = uri.replace(f"/_next/data/{old_id}/", f"/_next/data/{edhrec.current_build_id}/")
-            return _paced_edhrec_get(retry_uri, query_params=query_params, return_type=return_type)
-        raise
+    url = f"{EDHREC_JSON_BASE}/{path}.json"
+    resp = _edhrec_session.get(url, timeout=30)
+    if resp.status_code in (403, 404):
+        raise EdhrecNotFound(f"EDHREC has no page at {url} (HTTP {resp.status_code})")
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise ValueError(f"Unexpected EDHREC response at {url}: {type(data).__name__}")
+    return data
 
 
-edhrec._get = _paced_edhrec_get
-
-_edhrec_build_id_checked_at = 0.0
-
-
-def _discover_edhrec_build_id() -> Optional[str]:
-    """Read EDHREC's current Next.js build id from its HTML. pyedhrec only looks for a
-    __NEXT_DATA__ block on the homepage with a pattern that breaks on newlines, and then
-    falls back to a hard-coded id from whenever the library was released."""
-    for page in ("https://edhrec.com/", "https://edhrec.com/commanders/atraxa-praetors-voice"):
-        try:
-            html = _paced_edhrec_get(page, return_type="raw").decode("utf-8", "ignore")
-        except Exception as e:
-            logger.warning(f"Couldn't load {page} to find EDHREC's build id: {e}")
-            continue
-        for pattern in (r'"buildId"\s*:\s*"([^"]+)"', r'/_next/static/([^/"\']+)/_buildManifest\.js'):
-            match = re.search(pattern, html)
-            if match:
-                return match.group(1)
-    return None
+def edhrec_average_deck(slug: str, theme: str = None, budget: str = None) -> dict:
+    """The average deck for a commander: {"commander_v2": [[name, qty]], "cards": {type: [[name, qty]]}}."""
+    path = f"average-decks/{slug}"
+    if theme:
+        path += f"/{theme}"
+    if budget in ("budget", "expensive"):
+        path += f"/{budget}"
+    data = edhrec_fetch_page(path)
+    deck = data.get("deck")
+    if not deck:
+        raise ValueError(f"EDHREC average deck page for {path} has no 'deck' entry (keys: {sorted(data)[:12]})")
+    return deck
 
 
-def _refresh_edhrec_build_id(force: bool = False) -> bool:
-    """Re-discover the build id. Returns True if it changed. Rate limited to once a
-    minute so a commander EDHREC genuinely lacks doesn't trigger a re-check per request."""
-    global _edhrec_build_id_checked_at
-    if not force and time.time() - _edhrec_build_id_checked_at < 60:
-        return False
-    _edhrec_build_id_checked_at = time.time()
-    old_id = edhrec.current_build_id
-    new_id = _discover_edhrec_build_id()
-    if new_id and new_id != old_id:
-        edhrec.current_build_id = new_id
-        logger.info(f"EDHREC build id: {old_id or '(none)'} -> {new_id}")
-        return True
-    return False
+_edhrec_page_memo: dict[str, tuple[float, dict]] = {}
 
 
-def _check_edhrec_build_id():
-    if not edhrec.current_build_id:
-        _refresh_edhrec_build_id(force=True)
-        if not edhrec.current_build_id:
-            logger.error("Couldn't determine EDHREC's build id; falling back to pyedhrec's built-in one, which is probably stale")
-            edhrec.current_build_id = edhrec.default_build_id
-    return True
+def edhrec_commander_page(slug: str) -> dict:
+    """A commander's page JSON (card lists, theme links, deck counts). Memoized for the
+    process lifetime since the average-deck and synergy lookups both need it."""
+    cached = _edhrec_page_memo.get(slug)
+    if cached and time.time() - cached[0] < CACHE_TTL:
+        return cached[1]
+    data = edhrec_fetch_page(f"commanders/{slug}")
+    _edhrec_page_memo[slug] = (time.time(), data)
+    return data
 
 
-edhrec.check_build_id = _check_edhrec_build_id
+# Our list keys -> the EDHREC cardlist tags that hold them. EDHREC renamed "synergy" to
+# "lift" in October 2026, so accept either spelling for the high-synergy list.
+EDHREC_CARDLIST_TAGS = {
+    "high_synergy": ("highsynergycards", "highliftcards", "liftcards", "synergycards"),
+    "new_cards": ("newcards",),
+    "top_creatures": ("creatures",),
+    "top_instants": ("instants",),
+    "top_sorceries": ("sorceries",),
+    "top_enchantments": ("enchantments",),
+    "top_artifacts": ("utilityartifacts", "artifacts"),
+    "top_mana_artifacts": ("manaartifacts",),
+    "top_planeswalkers": ("planeswalkers",),
+    "top_lands": ("lands",),
+    "top_utility_lands": ("utilitylands",),
+}
+
+
+def edhrec_cardlists(page: dict) -> dict[str, list]:
+    """Pull the typed card lists out of a commander page: {our key: [cardview, ...]}."""
+    lists = ((page.get("container") or {}).get("json_dict") or {}).get("cardlists") or []
+    by_tag = {}
+    for cl in lists:
+        if isinstance(cl, dict):
+            tag = str(cl.get("tag", "")).lower().replace(" ", "")
+            by_tag.setdefault(tag, cl.get("cardviews") or [])
+    result = {}
+    for key, tags in EDHREC_CARDLIST_TAGS.items():
+        result[key] = next((by_tag[t] for t in tags if t in by_tag), [])
+    if not result["high_synergy"]:
+        # Unknown tag spelling: fall back to any list whose header mentions synergy or lift
+        for cl in lists:
+            header = str(cl.get("header", "")).lower() if isinstance(cl, dict) else ""
+            if "synergy" in header or "lift" in header:
+                result["high_synergy"] = cl.get("cardviews") or []
+                break
+    return result
+
+
+def edhrec_num_decks(page: dict) -> int:
+    """Deck count for a commander; the page has carried it in a few places."""
+    json_dict = (page.get("container") or {}).get("json_dict") or {}
+    for value in (page.get("num_decks"), (json_dict.get("card") or {}).get("num_decks"), json_dict.get("num_decks")):
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    for counts_key in ("budget_counts", "bracket_counts"):
+        counts = page.get(counts_key)
+        if isinstance(counts, dict) and counts:
+            return int(sum(v for v in counts.values() if isinstance(v, (int, float))))
+    return 0
 
 # Scryfall rejects requests that use an HTTP library's default User-Agent (HTTP 400),
 # and requires an Accept header: https://scryfall.com/docs/api
@@ -1128,11 +1166,23 @@ def extract_cardview_names(cardviews) -> list[dict]:
         if isinstance(cv, dict):
             name = cv.get("name", "")
             if name:
+                score_type = "synergy"
+                score = cv.get("synergy")
+                if score is None and cv.get("lift") is not None:
+                    score, score_type = cv.get("lift"), "lift"
+                score = score or 0
+                if score_type == "synergy" and abs(score) <= 1:
+                    score = round(score * 100, 1)  # fraction -> percent
+                inclusion = cv.get("inclusion") or 0
+                potential = cv.get("potential_decks") or 0
+                if potential and inclusion <= potential:
+                    inclusion = round(inclusion / potential * 100, 1)  # deck count -> percent
                 results.append({
                     "name": name,
                     "name_normalized": normalize_card_name(name),
-                    "synergy": cv.get("synergy", 0),
-                    "inclusion": cv.get("inclusion", 0),
+                    "synergy": score,
+                    "score_type": score_type,
+                    "inclusion": inclusion,
                     "label": cv.get("label", ""),
                 })
         elif isinstance(cv, str):
@@ -1169,38 +1219,16 @@ def get_commander_synergy_cards(commander_name: str) -> dict:
         "top_mana_artifacts": [],
     }
 
-    method_map = {
-        "high_synergy": edhrec.get_high_synergy_cards,
-        "new_cards": edhrec.get_new_cards,
-        "top_creatures": edhrec.get_top_creatures,
-        "top_instants": edhrec.get_top_instants,
-        "top_sorceries": edhrec.get_top_sorceries,
-        "top_enchantments": edhrec.get_top_enchantments,
-        "top_artifacts": edhrec.get_top_artifacts,
-        "top_lands": edhrec.get_top_lands,
-        "top_planeswalkers": edhrec.get_top_planeswalkers,
-        "top_utility_lands": edhrec.get_top_utility_lands,
-        "top_mana_artifacts": edhrec.get_top_mana_artifacts,
-    }
-
-    # All eleven lists come from one EDHREC page. Load it once; if that fails there's
-    # nothing to extract, and retrying it eleven times just hammers EDHREC.
+    # All the lists come from the commander's one page
     try:
-        edhrec.get_commander_data(formatted)
+        page = edhrec_commander_page(formatted)
     except Exception as e:
         logger.error(f"Error fetching EDHREC page for {commander_name}: {e}")
         synergy_cache[cache_key] = {"data": result, "timestamp": time.time() - CACHE_TTL + ERROR_CACHE_TTL}
         return result
 
-    for key, method in method_map.items():
-        try:
-            raw = method(formatted)
-            # raw is a dict like {"Header": [cardviews...]}
-            if isinstance(raw, dict):
-                for header, cards in raw.items():
-                    result[key] = extract_cardview_names(cards)
-        except Exception as e:
-            logger.error(f"Error fetching {key} for {commander_name}: {e}")
+    for key, cardviews in edhrec_cardlists(page).items():
+        result[key] = extract_cardview_names(cardviews)
 
     synergy_cache[cache_key] = {"data": result, "timestamp": time.time()}
     return result
@@ -1453,8 +1481,15 @@ def _extract_themes(cmd_data) -> list[dict]:
     container = cmd_data.get("container") or {}
     json_dict = container.get("json_dict") or {}
     candidates.extend(json_dict.get("themes") or [])
-    tribelinks = (cmd_data.get("panels") or {}).get("tribelinks") or {}
-    candidates.extend(tribelinks.get("themes") or [])
+    panels = cmd_data.get("panels") or {}
+    for links_key in ("tribelinks", "taglinks"):
+        links = panels.get(links_key) or {}
+        if isinstance(links, list):
+            candidates.extend(links)
+        elif isinstance(links, dict):
+            for group in links.values():
+                if isinstance(group, list):
+                    candidates.extend(group)
     themes, seen = [], set()
     for t in candidates:
         if not isinstance(t, dict):
@@ -1483,31 +1518,28 @@ def get_commander_avg_deck(commander_name: str, budget: str = None, theme: str =
         formatted = edhrec_slug(name_for_edhrec)
 
         theme_applied = False
-        avg_deck = None
+        raw_deck = None
         if theme:
-            # pyedhrec's public method has no theme parameter, but its URL builder does
-            # (edhrec.com/average-decks/<commander>/<theme>). Fall back to the plain
-            # average deck if EDHREC has no page for that theme, and say so.
+            # Fall back to the plain average deck if EDHREC has no page for that theme, and say so
             try:
-                uri, params = edhrec._build_nextjs_uri("average-decks", formatted, theme=theme, budget=budget)
-                themed = edhrec._get_nextjs_data(edhrec._get(uri, query_params=params)) or {}
-                if themed.get("deck"):
-                    avg_deck = {"decklist": themed["deck"]}
-                    theme_applied = True
+                raw_deck = edhrec_average_deck(formatted, theme=theme, budget=budget)
+                theme_applied = True
             except Exception as e:
                 logger.warning(f"No EDHREC average deck for {formatted} / theme '{theme}': {e}")
-        if avg_deck is None:
-            avg_deck = edhrec.get_commanders_average_deck(formatted, budget)
-        cmd_data = edhrec.get_commander_data(formatted)
+        if raw_deck is None:
+            raw_deck = edhrec_average_deck(formatted, budget=budget)
 
-        themes = _extract_themes(cmd_data)
+        try:
+            cmd_page = edhrec_commander_page(formatted)
+        except Exception as e:
+            # Partner pairs have an average deck but not always a commander page; carry on without it
+            logger.warning(f"No EDHREC commander page for {formatted}: {e}")
+            cmd_page = {}
 
-        decklist = parse_avg_decklist(avg_deck.get("decklist") if avg_deck else None)
+        themes = _extract_themes(cmd_page)
+        decklist = parse_avg_decklist(raw_deck)
         deck_cards = {c["name_normalized"] for c in decklist}
-
-        num_decks = 0
-        if cmd_data:
-            num_decks = cmd_data.get("num_decks", 0)
+        num_decks = edhrec_num_decks(cmd_page)
 
         result = {
             "commander": commander_name,
@@ -2123,6 +2155,7 @@ def get_commander_detail(
                     "name": card["name"],
                     "name_normalized": normalized,
                     "synergy": card.get("synergy", 0),
+                    "score_type": card.get("score_type", "synergy"),
                     "inclusion": card.get("inclusion", 0),
                     "source": "High Synergy" if key == "high_synergy" else "New Card",
                     "owned": normalized in collection,
@@ -2143,6 +2176,7 @@ def get_commander_detail(
                     "name": card["name"],
                     "name_normalized": normalized,
                     "synergy": card.get("synergy", 0),
+                    "score_type": card.get("score_type", "synergy"),
                     "inclusion": card.get("inclusion", 0),
                     "source": f"Top {source_label}",
                     "owned": normalized in collection,
