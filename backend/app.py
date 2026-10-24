@@ -2150,6 +2150,15 @@ def get_commander_detail(
             if price:
                 total_missing_price += price
 
+    def _ownership(normalized: str, available_set: set, usage_map: dict) -> dict:
+        card_usage = usage_map.get(normalized, {})
+        return {
+            "owned": normalized in available_set,
+            "qty_owned": collection.get(normalized, 0),
+            "qty_in_decks": card_usage.get("total_in_decks", 0),
+            "in_decks": card_usage.get("decks", []),
+        }
+
     # Build recommendations: synergy/new/top cards not in avg deck (both owned and not)
     # Map type keys to card_type labels
     type_key_to_label = {
@@ -2179,7 +2188,7 @@ def get_commander_detail(
                     "score_type": card.get("score_type", "synergy"),
                     "inclusion": card.get("inclusion", 0),
                     "source": "High Synergy" if key == "high_synergy" else "New Card",
-                    "owned": normalized in collection,
+                    **_ownership(normalized, available, usage),
                     "card_type": rec_type_lookup.get(normalized, ""),
                 })
 
@@ -2200,7 +2209,7 @@ def get_commander_detail(
                     "score_type": card.get("score_type", "synergy"),
                     "inclusion": card.get("inclusion", 0),
                     "source": f"Top {source_label}",
-                    "owned": normalized in collection,
+                    **_ownership(normalized, available, usage),
                     "card_type": type_label,
                 })
 
@@ -2220,6 +2229,11 @@ def get_commander_detail(
             minfo = rec_mana.get(r["name_normalized"], rec_mana.get(r["name"], {}))
             r["cmc"] = minfo.get("cmc", 0)
             r["mana_cost"] = minfo.get("mana_cost", "")
+        # Same card data already holds the price; the deck builder sorts by it
+        if include_prices:
+            rec_prices = fetch_prices_bulk([r["name"] for r in recommendations if not r["owned"]])
+            for r in recommendations:
+                r["price"] = None if r["owned"] else rec_prices.get(r["name_normalized"])
 
     # --- Functional category classification ---
     scores = synergy_scores(type_data)

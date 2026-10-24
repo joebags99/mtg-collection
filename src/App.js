@@ -1577,6 +1577,13 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
         {!card.owned && card.price > 0 && (
           <span className="text-[10px] text-yellow-400 flex-shrink-0">${card.price.toFixed(2)}</span>
         )}
+        {!card.isCommander && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggle(card.name); }}
+            className="w-4 h-4 rounded bg-red-900/70 hover:bg-red-700 text-red-200 text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+            title="Remove from deck"
+          >✕</button>
+        )}
         {canMultiple && (
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
             <button
@@ -1891,7 +1898,7 @@ function classifyFunctionalCategory(card) {
 const COLOR_TO_BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
 const BASIC_LAND_NAMES = new Set([...Object.values(COLOR_TO_BASICS), 'Wastes'].map(n => n.toLowerCase()));
 
-function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onDeckSaved }) {
+function DeckBuilder({ data, commander, partner, onBack, favorites, onToggleFavorite, onDeckSaved }) {
   const [deck, setDeck] = useState([]);
   const [exportText, setExportText] = useState('');
   const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | {ok, message}
@@ -1907,10 +1914,11 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
   // Initialize with avg deck + classify cards + auto-fill basic lands
   useEffect(() => {
     if (data) {
-      const commanderNorm = (commander.name || '').toLowerCase();
+      // Both halves of a partner pair are commanders: never cut, not part of the composition
+      const commanderNames = new Set([commander.name, partner?.name].filter(Boolean).map(n => n.toLowerCase()));
 
       const initial = [...data.owned_cards, ...data.missing_cards].map(c => {
-        const isCommander = (c.name_normalized || c.name?.toLowerCase()) === commanderNorm;
+        const isCommander = commanderNames.has(c.name_normalized || c.name?.toLowerCase());
         const card = { ...c, included: true, qty: isCommander ? 1 : (c.qty || 1), isCommander };
         // EDHREC decks include basics; treat them like the auto-filled ones (assumed owned)
         if (BASIC_LAND_NAMES.has((c.name || '').toLowerCase())) {
@@ -1923,9 +1931,14 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
       const recCards = (data.recommendations || []).map(c => {
         const card = {
           name: c.name,
+          name_normalized: c.name_normalized || c.name.toLowerCase(),
           card_type: c.card_type || 'Other',
           functional_category: c.functional_category || 'utility',
           owned: c.owned,
+          qty_owned: c.qty_owned || 0,
+          qty_in_decks: c.qty_in_decks || 0,
+          in_decks: c.in_decks || [],
+          price: c.price ?? null,
           synergy: c.synergy,
           cmc: c.cmc || 0,
           mana_cost: c.mana_cost || '',
@@ -1946,12 +1959,12 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
         if (fc in deckCounts) deckCounts[fc] += c.qty;
       }
 
-      // Auto-fill basic lands to reach 99 non-commander cards
+      // Auto-fill basic lands to fill the non-commander slots (99, or 98 with a partner)
+      const slots = 100 - Math.max(1, initial.filter(c => c.isCommander).length);
       const currentTotal = initial.filter(c => !c.isCommander).reduce((s, c) => s + c.qty, 0);
       const currentLands = deckCounts.lands || 0;
       const desiredLands = Math.max(currentLands, 38);
-      // Fill basics to bring lands up, but cap total deck at 99 (commander is #100)
-      const spaceForBasics = Math.max(0, 99 - currentTotal);
+      const spaceForBasics = Math.max(0, slots - currentTotal);
       const landDeficit = Math.min(Math.max(0, desiredLands - currentLands), spaceForBasics);
 
       const colors = commander.color_identity || [];
@@ -1990,17 +2003,19 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
       // Targets: conventional quotas for lands/ramp/draw/removal, so the panel shows at
       // once where this average deck is thin; the remaining slots go to synergy and
       // utility in the deck's own proportion, since those two are a matter of taste
-      const targets = suggestedTargets(deckCounts);
+      const targets = suggestedTargets(deckCounts, slots);
       setComposition(targets);
       setTempComposition(targets);
 
       setDeck([...initial, ...recCards]);
     }
-  }, [data, commander.color_identity, commander.name]);
+  }, [data, commander.color_identity, commander.name, partner?.name]);
 
   const includedCards = deck.filter(c => c.included);
   const excludedCards = deck.filter(c => !c.included);
   const deckSize = includedCards.reduce((sum, c) => sum + c.qty, 0);
+  const commanderCount = Math.max(1, includedCards.filter(c => c.isCommander).length);
+  const deckSlots = 100 - commanderCount; // non-commander cards a legal deck holds
 
   // Calculate owned vs needed and price
   const ownedCount = includedCards.filter(c => c.owned).reduce((sum, c) => sum + c.qty, 0);
@@ -2032,21 +2047,19 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
     if (fc in categoryCounts) categoryCounts[fc] += c.qty;
   }
 
-  // Sort function for add candidates based on suggestion mode
+  // What adding a card costs you: owned cards are free; an unknown price is treated as
+  // expensive rather than free, so "Cheapest" never favours cards it can't price
+  const addCost = (c) => (c.owned ? 0 : (c.price ?? Infinity));
+  const cmp = (x, y) => (x === y ? 0 : x < y ? -1 : 1);
+
+  // Which excluded card to add first for an under-target category
   const sortAddCandidates = (a, b) => {
-    if (suggestionMode === 'collection') {
-      if (a.owned && !b.owned) return -1;
-      if (!a.owned && b.owned) return 1;
-      const pa = a.price || 0, pb = b.price || 0;
-      if (pa !== pb) return pa - pb;
-      return (b.synergy || 0) - (a.synergy || 0);
-    } else if (suggestionMode === 'cheapest') {
-      const pa = a.price || 0, pb = b.price || 0;
-      if (pa !== pb) return pa - pb;
-      return (b.synergy || 0) - (a.synergy || 0);
-    } else { // 'best'
-      return (b.synergy || 0) - (a.synergy || 0);
-    }
+    const bySynergy = (b.synergy || 0) - (a.synergy || 0);
+    const byCost = cmp(addCost(a), addCost(b));
+    const byOwned = a.owned === b.owned ? 0 : (a.owned ? -1 : 1);
+    if (suggestionMode === 'best') return bySynergy || byCost;
+    if (suggestionMode === 'cheapest') return byCost || bySynergy;
+    return byOwned || byCost || bySynergy;
   };
 
   // Which cards to cut first from an over-target category. Basic lands always go first;
@@ -2055,7 +2068,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
   const sortRemoveCandidates = (a, b) => {
     if (a.isBasicLand !== b.isBasicLand) return a.isBasicLand ? -1 : 1;
     const bySynergy = (a.synergy || 0) - (b.synergy || 0);
-    const byPrice = (b.price || 0) - (a.price || 0);
+    const byPrice = cmp(b.owned ? 0 : (b.price || 0), a.owned ? 0 : (a.price || 0)); // most expensive unowned first
     const byOwned = a.owned === b.owned ? 0 : (a.owned ? 1 : -1);
     if (suggestionMode === 'best') return bySynergy || byOwned || byPrice;
     if (suggestionMode === 'cheapest') return byPrice || bySynergy || byOwned;
@@ -2140,11 +2153,14 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
     if (!name) return;
     setSaveName(null);
     const lines = includedCards.map(c => `${c.qty} ${c.name}`);
-    // The commander is part of the 100 and occupies a physical copy, so make sure it's listed
-    if (!includedCards.some(c => c.isCommander)) lines.unshift(`1 ${commander.name}`);
+    // Commanders are part of the 100 and occupy physical copies, so make sure they're listed
+    const listed = new Set(includedCards.map(c => c.name.toLowerCase()));
+    for (const cmdName of [commander.name, partner?.name].filter(Boolean)) {
+      if (!listed.has(cmdName.toLowerCase())) lines.unshift(`1 ${cmdName}`);
+    }
     setSaveStatus('saving');
     try {
-      await apiPost('/api/decks', { name, commander: commander.name, cards_text: lines.join('\n') });
+      await apiPost('/api/decks', { name, commander: commander.name, partner: partner?.name || '', cards_text: lines.join('\n') });
       setSaveStatus({ ok: true, message: `Saved "${name}" to My Decks.` });
       onDeckSaved?.();
     } catch (err) {
@@ -2154,12 +2170,12 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
 
   const tempTotal = Object.values(tempComposition).reduce((a, b) => a + b, 0);
 
-  // Make the targets total 99 by moving the difference into Utility, then Synergy
+  // Make the targets fill the deck by moving the difference into Utility, then Synergy
   const balanceTempComposition = () => {
     setTempComposition(prev => {
       const total = Object.values(prev).reduce((a, b) => a + b, 0);
       const next = { ...prev };
-      let diff = 99 - total;
+      let diff = deckSlots - total;
       for (const key of ['utility', 'synergy']) {
         const adjusted = Math.max(0, next[key] + diff);
         diff -= adjusted - next[key];
@@ -2170,90 +2186,62 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
     });
   };
 
-  // Apply composition targets: actually perform the removals/adds to the deck
-  const applyComposition = (newTargets) => {
-    // Build lists of card names to remove/add with quantities
-    const removeMap = {};    // name -> qty to remove
-    const addSet = {};       // name -> qty to add (excluded cards)
-    const increaseMap = {};  // name -> qty to increase (already-included unlimited cards)
-
-    for (const { key } of CATEGORY_META) {
-      const actual = categoryCounts[key];
-      const newTarget = newTargets[key];
-      const diff = actual - newTarget;
-
+  // Work out what reaching the given targets means: which included cards to cut, which
+  // excluded cards to add, which basics to add copies of, and what can't be filled.
+  // Used for both the live preview and Apply, so what you see is what you get.
+  const planComposition = (targets) => {
+    const removals = [], adds = [], increases = [], unfilled = [];
+    for (const { key, label } of CATEGORY_META) {
+      const diff = categoryCounts[key] - targets[key];
       if (diff > 0) {
-        const candidates = nonCommanderIncluded
-          .filter(c => classifyFunctionalCategory(c) === key)
-          .sort(sortRemoveCandidates);
         let remaining = diff;
-        for (const c of candidates) {
+        for (const c of nonCommanderIncluded.filter(c => classifyFunctionalCategory(c) === key).sort(sortRemoveCandidates)) {
           if (remaining <= 0) break;
-          const take = Math.min(c.qty, remaining);
-          removeMap[c.name] = (removeMap[c.name] || 0) + take;
-          remaining -= take;
+          const qty = Math.min(c.qty, remaining);
+          removals.push({ card: c, qty, category: label });
+          remaining -= qty;
         }
       } else if (diff < 0) {
-        let remaining = Math.abs(diff);
-        // First: add from excluded cards
-        const candidates = nonCommanderExcluded
-          .filter(c => classifyFunctionalCategory(c) === key)
-          .sort(sortAddCandidates);
-        for (const c of candidates) {
+        let remaining = -diff;
+        for (const c of nonCommanderExcluded.filter(c => classifyFunctionalCategory(c) === key).sort(sortAddCandidates)) {
           if (remaining <= 0) break;
-          addSet[c.name] = (addSet[c.name] || 0) + 1;
+          adds.push({ card: c, qty: 1, category: label });
           remaining -= 1;
         }
-        // Second: if still remaining, increase qty on already-included unlimited cards (basic lands)
-        if (remaining > 0) {
-          const includedUnlimited = nonCommanderIncluded
-            .filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
-            .sort(sortAddCandidates);
-          for (const c of includedUnlimited) {
-            if (remaining <= 0) break;
-            increaseMap[c.name] = (increaseMap[c.name] || 0) + remaining;
-            remaining = 0;
-          }
+        // Still short: add copies of included unlimited cards (basics), spread evenly across them
+        const unlimited = nonCommanderIncluded.filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name));
+        if (remaining > 0 && unlimited.length > 0) {
+          const per = Math.floor(remaining / unlimited.length);
+          const extra = remaining % unlimited.length;
+          unlimited.forEach((c, i) => {
+            const qty = per + (i < extra ? 1 : 0);
+            if (qty > 0) increases.push({ card: c, qty, category: label });
+          });
+          remaining = 0;
         }
+        if (remaining > 0) unfilled.push({ category: label, count: remaining });
       }
     }
+    return { removals, adds, increases, unfilled };
+  };
 
-    // Build new deck array (no mutation of lookup objects during iteration)
-    setDeck(prev => {
-      const removalsLeft = { ...removeMap };
-      const addsLeft = { ...addSet };
-      const increasesLeft = { ...increaseMap };
-      return prev.map(c => {
-        if (c.isCommander) return c;
+  // Apply composition targets: actually perform the removals/adds to the deck
+  const applyComposition = (newTargets) => {
+    const plan = planComposition(newTargets);
+    const removeMap = {}, addSet = {}, increaseMap = {};
+    for (const r of plan.removals) removeMap[r.card.name] = (removeMap[r.card.name] || 0) + r.qty;
+    for (const a of plan.adds) addSet[a.card.name] = 1;
+    for (const inc of plan.increases) increaseMap[inc.card.name] = (increaseMap[inc.card.name] || 0) + inc.qty;
 
-        // Handle removals
-        if (removalsLeft[c.name] > 0 && c.included) {
-          const removeQty = removalsLeft[c.name];
-          if (c.qty <= removeQty) {
-            removalsLeft[c.name] = removeQty - c.qty;
-            return { ...c, included: false, qty: 1 };
-          } else {
-            removalsLeft[c.name] = 0;
-            return { ...c, qty: c.qty - removeQty };
-          }
-        }
-
-        // Handle qty increases on already-included unlimited cards
-        if (increasesLeft[c.name] > 0 && c.included) {
-          const addQty = increasesLeft[c.name];
-          increasesLeft[c.name] = 0;
-          return { ...c, qty: c.qty + addQty };
-        }
-
-        // Handle additions of excluded cards
-        if (addsLeft[c.name] > 0 && !c.included) {
-          addsLeft[c.name] = 0;
-          return { ...c, included: true, qty: 1 };
-        }
-
-        return c;
-      });
-    });
+    setDeck(prev => prev.map(c => {
+      if (c.isCommander) return c;
+      if (removeMap[c.name] > 0 && c.included) {
+        return c.qty <= removeMap[c.name] ? { ...c, included: false, qty: 1 } : { ...c, qty: c.qty - removeMap[c.name] };
+      }
+      if (increaseMap[c.name] > 0 && c.included) return { ...c, qty: c.qty + increaseMap[c.name] };
+      if (addSet[c.name] && !c.included) return { ...c, included: true, qty: 1 };
+      return c;
+    }));
 
     setComposition(newTargets);
     setShowCompositionSettings(false);
@@ -2707,15 +2695,15 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                   <div className="bg-gray-900 rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400 text-sm">Total allocated:</span>
-                      <span className={`font-bold ${tempTotal === 99 ? 'text-green-400' : tempTotal > 99 ? 'text-red-400' : 'text-yellow-400'}`}>
-                        {tempTotal}/99
+                      <span className={`font-bold ${tempTotal === deckSlots ? 'text-green-400' : tempTotal > deckSlots ? 'text-red-400' : 'text-yellow-400'}`}>
+                        {tempTotal}/{deckSlots}
                       </span>
                     </div>
                     <div className="flex items-center justify-between mt-1">
-                      <p className="text-xs text-gray-500">(commander is card #100)</p>
-                      {tempTotal !== 99 && (
+                      <p className="text-xs text-gray-500">({commanderCount === 1 ? 'the commander is card #100' : `${commanderCount} commanders make up the rest`})</p>
+                      {tempTotal !== deckSlots && (
                         <button onClick={balanceTempComposition} className="text-xs text-accent-300 hover:text-accent-200">
-                          Balance to 99 via Utility
+                          Balance to {deckSlots} via Utility
                         </button>
                       )}
                     </div>
@@ -2725,48 +2713,10 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                 <div className="w-64 flex-shrink-0">
                   <h4 className="text-xs font-semibold text-gray-400 mb-3">Preview Changes</h4>
                   {(() => {
-                    const previewRemovals = [];
-                    const previewAdds = [];
-                    for (const { key, label } of CATEGORY_META) {
-                      const actual = categoryCounts[key];
-                      const newTarget = tempComposition[key];
-                      const diff = actual - newTarget;
-                      if (diff > 0) {
-                        const candidates = nonCommanderIncluded
-                          .filter(c => classifyFunctionalCategory(c) === key)
-                          .sort(sortRemoveCandidates);
-                        let remaining = diff;
-                        for (const c of candidates) {
-                          if (remaining <= 0) break;
-                          const take = Math.min(c.qty, remaining);
-                          previewRemovals.push({ name: c.name, qty: take, category: label });
-                          remaining -= take;
-                        }
-                      } else if (diff < 0) {
-                        let remaining = Math.abs(diff);
-                        // First: add from excluded cards
-                        const candidates = nonCommanderExcluded
-                          .filter(c => classifyFunctionalCategory(c) === key)
-                          .sort(sortAddCandidates);
-                        for (const c of candidates) {
-                          if (remaining <= 0) break;
-                          previewAdds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy });
-                          remaining -= 1;
-                        }
-                        // Second: if still remaining, increase qty on already-included unlimited cards
-                        if (remaining > 0) {
-                          const includedUnlimited = nonCommanderIncluded
-                            .filter(c => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
-                            .sort(sortAddCandidates);
-                          for (const c of includedUnlimited) {
-                            if (remaining <= 0) break;
-                            previewAdds.push({ name: c.name, qty: remaining, category: label, owned: c.owned, synergy: c.synergy });
-                            remaining = 0;
-                          }
-                        }
-                      }
-                    }
-                    if (previewRemovals.length === 0 && previewAdds.length === 0) {
+                    const plan = planComposition(tempComposition);
+                    const previewRemovals = plan.removals.map(r => ({ name: r.card.name, qty: r.qty, category: r.category }));
+                    const previewAdds = [...plan.adds, ...plan.increases].map(a => ({ name: a.card.name, qty: a.qty, category: a.category, owned: a.card.owned }));
+                    if (previewRemovals.length === 0 && previewAdds.length === 0 && plan.unfilled.length === 0) {
                       return <p className="text-xs text-gray-600 italic">Adjust sliders to see changes</p>;
                     }
                     return (
@@ -2789,6 +2739,12 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                             {a.owned && <span className="text-[9px] text-accent-300 bg-accent-400/10 px-1 rounded flex-shrink-0">owned</span>}
                           </div>
                         ))}
+                        {plan.unfilled.map((u, i) => (
+                          <p key={`u-${i}`} className="text-[11px] text-yellow-400 pt-1">
+                            No more {u.category.toLowerCase()} cards to add: {u.count} slot{u.count > 1 ? 's' : ''} will stay open.
+                            Add some from Possible Recommendations or lower the target.
+                          </p>
+                        ))}
                       </div>
                     );
                   })()}
@@ -2796,7 +2752,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
               </div>
               <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-700">
                 <button
-                  onClick={() => setTempComposition(suggestedTargets(categoryCounts))}
+                  onClick={() => setTempComposition(suggestedTargets(categoryCounts, deckSlots))}
                   className="text-sm text-gray-400 hover:text-white transition-colors"
                   title="38 lands, 10 ramp, 10 draw, 8 removal; the rest split between synergy and utility like this deck"
                 >
@@ -2811,8 +2767,8 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                   </button>
                   <button
                     onClick={() => applyComposition(tempComposition)}
-                    disabled={tempTotal !== 99}
-                    title={tempTotal !== 99 ? 'Targets must total 99 so the deck stays at 100 cards' : undefined}
+                    disabled={tempTotal !== deckSlots}
+                    title={tempTotal !== deckSlots ? `Targets must total ${deckSlots} so the deck stays at 100 cards` : undefined}
                     className="px-4 py-2 bg-accent-600 hover:bg-accent-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded font-medium transition-colors"
                   >
                     Apply
@@ -2974,9 +2930,9 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
 // --- Commander Detail with progressive loading ---
 // Default deck composition values
 // Conventional quotas (lands/ramp/draw/removal) + the deck's own synergy:utility split, totalling 99
-function suggestedTargets(counts) {
+function suggestedTargets(counts, slots = 99) {
   const fixed = { lands: DEFAULT_COMPOSITION.lands, ramp: DEFAULT_COMPOSITION.ramp, cardDraw: DEFAULT_COMPOSITION.cardDraw, removal: DEFAULT_COMPOSITION.removal };
-  const remaining = 99 - Object.values(fixed).reduce((a, b) => a + b, 0);
+  const remaining = slots - Object.values(fixed).reduce((a, b) => a + b, 0);
   const flex = (counts.synergy || 0) + (counts.utility || 0);
   const synergy = flex > 0 ? Math.round(remaining * (counts.synergy || 0) / flex) : DEFAULT_COMPOSITION.synergy;
   return { ...fixed, synergy, utility: remaining - synergy };
@@ -3282,7 +3238,7 @@ function CommanderDetail({ commander, collectionCount, onBack, onOpenDeckBuilder
 
         <div className="ml-auto flex gap-2">
           <button
-            onClick={() => onOpenDeckBuilder(data)}
+            onClick={() => onOpenDeckBuilder(data, undefined, selectedPartner)}
             className="bg-accent-600 hover:bg-accent-500 px-3 py-1.5 rounded text-sm font-medium"
           >
             Deck Builder
@@ -4664,6 +4620,7 @@ function App() {
   const [selectedCommander, setSelectedCommander] = useState(null);
   const [compareList, setCompareList] = useState([]);
   const [deckBuilderData, setDeckBuilderData] = useState(null);
+  const [deckBuilderPartner, setDeckBuilderPartner] = useState(null);
   const [excludeInDecks, setExcludeInDecks] = useState(false);
   const [deckCount, setDeckCount] = useState(0);
   const [decksReady, setDecksReady] = useState(false);
@@ -4872,9 +4829,10 @@ function App() {
     });
   };
 
-  const handleOpenDeckBuilder = (data, cmd) => {
+  const handleOpenDeckBuilder = (data, cmd, partner = null) => {
     if (tab !== 'detail' && tab !== 'deckbuilder') setDetailReturnTab(tab);
     if (cmd) setSelectedCommander(cmd);
+    setDeckBuilderPartner(partner);
     setDeckBuilderData(data);
     setTab('deckbuilder');
   };
@@ -5107,6 +5065,7 @@ function App() {
             <DeckBuilder
               data={deckBuilderData}
               commander={selectedCommander}
+              partner={deckBuilderPartner}
               onBack={() => setTab('detail')}
               favorites={favorites}
               onToggleFavorite={handleToggleFavorite}
