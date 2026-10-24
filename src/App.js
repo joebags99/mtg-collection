@@ -1608,6 +1608,62 @@ function StackCard({ card, index, isLast, canMultiple, onToggle, onSetQty }) {
   );
 }
 
+// Color breakdown: a thin proportional bar plus one entry per color with its real mana
+// symbol, count and share. Replaces blocks sized by count, which turned the main color
+// into a slab and squeezed the others to a sliver.
+const COLOR_BAR_FILL = { W: '#f9faf4', U: '#0e68ab', B: '#4b4b4b', R: '#d32029', G: '#00733e', C: '#9ca3af' };
+
+function ColorBreakdown({ counts, label, size = 22 }) {
+  const order = ['W', 'U', 'B', 'R', 'G', 'C'].filter(c => counts[c] > 0);
+  const total = order.reduce((sum, c) => sum + counts[c], 0);
+  if (total === 0) return null;
+  return (
+    <div className="space-y-2">
+      {label && <p className="text-xs text-gray-400 font-medium">{label} ({total})</p>}
+      <div className="flex h-2 rounded-full overflow-hidden bg-gray-700">
+        {order.map(c => (
+          <div key={c} style={{ width: `${(counts[c] / total) * 100}%`, backgroundColor: COLOR_BAR_FILL[c] }} title={`${COLOR_MAP[c]?.label || 'Colorless'}: ${counts[c]}`} />
+        ))}
+      </div>
+      <div className={order.length > 4 ? 'grid grid-cols-3 gap-y-2.5 gap-x-4' : 'flex flex-wrap gap-x-5 gap-y-2'}>
+        {order.map(c => (
+          <div key={c} className="flex items-center gap-2">
+            <ManaSymbol symbol={c} size={size} />
+            <span className="font-semibold text-gray-100 tabular-nums">{counts[c].toLocaleString()}</span>
+            <span className="text-xs text-gray-500 tabular-nums">{Math.round((counts[c] / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SegmentedControl({ options, value, onChange, size = 'sm' }) {
+  const pad = size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm';
+  return (
+    <div className="inline-flex bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
+      {options.map(opt => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          title={opt.title}
+          className={`${pad} font-medium transition-colors ${
+            value === opt.value ? 'bg-accent-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const SUGGESTION_MODES = [
+  { value: 'collection', label: 'My Collection', title: 'Prefer cards you already own, then cheapest' },
+  { value: 'cheapest', label: 'Cheapest', title: 'Prefer the cheapest cards to buy' },
+  { value: 'best', label: 'Best Synergy', title: 'Prefer the highest-synergy cards regardless of price' },
+];
+
 function ManaCurve({ cards }) {
   // Group included cards by CMC bucket (0, 1, 2, 3, 4, 5, 6, 7+)
   const buckets = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -1647,35 +1703,28 @@ function ManaCurve({ cards }) {
                 className="w-full rounded-t relative overflow-hidden transition-all duration-300"
                 style={{ height: `${Math.max(pct * 100, counts[i].total > 0 ? 4 : 0)}%`, minHeight: counts[i].total > 0 ? '4px' : '0' }}
               >
-                {/* Creature portion (brighter blue) */}
+                {/* Creatures in the same green as the Creature type bar, spells in blue */}
                 <div
-                  className="absolute bottom-0 w-full bg-blue-500"
+                  className="absolute bottom-0 w-full bg-green-500"
                   style={{ height: `${creaturePct * 100}%` }}
                 />
-                {/* Non-creature portion (darker blue) */}
                 <div
-                  className="absolute top-0 w-full bg-blue-800"
+                  className="absolute top-0 w-full bg-blue-500"
                   style={{ height: `${(1 - creaturePct) * 100}%` }}
                 />
               </div>
-              {/* CMC label */}
-              <span className="mt-1 flex items-center justify-center">
-                {cmc === 7 ? (
-                  <span className="text-xs text-gray-500">7+</span>
-                ) : (
-                  <ManaSymbol symbol={String(cmc)} size={16} />
-                )}
-              </span>
+              {/* Mana value label */}
+              <span className="mt-1.5 text-xs text-gray-400 tabular-nums">{cmc === 7 ? '7+' : cmc}</span>
             </div>
           );
         })}
       </div>
       <div className="flex items-center gap-4 mt-2 justify-center">
         <span className="flex items-center gap-1 text-xs text-gray-400">
-          <span className="w-3 h-2 bg-blue-500 rounded-sm inline-block" /> Creatures
+          <span className="w-3 h-2 bg-green-500 rounded-sm inline-block" /> Creatures
         </span>
         <span className="flex items-center gap-1 text-xs text-gray-400">
-          <span className="w-3 h-2 bg-blue-800 rounded-sm inline-block" /> Non-Creatures
+          <span className="w-3 h-2 bg-blue-500 rounded-sm inline-block" /> Spells & other
         </span>
       </div>
     </div>
@@ -1712,7 +1761,6 @@ function DeckStats({ cards }) {
   }
 
   const avgCmc = nonLandCount > 0 ? (totalCmc / nonLandCount).toFixed(2) : '0.00';
-  const totalPips = Object.values(pipCounts).reduce((a, b) => a + b, 0);
 
   const typeOrder = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
   const sortedTypes = typeOrder.filter(t => typeCounts[t] > 0);
@@ -1721,14 +1769,6 @@ function DeckStats({ cards }) {
     Creature: 'bg-green-600', Instant: 'bg-blue-500', Sorcery: 'bg-red-500',
     Enchantment: 'bg-purple-500', Artifact: 'bg-yellow-600', Planeswalker: 'bg-orange-500',
     Land: 'bg-amber-800', Other: 'bg-gray-500',
-  };
-
-  const pipColors = {
-    W: { bg: '#f9faf4', text: '#333' },
-    U: { bg: '#0e68ab', text: '#fff' },
-    B: { bg: '#2b2b2b', text: '#ccc' },
-    R: { bg: '#d32029', text: '#fff' },
-    G: { bg: '#00733e', text: '#fff' },
   };
 
   return (
@@ -1759,39 +1799,7 @@ function DeckStats({ cards }) {
       </div>
 
       {/* Color pip distribution */}
-      {totalPips > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-xs text-gray-400 font-medium">Color Pips ({totalPips})</p>
-          <div className="flex gap-1">
-            {['W', 'U', 'B', 'R', 'G'].filter(c => pipCounts[c] > 0).map(color => (
-              <div
-                key={color}
-                className="flex-1 rounded-md py-3 flex items-center justify-center relative"
-                style={{
-                  backgroundColor: pipColors[color].bg,
-                  color: pipColors[color].text,
-                  flex: pipCounts[color],
-                  minWidth: '36px',
-                }}
-              >
-                {/* Large background icon that overflows */}
-                <div
-                  className="absolute opacity-15 pointer-events-none"
-                  style={{
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                  }}
-                >
-                  <ManaSymbol symbol={color} size={56} />
-                </div>
-                {/* Count in foreground */}
-                <span className="text-lg font-bold relative z-10 drop-shadow-sm">{pipCounts[color]}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ColorBreakdown counts={pipCounts} label="Color Pips" />
     </div>
   );
 }
@@ -2560,35 +2568,18 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
 
       {/* Composition Analysis Panel */}
       <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
           <div className="flex items-center gap-3">
-            <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
-            <div className="flex items-center gap-1">
-              {[
-                { value: 'collection', label: 'Collection' },
-                { value: 'cheapest', label: 'Cheapest' },
-                { value: 'best', label: 'Best' },
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setSuggestionMode(opt.value)}
-                  className={`px-2 py-0.5 text-[10px] rounded-full transition-colors ${
-                    suggestionMode === opt.value
-                      ? 'bg-yellow-600 text-white'
-                      : 'bg-gray-700 text-gray-500 hover:text-gray-300'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+            <span className="text-xs text-gray-500">Fill gaps from</span>
+            <SegmentedControl options={SUGGESTION_MODES} value={suggestionMode} onChange={setSuggestionMode} />
+            <button
+              onClick={() => { setTempComposition(activeComposition); setShowCompositionSettings(true); }}
+              className="text-xs text-accent-300 hover:text-accent-200 transition-colors ml-2"
+            >
+              Edit targets
+            </button>
           </div>
-          <button
-            onClick={() => { setTempComposition(activeComposition); setShowCompositionSettings(true); }}
-            className="text-xs text-gray-400 hover:text-white transition-colors"
-          >
-            Edit Targets
-          </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {CATEGORY_META.map(({ key, label, color }) => {
@@ -2596,12 +2587,18 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
             const target = activeComposition[key];
             const diff = actual - target;
             const pct = Math.min(100, Math.round((actual / Math.max(target, 1)) * 100));
+            const status = diff === 0
+              ? { text: 'On target', cls: 'text-green-400' }
+              : diff > 0
+                ? { text: `${diff} over`, cls: 'text-yellow-400' }
+                : { text: `${-diff} short`, cls: 'text-red-400' };
             return (
-              <div key={key} className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400">{label}</span>
-                  <span className={diff === 0 ? 'text-green-400' : diff > 0 ? 'text-yellow-400' : 'text-red-400'}>
-                    {actual}/{target}
+              <div key={key} className="bg-gray-900/60 rounded-lg px-3 py-2.5 space-y-2">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs text-gray-400">{label}</span>
+                  <span className="text-sm tabular-nums">
+                    <span className="font-semibold text-gray-100">{actual}</span>
+                    <span className="text-gray-500"> / {target}</span>
                   </span>
                 </div>
                 <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
@@ -2610,11 +2607,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                {diff !== 0 && (
-                  <p className="text-[10px] text-gray-500">
-                    {diff > 0 ? `${diff} over` : `${-diff} short`}
-                  </p>
-                )}
+                <p className={`text-[11px] leading-none ${status.cls}`}>{status.text}</p>
               </div>
             );
           })}
@@ -2660,25 +2653,9 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
             <div className="p-6">
               <h3 className="text-xl font-bold text-white mb-4">Deck Composition Targets</h3>
               {/* Suggestion priority toggle */}
-              <div className="flex items-center gap-2 mb-5">
-                <span className="text-xs text-gray-400">Prioritize:</span>
-                {[
-                  { value: 'collection', label: 'My Collection' },
-                  { value: 'cheapest', label: 'Cheapest' },
-                  { value: 'best', label: 'Best Synergy' },
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setSuggestionMode(opt.value)}
-                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                      suggestionMode === opt.value
-                        ? 'bg-yellow-600 text-white'
-                        : 'bg-gray-700 text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-3 mb-5">
+                <span className="text-xs text-gray-400">Fill gaps from</span>
+                <SegmentedControl options={SUGGESTION_MODES} value={suggestionMode} onChange={setSuggestionMode} />
               </div>
               <div className="flex gap-6">
                 {/* Left: Sliders */}
@@ -4045,17 +4022,8 @@ function CollectionStats({ collectionCount }) {
     Enchantment: '#a855f7', Artifact: '#eab308', Planeswalker: '#f97316',
     Land: '#92400e', Other: '#6b7280',
   };
-  const pipColors = {
-    W: { bg: '#f9faf4', text: '#333' },
-    U: { bg: '#0e68ab', text: '#fff' },
-    B: { bg: '#2b2b2b', text: '#ccc' },
-    R: { bg: '#d32029', text: '#fff' },
-    G: { bg: '#00733e', text: '#fff' },
-    C: { bg: '#6b7280', text: '#fff' },
-  };
 
   const totalTyped = Object.values(stats.type_counts).reduce((a, b) => a + b, 0);
-  const totalPips = Object.values(stats.color_counts).reduce((a, b) => a + b, 0);
   const cmcBuckets = [0, 1, 2, 3, 4, 5, 6, 7];
   const cmcCounts = cmcBuckets.map(b => stats.cmc_distribution[String(b)] || 0);
   const maxCmc = Math.max(...cmcCounts, 1);
@@ -4112,52 +4080,7 @@ function CollectionStats({ collectionCount }) {
         {/* Color Distribution */}
         <div className="bg-gray-800 rounded-lg p-5 space-y-3">
           <h3 className="text-sm font-semibold text-gray-300">Color Distribution</h3>
-          {totalPips > 0 && (
-            <>
-              {/* Visual blocks */}
-              <div className="flex gap-2">
-                {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
-                  <div
-                    key={color}
-                    className="rounded-lg py-4 flex flex-col items-center justify-center transition-all relative"
-                    style={{
-                      backgroundColor: pipColors[color].bg,
-                      color: pipColors[color].text,
-                      flex: stats.color_counts[color],
-                      minWidth: '60px',
-                    }}
-                  >
-                    {/* Large background icon that overflows */}
-                    <div
-                      className="absolute opacity-15 pointer-events-none"
-                      style={{
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                      }}
-                    >
-                      <ManaSymbol symbol={color} size={80} />
-                    </div>
-                    {/* Content in foreground */}
-                    <span className="text-xl font-bold relative z-10 drop-shadow-sm">{stats.color_counts[color]}</span>
-                    <p className="text-[10px] opacity-75 relative z-10">{color === 'C' ? 'Colorless' : COLOR_MAP[color]?.label || color}</p>
-                  </div>
-                ))}
-              </div>
-              {/* Percentage bar */}
-              <div className="flex rounded-full overflow-hidden h-3">
-                {['W', 'U', 'B', 'R', 'G', 'C'].filter(c => stats.color_counts[c] > 0).map(color => (
-                  <div
-                    key={color}
-                    style={{
-                      width: `${(stats.color_counts[color] / totalPips) * 100}%`,
-                      backgroundColor: pipColors[color].bg,
-                    }}
-                  />
-                ))}
-              </div>
-            </>
-          )}
+          <ColorBreakdown counts={stats.color_counts} size={28} />
         </div>
       </div>
 
