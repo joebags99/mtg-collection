@@ -1329,130 +1329,101 @@ def classify_card_type(card_name: str, type_data: dict) -> str:
     return ""
 
 
+# EDHREC synergy (percentage points above the card's baseline play rate) at or above
+# which a card counts as a synergy piece for this commander rather than generic goodstuff
+SYNERGY_THRESHOLD = 15
+
+
+def synergy_scores(type_data: dict) -> dict[str, float]:
+    """Best EDHREC synergy score per card across all of a commander's lists."""
+    scores: dict[str, float] = {}
+    for cards in type_data.values():
+        for c in cards or []:
+            n = c.get("name_normalized")
+            if n:
+                scores[n] = max(scores.get(n, float("-inf")), c.get("synergy") or 0)
+    return scores
+
+
+RAMP_PATTERNS = [
+    "add {",                                # mana abilities (dorks, rocks)
+    "add one mana", "add two mana", "add three mana", "adds one mana",
+    "search your library for a basic land",
+    "search your library for a land",
+    "search your library for up to two basic land",
+    "search your library for up to two land",
+    "put a land card from your hand onto the battlefield",
+    "you may put a land",
+    "create a treasure token",
+]
+DRAW_PATTERNS = ["draw a card", "draw cards", "draw two", "draw three", "draws a card", "draw x card", "draw that many"]
+REMOVAL_PATTERNS = [  # regular expressions, matched against lowercased oracle text
+    r"destroy (target|all|each)",
+    r"exile (target|all|each)",
+    r"counter target",
+    r"return (target|all|each) (creature|nonland permanent|permanent|artifact|enchantment)",  # bounce
+    r"deals (\d+|x) damage to (any target|target|each creature|each opponent|each other creature)",
+    r"deals damage equal to .* to (any target|target)",
+    r"fights? (target|another target|up to one target)",
+    r"-x/-x", r"gets -\d+/-\d+",
+    r"(shuffles?|puts?) (it|that card|target \w+( \w+)?) (into|on the bottom of) (its|their)( owner's)? library",
+    r"(each player|each opponent|target player|target opponent) sacrifices",
+]
+UTILITY_PATTERNS = [
+    "search your library",                  # tutors (land tutors were caught by ramp)
+    "hexproof", "indestructible", "protection from", "shroud",
+    "return target card from your graveyard", "return target creature card from your graveyard",
+    "put target card from a graveyard",
+    "can't be countered", "flash", "copy target", "create a copy",
+]
+
+
 def classify_functional_category(
     card_name_normalized: str,
     card_type: str,
     type_data: dict,
+    scores: Optional[dict[str, float]] = None,
 ) -> str:
-    """Classify a card into a functional deck-building category using card type,
-    EDHREC source lists, and oracle text analysis.
+    """Classify a card into a deck-building role: lands, ramp, cardDraw, removal, synergy, utility.
 
-    Categories: lands, ramp, cardDraw, removal, synergy, utility
+    Roles the deck needs a quota of (ramp, removal, draw) are decided from oracle text
+    first. Then EDHREC's per-card synergy score separates cards that are specifically
+    good with this commander ("synergy") from generic staples ("utility").
     """
-    # 1. Lands are straightforward
     if card_type == "Land":
         return "lands"
 
-    # 2. Check EDHREC mana artifacts list -> ramp
     mana_art_names = {c.get("name_normalized") for c in type_data.get("top_mana_artifacts", [])}
     if card_name_normalized in mana_art_names:
         return "ramp"
 
-    # 3. Use oracle text for functional classification
     oracle = scryfall_oracle_cache.get(card_name_normalized, "").lower()
+    first_ability = oracle.split("\n")[0] if oracle else ""
+    is_spell = card_type in ("Instant", "Sorcery")
 
-    # Ramp: produces mana or fetches lands
-    ramp_patterns = [
-        "add {",                          # Mana production
-        "add one mana",
-        "add two mana",
-        "add three mana",
-        "adds one mana",
-        "search your library for a basic land",
-        "search your library for a land",
-        "put that card onto the battlefield",  # land fetch to battlefield
-    ]
-    if any(p in oracle for p in ramp_patterns):
-        # Exclude cards that are primarily something else (e.g. Solemn Simulacrum draws too)
-        # but ramp is the primary function if it fetches/produces mana
+    if any(p in oracle for p in RAMP_PATTERNS):
         return "ramp"
 
-    # Card draw: draws cards
-    draw_patterns = [
-        "draw a card",
-        "draw cards",
-        "draw two",
-        "draw three",
-        "draws a card",
-        "draw x card",
-        "draw that many",
-    ]
-    # Exclude "when ~ dies, draw" type secondary effects for creatures
-    # by checking if draw is a primary ability (appears early in oracle text)
-    if any(p in oracle for p in draw_patterns):
-        # If it's a noncreature spell or the draw is the main effect, classify as cardDraw
-        if card_type in ("Instant", "Sorcery", "Enchantment"):
-            return "cardDraw"
-        # For creatures/artifacts, only classify as draw if oracle text leads with draw
-        first_ability = oracle.split("\n")[0] if oracle else ""
-        if any(p in first_ability for p in draw_patterns):
-            return "cardDraw"
-
-    # Removal: destroys, exiles, counters, or bounces
-    removal_patterns = [
-        "destroy target",
-        "destroy all",
-        "exile target",
-        "exile all",
-        "counter target spell",
-        "return target",    # bounce
-        "deals damage to any target",
-        "deals damage to target",
-        "fight",            # creature-based removal
-        "-x/-x",
-        "gets -",
-    ]
-    if any(p in oracle for p in removal_patterns):
-        if card_type in ("Instant", "Sorcery"):
-            return "removal"
-        # For permanents, check if removal is their primary purpose
-        first_ability = oracle.split("\n")[0] if oracle else ""
-        if any(p in first_ability for p in removal_patterns):
+    # Removal before draw: "destroy target creature. Draw a card." is removal with a cantrip
+    if any(re.search(p, oracle) for p in REMOVAL_PATTERNS):
+        if is_spell or any(re.search(p, first_ability) for p in REMOVAL_PATTERNS):
             return "removal"
 
-    # Utility: tutors, protection, recursion, graveyard, general value
-    utility_patterns = [
-        "search your library",      # tutors (non-land, those caught by ramp above)
-        "hexproof",
-        "indestructible",
-        "protection from",
-        "shroud",
-        "return target card from your graveyard",
-        "return target creature card from your graveyard",
-        "put target card from a graveyard",
-        "can't be countered",
-        "flash",
-        "copy target",
-        "create a token",
-        "create a copy",
-        "whenever a creature enters",
-        "whenever a nontoken creature",
-        "whenever you cast",
-        "at the beginning of your upkeep",
-        "sacrifice a creature",
-        "each opponent",
-        "whenever an opponent",
-    ]
-    if any(p in oracle for p in utility_patterns):
-        # Only classify as utility if NOT already caught by ramp/draw patterns
+    if any(p in oracle for p in DRAW_PATTERNS):
+        if card_type in ("Instant", "Sorcery", "Enchantment") or any(p in first_ability for p in DRAW_PATTERNS):
+            return "cardDraw"
+
+    # Synergy: EDHREC says this card is played far more with this commander than usual
+    if scores is None:
+        scores = synergy_scores(type_data)
+    high_synergy_names = {c.get("name_normalized") for c in type_data.get("high_synergy", [])}
+    if card_name_normalized in high_synergy_names or scores.get(card_name_normalized, 0) >= SYNERGY_THRESHOLD:
+        return "synergy"
+
+    if any(p in oracle for p in UTILITY_PATTERNS):
         return "utility"
 
-    # High synergy cards (from EDHREC synergy list) -> synergy
-    synergy_names = {c.get("name_normalized") for c in type_data.get("high_synergy", [])}
-    if card_name_normalized in synergy_names:
-        return "synergy"
-
-    # Cards that appear in any EDHREC top-card list for this commander are synergy picks
-    all_top_names = set()
-    for top_key in ["top_creatures", "top_instants", "top_sorceries", "top_enchantments",
-                     "top_artifacts", "top_planeswalkers", "top_lands", "top_utility_lands"]:
-        for c in type_data.get(top_key, []):
-            all_top_names.add(c.get("name_normalized"))
-    # Exclude mana artifacts (already classified as ramp above)
-    if card_name_normalized in all_top_names:
-        return "synergy"
-
-    # Default: utility (generic goodstuff not tied to this commander)
+    # Default: generic goodstuff not tied to this commander
     return "utility"
 
 
@@ -2251,16 +2222,18 @@ def get_commander_detail(
             r["mana_cost"] = minfo.get("mana_cost", "")
 
     # --- Functional category classification ---
-    # Apply to owned + missing (the average deck cards)
+    scores = synergy_scores(type_data)
+    # Average-deck cards don't carry a synergy score themselves; give them the one from
+    # EDHREC's lists so the deck builder's "Best Synergy" ordering has something to use
     for card in owned + missing:
+        card.setdefault("synergy", scores.get(card["name_normalized"], 0))
         card["functional_category"] = classify_functional_category(
-            card["name_normalized"], card["card_type"], type_data,
+            card["name_normalized"], card["card_type"], type_data, scores,
         )
 
-    # Apply to recommendations
     for r in recommendations:
         r["functional_category"] = classify_functional_category(
-            r["name_normalized"], r.get("card_type", ""), type_data,
+            r["name_normalized"], r.get("card_type", ""), type_data, scores,
         )
 
     # Sort recommendations by synergy descending

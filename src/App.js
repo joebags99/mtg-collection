@@ -1987,9 +1987,12 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
         deckCounts.lands += landDeficit;
       }
 
-      // Set composition targets from actual deck breakdown
-      setComposition(deckCounts);
-      setTempComposition(deckCounts);
+      // Targets: conventional quotas for lands/ramp/draw/removal, so the panel shows at
+      // once where this average deck is thin; the remaining slots go to synergy and
+      // utility in the deck's own proportion, since those two are a matter of taste
+      const targets = suggestedTargets(deckCounts);
+      setComposition(targets);
+      setTempComposition(targets);
 
       setDeck([...initial, ...recCards]);
     }
@@ -2046,9 +2049,21 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
     }
   };
 
+  // Which cards to cut first from an over-target category. Basic lands always go first;
+  // after that the fill mode decides: My Collection and Cheapest cut unowned/expensive
+  // cards first, Best Synergy cuts the weakest-synergy cards first.
+  const sortRemoveCandidates = (a, b) => {
+    if (a.isBasicLand !== b.isBasicLand) return a.isBasicLand ? -1 : 1;
+    const bySynergy = (a.synergy || 0) - (b.synergy || 0);
+    const byPrice = (b.price || 0) - (a.price || 0);
+    const byOwned = a.owned === b.owned ? 0 : (a.owned ? 1 : -1);
+    if (suggestionMode === 'best') return bySynergy || byOwned || byPrice;
+    if (suggestionMode === 'cheapest') return byPrice || bySynergy || byOwned;
+    return byOwned || byPrice || bySynergy;
+  };
+
   // Build swap suggestions: for over-target categories, find cards to cut;
   // for under-target categories, find cards from excluded list to add.
-  // Removal priority: basic lands first, then unowned, then most expensive, then lowest synergy.
   const swapSuggestions = [];
   const overCategories = CATEGORY_META.filter(m => categoryCounts[m.key] > activeComposition[m.key]);
   const underCategories = CATEGORY_META.filter(m => categoryCounts[m.key] < activeComposition[m.key]);
@@ -2060,15 +2075,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
       const excess = categoryCounts[over.key] - activeComposition[over.key];
       const candidates = nonCommanderIncluded
         .filter(c => classifyFunctionalCategory(c) === over.key)
-        .sort((a, b) => {
-          if (a.isBasicLand && !b.isBasicLand) return -1;
-          if (!a.isBasicLand && b.isBasicLand) return 1;
-          if (!a.owned && b.owned) return -1;
-          if (a.owned && !b.owned) return 1;
-          const pa = a.price || 0, pb = b.price || 0;
-          if (pa !== pb) return pb - pa;
-          return (a.synergy || 0) - (b.synergy || 0);
-        })
+        .sort(sortRemoveCandidates)
         .slice(0, excess);
       for (const c of candidates) removable.push({ ...c, fromCategory: over.label });
     }
@@ -2145,6 +2152,24 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
     }
   };
 
+  const tempTotal = Object.values(tempComposition).reduce((a, b) => a + b, 0);
+
+  // Make the targets total 99 by moving the difference into Utility, then Synergy
+  const balanceTempComposition = () => {
+    setTempComposition(prev => {
+      const total = Object.values(prev).reduce((a, b) => a + b, 0);
+      const next = { ...prev };
+      let diff = 99 - total;
+      for (const key of ['utility', 'synergy']) {
+        const adjusted = Math.max(0, next[key] + diff);
+        diff -= adjusted - next[key];
+        next[key] = adjusted;
+        if (diff === 0) break;
+      }
+      return next;
+    });
+  };
+
   // Apply composition targets: actually perform the removals/adds to the deck
   const applyComposition = (newTargets) => {
     // Build lists of card names to remove/add with quantities
@@ -2160,15 +2185,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
       if (diff > 0) {
         const candidates = nonCommanderIncluded
           .filter(c => classifyFunctionalCategory(c) === key)
-          .sort((a, b) => {
-            if (a.isBasicLand && !b.isBasicLand) return -1;
-            if (!a.isBasicLand && b.isBasicLand) return 1;
-            if (!a.owned && b.owned) return -1;
-            if (a.owned && !b.owned) return 1;
-            const pa = a.price || 0, pb = b.price || 0;
-            if (pa !== pb) return pb - pa;
-            return (a.synergy || 0) - (b.synergy || 0);
-          });
+          .sort(sortRemoveCandidates);
         let remaining = diff;
         for (const c of candidates) {
           if (remaining <= 0) break;
@@ -2662,8 +2679,8 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                 <div className="flex-1 min-w-0">
                   <div className="space-y-5 mb-6">
                     {CATEGORY_META.map(({ key, label }) => {
-                      const min = key === 'lands' ? 30 : key === 'synergy' ? 10 : key === 'removal' ? 3 : 5;
-                      const max = key === 'lands' ? 45 : key === 'synergy' ? 40 : key === 'utility' ? 25 : 20;
+                      const min = key === 'lands' ? 30 : key === 'removal' ? 3 : key === 'synergy' || key === 'utility' ? 0 : 5;
+                      const max = key === 'lands' ? 45 : key === 'synergy' || key === 'utility' ? 50 : 20;
                       return (
                         <div key={key}>
                           <div className="flex items-center justify-between mb-2">
@@ -2690,17 +2707,18 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                   <div className="bg-gray-900 rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400 text-sm">Total allocated:</span>
-                      <span className={`font-bold ${
-                        Object.values(tempComposition).reduce((a, b) => a + b, 0) === 99
-                          ? 'text-green-400'
-                          : Object.values(tempComposition).reduce((a, b) => a + b, 0) > 99
-                            ? 'text-red-400'
-                            : 'text-yellow-400'
-                      }`}>
-                        {Object.values(tempComposition).reduce((a, b) => a + b, 0)}/99
+                      <span className={`font-bold ${tempTotal === 99 ? 'text-green-400' : tempTotal > 99 ? 'text-red-400' : 'text-yellow-400'}`}>
+                        {tempTotal}/99
                       </span>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">(commander is card #100)</p>
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-xs text-gray-500">(commander is card #100)</p>
+                      {tempTotal !== 99 && (
+                        <button onClick={balanceTempComposition} className="text-xs text-accent-300 hover:text-accent-200">
+                          Balance to 99 via Utility
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
                 {/* Right: Live preview */}
@@ -2716,15 +2734,7 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                       if (diff > 0) {
                         const candidates = nonCommanderIncluded
                           .filter(c => classifyFunctionalCategory(c) === key)
-                          .sort((a, b) => {
-                            if (a.isBasicLand && !b.isBasicLand) return -1;
-                            if (!a.isBasicLand && b.isBasicLand) return 1;
-                            if (!a.owned && b.owned) return -1;
-                            if (a.owned && !b.owned) return 1;
-                            const pa = a.price || 0, pb = b.price || 0;
-                            if (pa !== pb) return pb - pa;
-                            return (a.synergy || 0) - (b.synergy || 0);
-                          });
+                          .sort(sortRemoveCandidates);
                         let remaining = diff;
                         for (const c of candidates) {
                           if (remaining <= 0) break;
@@ -2786,10 +2796,11 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
               </div>
               <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-700">
                 <button
-                  onClick={() => setTempComposition(DEFAULT_COMPOSITION)}
+                  onClick={() => setTempComposition(suggestedTargets(categoryCounts))}
                   className="text-sm text-gray-400 hover:text-white transition-colors"
+                  title="38 lands, 10 ramp, 10 draw, 8 removal; the rest split between synergy and utility like this deck"
                 >
-                  Reset to Defaults
+                  Reset to suggested
                 </button>
                 <div className="flex gap-3">
                   <button
@@ -2800,7 +2811,9 @@ function DeckBuilder({ data, commander, onBack, favorites, onToggleFavorite, onD
                   </button>
                   <button
                     onClick={() => applyComposition(tempComposition)}
-                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-medium transition-colors"
+                    disabled={tempTotal !== 99}
+                    title={tempTotal !== 99 ? 'Targets must total 99 so the deck stays at 100 cards' : undefined}
+                    className="px-4 py-2 bg-accent-600 hover:bg-accent-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded font-medium transition-colors"
                   >
                     Apply
                   </button>
@@ -2960,6 +2973,15 @@ function CompareView({ commanders, onBack, onSelectCommander }) {
 
 // --- Commander Detail with progressive loading ---
 // Default deck composition values
+// Conventional quotas (lands/ramp/draw/removal) + the deck's own synergy:utility split, totalling 99
+function suggestedTargets(counts) {
+  const fixed = { lands: DEFAULT_COMPOSITION.lands, ramp: DEFAULT_COMPOSITION.ramp, cardDraw: DEFAULT_COMPOSITION.cardDraw, removal: DEFAULT_COMPOSITION.removal };
+  const remaining = 99 - Object.values(fixed).reduce((a, b) => a + b, 0);
+  const flex = (counts.synergy || 0) + (counts.utility || 0);
+  const synergy = flex > 0 ? Math.round(remaining * (counts.synergy || 0) / flex) : DEFAULT_COMPOSITION.synergy;
+  return { ...fixed, synergy, utility: remaining - synergy };
+}
+
 const DEFAULT_COMPOSITION = {
   lands: 38,
   ramp: 10,
