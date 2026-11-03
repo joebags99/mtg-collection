@@ -22,14 +22,14 @@ export function CardListByType({ ownedCards, missingCards, showOwned, showMissin
             Owned Cards
           </SectionHeader>
           {ownedGroups.length === 0 && (
-            <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
+            <p className="text-ink-faint text-sm bg-surface-2 rounded-lg px-3 py-4">None</p>
           )}
           {ownedGroups.map(({ type, cards }) => (
             <div key={type}>
               <TypeSectionHeader type={type} count={cards.length} />
-              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              <div className="bg-surface-2 rounded-lg divide-y divide-gray-700">
                 {cards.map((card) => (
-                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-surface-3/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
@@ -37,7 +37,7 @@ export function CardListByType({ ownedCards, missingCards, showOwned, showMissin
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <DeckBadges inDecks={card.in_decks} />
                       {card.qty_owned > 1 && (
-                        <span className="text-[10px] text-gray-500" title={`${card.qty_owned} owned, ${card.qty_in_decks || 0} in decks`}>
+                        <span className="text-[10px] text-ink-faint" title={`${card.qty_owned} owned, ${card.qty_in_decks || 0} in decks`}>
                           {card.qty_in_decks ? `${card.qty_owned - card.qty_in_decks}/${card.qty_owned}` : `x${card.qty_owned}`}
                         </span>
                       )}
@@ -57,27 +57,27 @@ export function CardListByType({ ownedCards, missingCards, showOwned, showMissin
               Missing Cards
             </SectionHeader>
             {totalMissingPrice > 0 && (
-              <span className="text-sm text-yellow-400">
+              <span className="text-sm text-warn">
                 ~${totalMissingPrice.toFixed(2)}
               </span>
             )}
           </div>
           {missingGroups.length === 0 && (
-            <p className="text-gray-500 text-sm bg-gray-800 rounded-lg px-3 py-4">None</p>
+            <p className="text-ink-faint text-sm bg-surface-2 rounded-lg px-3 py-4">None</p>
           )}
           {missingGroups.map(({ type, cards }) => (
             <div key={type}>
               <TypeSectionHeader type={type} count={cards.length} />
-              <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+              <div className="bg-surface-2 rounded-lg divide-y divide-gray-700">
                 {cards.map((card) => (
-                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-gray-700/50 transition-colors">
+                  <div key={card.name} className="px-3 py-2 flex justify-between items-center hover:bg-surface-3/50 transition-colors">
                     <div className="flex items-center gap-1.5">
                       <AvailDot card={card} />
                       <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <DeckBadges inDecks={card.in_decks} />
-                      <span className="text-xs text-yellow-400/70">
+                      <span className="text-xs text-warn/70">
                         {card.price ? `$${card.price.toFixed(2)}` : ''}
                       </span>
                     </div>

@@ -30,7 +30,7 @@ export function CardName({ name, className = '', favorites, onToggleFavorite }: 
 
   return (
     <span
-      className={`inline-flex items-center gap-1 cursor-pointer hover:text-blue-400 transition-colors ${className}`}
+      className={`inline-flex items-center gap-1 cursor-pointer hover:text-accent-hi transition-colors duration-1 ${className}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShow(false)}
     >
@@ -38,7 +38,7 @@ export function CardName({ name, className = '', favorites, onToggleFavorite }: 
       {onToggleFavorite && (
         <button
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleFavorite(name); }}
-          className={`text-xs leading-none transition-colors flex-shrink-0 ${isFav ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
+          className={`text-xs leading-none transition-colors duration-1 flex-shrink-0 ${isFav ? 'text-accent' : 'text-ink-faint/60 hover:text-accent'}`}
           title={isFav ? 'Remove from favorites' : 'Add to favorites'}
         >
           {isFav ? '★' : '☆'}
@@ -46,7 +46,7 @@ export function CardName({ name, className = '', favorites, onToggleFavorite }: 
       )}
       {show && (
         <div className="fixed z-50 pointer-events-none" style={{ left: pos.x, top: pos.y }}>
-          <img src={imgSrc} alt={name} className="w-[250px] rounded-lg shadow-2xl border border-gray-700" />
+          <img src={imgSrc} alt={name} className="w-[250px] rounded-lg shadow-2xl border border-line-strong" />
         </div>
       )}
     </span>

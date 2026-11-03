@@ -25,7 +25,7 @@ describe('ui primitives', () => {
 
   it('colors the match bar by threshold', () => {
     const { container } = render(<MatchBar percentage={75} />);
-    expect(container.querySelector('.bg-green-500')).not.toBeNull();
+    expect(container.querySelector('.bg-ok')).not.toBeNull();
   });
 
   it('describes availability in the title', () => {

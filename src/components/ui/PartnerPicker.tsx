@@ -41,18 +41,18 @@ export function PartnerPicker({ commanderName, onSelectPartner, selectedPartner,
     : partners;
 
   return (
-    <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-4 space-y-3">
+    <div className="bg-secondary/10 border border-secondary/50 rounded-lg p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-purple-400">{PARTNER_HEADING[partnerType]}</h4>
+        <h4 className="text-sm font-semibold text-secondary">{PARTNER_HEADING[partnerType]}</h4>
         {selectedPartner && !isLockedPartner && (
-          <button onClick={() => onSelectPartner(null)} className="text-xs text-gray-400 hover:text-red-400">
+          <button onClick={() => onSelectPartner(null)} className="text-xs text-ink-muted hover:text-danger">
             Remove Partner
           </button>
         )}
       </div>
 
       {selectedPartner ? (
-        <div className="flex items-center gap-3 bg-gray-800 rounded-lg p-2">
+        <div className="flex items-center gap-3 bg-surface-2 rounded-lg p-2">
           {selectedPartner.image_uri && (
             <img src={selectedPartner.image_uri} alt={selectedPartner.name} className="w-12 h-16 rounded object-cover" />
           )}
@@ -62,7 +62,7 @@ export function PartnerPicker({ commanderName, onSelectPartner, selectedPartner,
           </div>
         </div>
       ) : loading ? (
-        <div className="text-center py-2 text-gray-400 text-sm">Loading partners...</div>
+        <div className="text-center py-2 text-ink-muted text-sm">Loading partners...</div>
       ) : (
         <>
           {partners.length > 5 && (
@@ -70,7 +70,7 @@ export function PartnerPicker({ commanderName, onSelectPartner, selectedPartner,
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search partners..."
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500"
+              className="w-full bg-surface-1 border border-line rounded px-3 py-1.5 text-sm focus:outline-none focus:border-secondary/50"
             />
           )}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto p-1">
@@ -78,7 +78,7 @@ export function PartnerPicker({ commanderName, onSelectPartner, selectedPartner,
               <button
                 key={p.name}
                 onClick={() => onSelectPartner(p)}
-                className="bg-gray-800 hover:bg-gray-700 rounded-lg p-2 text-left transition-colors group"
+                className="bg-surface-2 hover:bg-surface-3 rounded-lg p-2 text-left transition-colors group"
               >
                 {p.image_uri && (
                   <img src={p.image_uri} alt={p.name} className="w-full rounded-lg shadow-lg group-hover:scale-[1.02] transition-transform" loading="lazy" />
@@ -88,7 +88,7 @@ export function PartnerPicker({ commanderName, onSelectPartner, selectedPartner,
               </button>
             ))}
           </div>
-          {filtered.length === 0 && <p className="text-sm text-gray-500">No compatible partners found.</p>}
+          {filtered.length === 0 && <p className="text-sm text-ink-faint">No compatible partners found.</p>}
         </>
       )}
     </div>

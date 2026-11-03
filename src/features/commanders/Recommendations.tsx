@@ -63,6 +63,7 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
 
   // Get top 3 commanders for the hero display
   const topCommanders = sortedResults.slice(0, 3);
+  const priced = results.map((r) => r.missing_price).filter((price): price is number => typeof price === 'number' && price > 0);
 
   return (
     <div className="space-y-6">
@@ -70,36 +71,36 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
         title="Commander Recommendations"
         subtitle={`Based on your collection of ${collectionCount.toLocaleString()} cards, ranked by how many cards you already own in each commander's average EDHREC deck.`}
         commanders={topCommanders}
-        stats={fetched ? [
+        stats={fetched && results.length > 0 ? [
           { value: results.length, label: 'Commanders Found' },
           { value: `${Math.max(...results.map((r) => r.match_percentage || 0))}%`, label: 'Best Match' },
-          { value: `$${Math.min(...results.filter((r) => r.missing_price).map((r) => r.missing_price || 999)).toFixed(0)}`, label: 'Cheapest Build' },
+          ...(priced.length > 0 ? [{ value: `$${Math.min(...priced).toFixed(0)}`, label: 'Cheapest Build' }] : []),
         ] : []}
       />
 
       {/* Filters */}
-      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-4 space-y-4 border border-gray-700/50">
+      <div className="bg-surface-2/80 backdrop-blur rounded-xl p-4 space-y-4 border border-line">
         <div className="flex flex-wrap gap-4 items-end">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Search</label>
+            <label className="block text-xs text-ink-muted mb-1">Search</label>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Commander name..."
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="bg-surface-1 border border-line rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent/70"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Min owned cards</label>
+            <label className="block text-xs text-ink-muted mb-1">Min owned cards</label>
             <input
               type="number"
               value={minOwned}
               onChange={(e) => setMinOwned(parseInt(e.target.value) || 0)}
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-blue-500"
+              className="bg-surface-1 border border-line rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-accent/70"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Color Identity</label>
+            <label className="block text-xs text-ink-muted mb-1">Color Identity</label>
             <div className="flex gap-1">
               {ALL_COLORS.map((c) => (
                 <button
@@ -107,7 +108,7 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
                   onClick={() => toggleColor(c)}
                   className={`w-8 h-8 rounded font-bold text-sm transition-all ${
                     colorFilter.includes(c)
-                      ? 'ring-2 ring-white scale-110'
+                      ? 'ring-2 ring-ink scale-110'
                       : 'opacity-50 hover:opacity-75'
                   }`}
                   style={{ backgroundColor: COLOR_MAP[c].bg, color: COLOR_MAP[c].text }}
@@ -118,7 +119,7 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
               {colorFilter.length > 0 && (
                 <button
                   onClick={() => setColorFilter([])}
-                  className="text-xs text-gray-400 hover:text-white ml-2"
+                  className="text-xs text-ink-muted hover:text-ink ml-2"
                 >
                   Clear
                 </button>
@@ -128,7 +129,7 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
           <button
             onClick={fetchRecommendations}
             disabled={loading}
-            className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-5 py-1.5 rounded font-medium"
+            className="bg-accent text-accent-ink hover:bg-accent-hi disabled:bg-surface-3 disabled:text-ink-faint px-5 py-1.5 rounded font-medium"
           >
             {loading ? 'Loading...' : fetched ? 'Refresh' : 'Get Recommendations'}
           </button>
@@ -140,32 +141,32 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
                 onChange={onToggleExclude}
                 className="rounded"
               />
-              <span className="text-gray-400">Exclude cards in decks</span>
+              <span className="text-ink-muted">Exclude cards in decks</span>
             </label>
           )}
         </div>
 
         {/* Sort */}
         {fetched && results.length > 0 && (
-          <div className="flex items-center gap-3 pt-2 border-t border-gray-700">
-            <label className="text-xs text-gray-400">Sort by:</label>
+          <div className="flex items-center gap-3 pt-2 border-t border-line">
+            <label className="text-xs text-ink-muted">Sort by:</label>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortKey)}
-              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+              className="bg-surface-1 border border-line rounded px-2 py-1 text-sm focus:outline-none focus:border-accent/70"
             >
               {SORT_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
-            <span className="text-xs text-gray-500 ml-auto">
+            <span className="text-xs text-ink-faint ml-auto">
               {results.length} commanders found
             </span>
           </div>
         )}
       </div>
 
-      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+      {error && <div className="bg-danger/10 border border-danger/40 rounded p-3 text-danger">{error}</div>}
 
       {loading && <LoadingOverlay message="Fetching recommendations from EDHREC..." submessage="Comparing up to 200 commanders with your collection. This may take a few minutes." />}
 
@@ -185,7 +186,7 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
       )}
 
       {!loading && fetched && results.length === 0 && (
-        <p className="text-gray-500 text-center py-8">No commanders found with {minOwned}+ owned cards.</p>
+        <p className="text-ink-faint text-center py-8">No commanders found with {minOwned}+ owned cards.</p>
       )}
     </div>
   );

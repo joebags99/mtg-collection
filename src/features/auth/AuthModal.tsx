@@ -42,14 +42,14 @@ export function AuthModal({ isOpen, onClose, onLogin }: Props) {
   const switchMode = (next: Mode) => { setMode(next); setError(''); };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-sm space-y-4 page-fade-in">
+    <div className="fixed inset-0 bg-surface-0/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-surface-2 rounded-lg p-6 w-full max-w-sm space-y-4 page-fade-in">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">{mode === 'login' ? 'Login' : 'Create Account'}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">&times;</button>
+          <button onClick={onClose} className="text-ink-muted hover:text-ink text-xl">&times;</button>
         </div>
 
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-ink-muted">
           {mode === 'login'
             ? 'Login to sync your collection and decks across devices.'
             : 'Create an account to save your collection and decks to the cloud.'}
@@ -57,13 +57,13 @@ export function AuthModal({ isOpen, onClose, onLogin }: Props) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Username</label>
+            <label className="block text-sm text-ink-muted mb-1">Username</label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Enter username"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-surface-1 border border-line rounded px-3 py-2 text-sm focus:outline-none focus:border-accent/70"
               required
               minLength={3}
               autoFocus
@@ -71,41 +71,41 @@ export function AuthModal({ isOpen, onClose, onLogin }: Props) {
           </div>
 
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Password</label>
+            <label className="block text-sm text-ink-muted mb-1">Password</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter password"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-surface-1 border border-line rounded px-3 py-2 text-sm focus:outline-none focus:border-accent/70"
               required
               minLength={4}
             />
           </div>
 
           {error && (
-            <div className="bg-red-900/50 border border-red-700 rounded p-2 text-red-300 text-sm">{error}</div>
+            <div className="bg-danger/10 border border-danger/40 rounded p-2 text-danger text-sm">{error}</div>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium transition-colors"
+            className="w-full bg-accent text-accent-ink hover:bg-accent-hi disabled:bg-surface-3 disabled:text-ink-faint px-4 py-2 rounded font-medium transition-colors"
           >
             {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create Account'}
           </button>
         </form>
 
-        <div className="text-center text-sm text-gray-500">
+        <div className="text-center text-sm text-ink-faint">
           {mode === 'login' ? (
             <>
               Don't have an account?{' '}
-              <button onClick={() => switchMode('register')} className="text-blue-400 hover:underline">Create one</button>
+              <button onClick={() => switchMode('register')} className="text-accent hover:underline">Create one</button>
             </>
           ) : (
             <>
               Already have an account?{' '}
-              <button onClick={() => switchMode('login')} className="text-blue-400 hover:underline">Login</button>
+              <button onClick={() => switchMode('login')} className="text-accent hover:underline">Login</button>
             </>
           )}
         </div>

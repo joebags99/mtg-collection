@@ -14,12 +14,12 @@ interface Props {
 const COLOR_NAMES: Record<string, string> = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Creature: 'text-green-300 bg-green-900/30',
-  Instant: 'text-blue-300 bg-blue-900/30',
-  Sorcery: 'text-purple-300 bg-purple-900/30',
-  Enchantment: 'text-yellow-300 bg-yellow-900/30',
-  Artifact: 'text-gray-300 bg-gray-700/50',
-  Planeswalker: 'text-orange-300 bg-orange-900/30',
+  Creature: 'text-ok bg-ok/10',
+  Instant: 'text-accent bg-accent/10',
+  Sorcery: 'text-secondary bg-secondary/10',
+  Enchantment: 'text-warn bg-warn/10',
+  Artifact: 'text-ink bg-surface-3/50',
+  Planeswalker: 'text-warn bg-warn/10',
 };
 
 export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectCommander, onOpenDeckBuilder }: Props) {
@@ -106,44 +106,44 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
         colorIdentity={detectedColors}
       />
 
-      <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-5 space-y-4">
+      <div className="bg-surface-2/50 rounded-xl border border-line p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-white">
+          <h2 className="font-semibold text-ink">
             {favList.length === 0 ? 'No favorites yet' : `Your Favorites (${favList.length})`}
           </h2>
           {favList.length > 0 && (
-            <button onClick={onClearFavorites} className="text-xs text-gray-500 hover:text-red-400 transition-colors">
+            <button onClick={onClearFavorites} className="text-xs text-ink-faint hover:text-danger transition-colors">
               Clear all
             </button>
           )}
         </div>
 
         <div ref={searchRef} className="relative">
-          <div className="flex items-center gap-2 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
-            <span className="text-gray-500 text-sm">☆</span>
+          <div className="flex items-center gap-2 bg-surface-1 border border-line-strong rounded-lg px-3 py-2 focus-within:border-accent transition-colors">
+            <span className="text-ink-faint text-sm">☆</span>
             <input
               value={cardSearch}
               onChange={(e) => handleCardSearchInput(e.target.value)}
               onFocus={() => { if (cardSuggestions.length > 0) setShowSuggestions(true); }}
               placeholder="Search for a card to add to favorites…"
-              className="flex-1 bg-transparent text-sm outline-none placeholder-gray-600"
+              className="flex-1 bg-transparent text-sm outline-none placeholder-ink-faint"
             />
             {searchLoading && (
-              <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+              <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
             )}
           </div>
           {showSuggestions && cardSuggestions.length > 0 && (
-            <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl max-h-56 overflow-y-auto">
+            <div className="absolute z-50 w-full mt-1 bg-surface-2 border border-line-strong rounded-lg shadow-xl max-h-56 overflow-y-auto">
               {cardSuggestions.map((name) => {
                 const isFav = favorites.has(name.toLowerCase());
                 return (
                   <button
                     key={name}
                     onClick={() => handleAddCard(name)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between gap-2 transition-colors"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-surface-3 flex items-center justify-between gap-2 transition-colors"
                   >
                     <span className="truncate">{name}</span>
-                    <span className={`text-xs flex-shrink-0 ${isFav ? 'text-yellow-400' : 'text-gray-500'}`}>
+                    <span className={`text-xs flex-shrink-0 ${isFav ? 'text-warn' : 'text-ink-faint'}`}>
                       {isFav ? '★ added' : '+ add'}
                     </span>
                   </button>
@@ -154,16 +154,16 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
         </div>
 
         {favList.length === 0 ? (
-          <p className="text-sm text-gray-500">Search above or star cards from any card list in the app.</p>
+          <p className="text-sm text-ink-faint">Search above or star cards from any card list in the app.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {favList.map((name) => (
-              <span key={name} className="inline-flex items-center gap-1.5 bg-gray-700 border border-gray-600 rounded-full px-3 py-1 text-sm">
-                <span className="text-yellow-400 text-xs">★</span>
+              <span key={name} className="inline-flex items-center gap-1.5 bg-surface-3 border border-line-strong rounded-full px-3 py-1 text-sm">
+                <span className="text-warn text-xs">★</span>
                 {name}
                 <button
                   onClick={() => onToggleFavorite(name)}
-                  className="text-gray-500 hover:text-red-400 transition-colors ml-0.5 text-xs leading-none"
+                  className="text-ink-faint hover:text-danger transition-colors ml-0.5 text-xs leading-none"
                   title="Remove"
                 >
                   ×
@@ -178,24 +178,24 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
             <button
               onClick={handleFind}
               disabled={loading}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2 rounded-lg font-medium text-sm transition-colors"
+              className="bg-accent text-accent-ink hover:bg-accent-hi disabled:opacity-60 disabled:cursor-not-allowed px-5 py-2 rounded-lg font-medium text-sm transition-colors"
             >
               {loading ? 'Searching...' : 'Find My Commander'}
             </button>
             {detectedColors.length > 0 && (
-              <span className="text-xs text-gray-400">
-                Detected colors: <span className="font-medium text-white">{detectedColors.map((c) => COLOR_NAMES[c] || c).join(', ')}</span>
+              <span className="text-xs text-ink-muted">
+                Detected colors: <span className="font-medium text-ink">{detectedColors.map((c) => COLOR_NAMES[c] || c).join(', ')}</span>
               </span>
             )}
           </div>
         )}
       </div>
 
-      {error && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{error}</div>}
+      {error && <div className="bg-danger/10 border border-danger/40 rounded-lg p-3 text-danger text-sm">{error}</div>}
 
       {loading && (
-        <div className="flex items-center justify-center py-12 text-gray-400 gap-3">
-          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="flex items-center justify-center py-12 text-ink-muted gap-3">
+          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
           <span>Checking commanders against your favorites&hellip;</span>
         </div>
       )}
@@ -205,7 +205,7 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
           <SectionHeader color="blue" count={results.length}>Commander Recommendations</SectionHeader>
 
           {results.length === 0 ? (
-            <div className="bg-gray-800 rounded-lg p-6 text-center text-gray-500">
+            <div className="bg-surface-2 rounded-lg p-6 text-center text-ink-faint">
               <p>No commanders found that match your favorites.</p>
               <p className="text-xs mt-1">Try adding more cards or cards with different colors.</p>
             </div>
@@ -215,29 +215,29 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
                 const isExpanded = expandedCommander === cmd.name;
                 const hasPreview = cmd.preview_cards?.length > 0;
                 return (
-                  <div key={cmd.name} className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden hover:border-gray-600 transition-colors">
+                  <div key={cmd.name} className="bg-surface-2 border border-line rounded-xl overflow-hidden hover:border-line-strong transition-colors">
                     <div className="p-4 space-y-3">
                       <div className="flex items-start gap-3">
                         {cmd.image_uri && (
                           <img
                             src={cmd.image_uri}
                             alt={cmd.name}
-                            className="w-12 h-12 rounded-lg object-cover object-top flex-shrink-0 border border-gray-600"
+                            className="w-12 h-12 rounded-lg object-cover object-top flex-shrink-0 border border-line-strong"
                           />
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-white text-sm">{cmd.name}</span>
+                            <span className="font-semibold text-ink text-sm">{cmd.name}</span>
                             <ColorBadge colors={cmd.color_identity} />
                           </div>
-                          <div className="text-xs text-gray-400 mt-0.5">{cmd.num_decks?.toLocaleString()} decks on EDHREC</div>
+                          <div className="text-xs text-ink-muted mt-0.5">{cmd.num_decks?.toLocaleString()} decks on EDHREC</div>
                           <div className="mt-1.5">
                             <div className="flex items-center justify-between text-xs mb-1">
-                              <span className="text-gray-400">{cmd.match_count} of {cmd.total_favorites} favorites fit</span>
+                              <span className="text-ink-muted">{cmd.match_count} of {cmd.total_favorites} favorites fit</span>
                               <span className={`font-bold ${
-                                cmd.match_percentage >= 75 ? 'text-green-400' :
-                                cmd.match_percentage >= 50 ? 'text-yellow-400' :
-                                'text-orange-400'
+                                cmd.match_percentage >= 75 ? 'text-ok' :
+                                cmd.match_percentage >= 50 ? 'text-warn' :
+                                'text-warn'
                               }`}>
                                 {cmd.match_percentage}%
                               </span>
@@ -249,7 +249,7 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
 
                       <div className="flex flex-wrap gap-1">
                         {cmd.matched_cards.map((card) => (
-                          <span key={card} className="text-xs bg-yellow-900/30 text-yellow-300 border border-yellow-800/50 rounded px-1.5 py-0.5">
+                          <span key={card} className="text-xs bg-warn/10 text-warn border border-warn/40 rounded px-1.5 py-0.5">
                             ★ {card}
                           </span>
                         ))}
@@ -258,21 +258,21 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
                       <div className="flex gap-2 items-center pt-1">
                         <button
                           onClick={() => onSelectCommander(cmd)}
-                          className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded transition-colors"
+                          className="text-xs bg-surface-3 hover:bg-surface-3 px-3 py-1.5 rounded transition-colors"
                         >
                           View Commander
                         </button>
                         <button
                           onClick={() => handleBuildDeck(cmd)}
                           disabled={buildingDeck === cmd.name}
-                          className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
+                          className="text-xs bg-accent text-accent-ink hover:bg-accent-hi disabled:opacity-60 px-3 py-1.5 rounded transition-colors font-medium"
                         >
                           {buildingDeck === cmd.name ? 'Loading…' : 'Build Deck'}
                         </button>
                         {hasPreview && (
                           <button
                             onClick={() => setExpandedCommander(isExpanded ? null : cmd.name)}
-                            className="ml-auto text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1"
+                            className="ml-auto text-xs text-ink-muted hover:text-ink transition-colors flex items-center gap-1"
                           >
                             {isExpanded ? 'Hide preview ▲' : 'Top cards ▼'}
                           </button>
@@ -281,34 +281,34 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
                     </div>
 
                     {isExpanded && hasPreview && (
-                      <div className="border-t border-gray-700 bg-gray-900/50 px-4 py-3">
-                        <p className="text-xs text-gray-500 mb-2">
-                          Top cards for {cmd.name} — <span className="text-gray-600">% = how often played in this commander's decks</span>
+                      <div className="border-t border-line bg-surface-1/50 px-4 py-3">
+                        <p className="text-xs text-ink-faint mb-2">
+                          Top cards for {cmd.name} — <span className="text-ink-faint">% = how often played in this commander's decks</span>
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {cmd.preview_cards.map((card) => {
-                            const catStyle = CATEGORY_COLORS[card.category] || 'text-gray-400 bg-gray-700/30';
+                            const catStyle = CATEGORY_COLORS[card.category] || 'text-ink-muted bg-surface-3/30';
                             return (
                               <span
                                 key={card.name}
                                 className={`inline-flex items-center gap-1 text-xs rounded px-1.5 py-0.5 border ${
                                   card.is_favorite
-                                    ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/60'
+                                    ? 'bg-warn/10 text-warn border-warn/40/60'
                                     : `${catStyle} border-transparent`
                                 }`}
                                 title={card.category || ''}
                               >
-                                {card.is_favorite && <span className="text-yellow-400">★</span>}
+                                {card.is_favorite && <span className="text-warn">★</span>}
                                 {card.name}
                                 {card.inclusion > 0 && (
-                                  <span className={`opacity-60 ${card.is_favorite ? '' : 'text-gray-500'}`}>{card.inclusion}%</span>
+                                  <span className={`opacity-60 ${card.is_favorite ? '' : 'text-ink-faint'}`}>{card.inclusion}%</span>
                                 )}
                               </span>
                             );
                           })}
                         </div>
                         {cmd.preview_cards.length >= 15 && (
-                          <p className="text-xs text-gray-600 mt-2">+ more — click View Commander for the full list</p>
+                          <p className="text-xs text-ink-faint mt-2">+ more — click View Commander for the full list</p>
                         )}
                       </div>
                     )}

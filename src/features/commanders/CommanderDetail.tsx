@@ -145,16 +145,16 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
   if (error) {
     return (
       <div>
-        <button onClick={onBack} className="text-blue-400 hover:underline mb-4">← Back</button>
-        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
+        <button onClick={onBack} className="text-accent hover:underline mb-4">← Back</button>
+        <div className="bg-danger/10 border border-danger/40 rounded p-3 text-danger">{error}</div>
       </div>
     );
   }
 
   if (!data) return null;
 
-  const matchColor = data.match_percentage >= 60 ? 'text-green-400' :
-    data.match_percentage >= 40 ? 'text-yellow-400' : 'text-red-400';
+  const matchColor = data.match_percentage >= 60 ? 'text-ok' :
+    data.match_percentage >= 40 ? 'text-warn' : 'text-danger';
 
   // Compute combined color identity if partner selected
   const colorOrder: Color[] = ['W', 'U', 'B', 'R', 'G'];
@@ -189,7 +189,7 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
       )}
 
       <div className="relative z-10 space-y-6">
-        <button onClick={onBack} className="text-blue-400 hover:underline">← Back</button>
+        <button onClick={onBack} className="text-accent hover:underline">← Back</button>
 
         {/* Header */}
         <div className="flex gap-6 items-start">
@@ -222,7 +222,7 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
               <div>
                 <h2 className="text-3xl font-bold">
                   {commander.name}
-                  {selectedPartner && <span className="text-xl text-gray-400 font-normal"> + {selectedPartner.name}</span>}
+                  {selectedPartner && <span className="text-xl text-ink-muted font-normal"> + {selectedPartner.name}</span>}
                 </h2>
                 <ColorBadge colors={combinedColors} />
               </div>
@@ -231,7 +231,7 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
                   href={`https://edhrec.com/commanders/${commander.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm text-gray-300 transition-colors"
+                  className="px-3 py-1.5 bg-surface-3 hover:bg-surface-3 rounded text-sm text-ink transition-colors"
                 >
                   EDHREC
                 </a>
@@ -239,17 +239,17 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
             </div>
             <div className="flex items-baseline gap-4">
               <span className={`text-4xl font-bold ${matchColor}`}>{data.match_percentage}%</span>
-              <span className="text-gray-400">
+              <span className="text-ink-muted">
                 {data.owned_count}/{data.total_cards} cards owned
               </span>
             </div>
             <MatchBar percentage={data.match_percentage} size="md" />
             <div className="flex gap-4 text-sm">
               {data.num_decks > 0 && (
-                <span className="text-gray-500">{data.num_decks.toLocaleString()} decks on EDHREC</span>
+                <span className="text-ink-faint">{data.num_decks.toLocaleString()} decks on EDHREC</span>
               )}
               {data.total_missing_price > 0 && (
-                <span className="text-yellow-400">
+                <span className="text-warn">
                   ~${data.total_missing_price.toFixed(2)} to complete
                 </span>
               )}
@@ -266,9 +266,9 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
       />
 
       {/* Filters + Export + Deck Builder */}
-      <div className="bg-gray-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
+      <div className="bg-surface-2 rounded-lg p-4 flex flex-wrap gap-4 items-end">
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Budget</label>
+          <label className="block text-xs text-ink-muted mb-1">Budget</label>
           <div className="flex gap-1">
             {[
               { value: '', label: 'Any' },
@@ -280,8 +280,8 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
                 onClick={() => setBudget(opt.value)}
                 className={`px-3 py-1 rounded text-sm ${
                   budget === opt.value
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    ? 'bg-accent text-accent-ink text-ink'
+                    : 'bg-surface-3 text-ink hover:bg-surface-3'
                 }`}
               >
                 {opt.label}
@@ -292,11 +292,11 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
 
         {data.themes && data.themes.length > 0 && (
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Theme</label>
+            <label className="block text-xs text-ink-muted mb-1">Theme</label>
             <select
               value={theme}
               onChange={(e) => setTheme(e.target.value)}
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="bg-surface-1 border border-line rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent/70"
             >
               <option value="">All themes</option>
               {data.themes.map((t) => (
@@ -311,19 +311,19 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
         <div className="ml-auto flex gap-2">
           <button
             onClick={() => onOpenDeckBuilder(data)}
-            className="bg-purple-700 hover:bg-purple-600 px-3 py-1.5 rounded text-sm font-medium"
+            className="bg-secondary text-surface-0 hover:bg-secondary text-surface-0 px-3 py-1.5 rounded text-sm font-medium"
           >
             Deck Builder
           </button>
           <button
             onClick={() => handleExport('full')}
-            className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm"
+            className="bg-surface-3 hover:bg-surface-3 px-3 py-1.5 rounded text-sm"
           >
             Export Full Deck
           </button>
           <button
             onClick={() => handleExport('missing')}
-            className="bg-yellow-700 hover:bg-yellow-600 px-3 py-1.5 rounded text-sm"
+            className="bg-warn/20 text-warn border border-warn/40 hover:bg-warn/30 px-3 py-1.5 rounded text-sm"
           >
             Export Missing Cards
           </button>
@@ -331,23 +331,23 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
       </div>
 
       {exportText && (
-        <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+        <div className="bg-surface-2 rounded-lg p-4 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-green-400">Copied to clipboard! You can also copy from below:</p>
-            <button onClick={() => setExportText('')} className="text-xs text-gray-400 hover:text-white">Close</button>
+            <p className="text-sm text-ok">Copied to clipboard! You can also copy from below:</p>
+            <button onClick={() => setExportText('')} className="text-xs text-ink-muted hover:text-ink">Close</button>
           </div>
           <textarea
             readOnly
             value={exportText}
             rows={6}
-            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
+            className="w-full bg-surface-1 border border-line rounded p-3 text-xs font-mono"
             onFocus={(e) => e.target.select()}
           />
         </div>
       )}
 
       {data.error && (
-        <div className="bg-yellow-900/50 border border-yellow-700 rounded p-3 text-yellow-300 text-sm">
+        <div className="bg-warn/10 border border-warn/40 rounded p-3 text-warn text-sm">
           Note: {data.error}
         </div>
       )}
@@ -357,18 +357,18 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
         <div className="flex gap-4">
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={showOwned} onChange={(e) => setShowOwned(e.target.checked)} className="rounded" />
-            <span className="text-green-400">Owned ({data.owned_count})</span>
+            <span className="text-ok">Owned ({data.owned_count})</span>
           </label>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={showMissing} onChange={(e) => setShowMissing(e.target.checked)} className="rounded" />
-            <span className="text-red-400">Missing ({data.missing_count})</span>
+            <span className="text-danger">Missing ({data.missing_count})</span>
           </label>
         </div>
-        <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
+        <div className="flex flex-wrap gap-3 text-[11px] text-ink-muted">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-ok" /> Available</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warn" /> In deck, have spares</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-ink-faint" /> All copies in decks</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-danger" /> Not owned</span>
         </div>
       </div>
 
@@ -389,16 +389,16 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
           <SectionHeader color="purple" count={filteredRecs.length}>
             Possible Recommendations
           </SectionHeader>
-          <p className="text-xs text-gray-400 ml-3">
+          <p className="text-xs text-ink-muted ml-3">
             Cards with high synergy for this commander that aren't in the average deck.
           </p>
           <div className="flex flex-wrap gap-3 items-center">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-400">Sort:</label>
+              <label className="text-xs text-ink-muted">Sort:</label>
               <select
                 value={recSort}
                 onChange={(e) => setRecSort(e.target.value as RecSort)}
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                className="bg-surface-1 border border-line rounded px-2 py-1 text-xs focus:outline-none focus:border-accent/70"
               >
                 <option value="synergy_desc">Highest Synergy</option>
                 <option value="synergy_asc">Lowest Synergy</option>
@@ -406,11 +406,11 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
               </select>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-400">Show:</label>
+              <label className="text-xs text-ink-muted">Show:</label>
               <select
                 value={recFilter}
                 onChange={(e) => setRecFilter(e.target.value as RecFilter)}
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                className="bg-surface-1 border border-line rounded px-2 py-1 text-xs focus:outline-none focus:border-accent/70"
               >
                 <option value="all">All</option>
                 <option value="owned">In Collection</option>
@@ -418,11 +418,11 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
               </select>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-400">Type:</label>
+              <label className="text-xs text-ink-muted">Type:</label>
               <select
                 value={recTypeFilter}
                 onChange={(e) => setRecTypeFilter(e.target.value)}
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                className="bg-surface-1 border border-line rounded px-2 py-1 text-xs focus:outline-none focus:border-accent/70"
               >
                 <option value="all">All Types</option>
                 {recTypes.map((t) => (
@@ -431,37 +431,37 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
               </select>
             </div>
           </div>
-          <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+          <div className="bg-surface-2 rounded-lg divide-y divide-gray-700">
             {filteredRecs.map((card) => (
               <div key={card.name} className="px-3 py-2 flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   {card.owned ? (
-                    <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="In collection" />
+                    <span className="w-2 h-2 rounded-full bg-ok flex-shrink-0" title="In collection" />
                   ) : (
-                    <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" title="Not in collection" />
+                    <span className="w-2 h-2 rounded-full bg-surface-3 flex-shrink-0" title="Not in collection" />
                   )}
                   <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                   {card.card_type && (
-                    <span className="text-xs text-gray-600">{card.card_type}</span>
+                    <span className="text-xs text-ink-faint">{card.card_type}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   {card.synergy != null && (
-                    <span className={`font-medium ${card.synergy > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                    <span className={`font-medium ${card.synergy > 0 ? 'text-ok' : 'text-ink-muted'}`}>
                       {card.synergy > 0 ? '+' : ''}{card.synergy}% synergy
                     </span>
                   )}
                   {card.inclusion != null && (
-                    <span className="text-gray-500">{card.inclusion}% inclusion</span>
+                    <span className="text-ink-faint">{card.inclusion}% inclusion</span>
                   )}
                   {card.source && (
-                    <span className="text-purple-400/70">{card.source}</span>
+                    <span className="text-secondary/70">{card.source}</span>
                   )}
                 </div>
               </div>
             ))}
             {filteredRecs.length === 0 && (
-              <p className="px-3 py-4 text-gray-500 text-sm">No recommendations match the current filters.</p>
+              <p className="px-3 py-4 text-ink-faint text-sm">No recommendations match the current filters.</p>
             )}
           </div>
         </div>

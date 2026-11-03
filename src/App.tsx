@@ -3,7 +3,7 @@ import { apiAuthGet, apiAuthPost, apiGet, apiPost } from './lib/api';
 import { clearAuth, loadAuthToken, loadAuthUser, loadCollection, loadDecks, saveCollection, saveDecks, saveFavorites, loadFavorites } from './lib/storage';
 import type { AuthUser, CollectionSummary, CommanderDetail, Deck, UserData } from './types/api';
 import type { Tab } from './types/nav';
-import type { CardCommander } from './components/ui';
+import { Button, type CardCommander } from './components/ui';
 import { AuthModal } from './features/auth/AuthModal';
 import { CollectionUpload } from './features/collection/CollectionUpload';
 import { CollectionStats } from './features/collection/CollectionStats';
@@ -169,107 +169,115 @@ export default function App() {
     }).catch(() => {});
   };
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'upload', label: 'Upload Collection' },
+  const tabs: { id: Tab; label: string; badge?: string }[] = [
+    { id: 'upload', label: 'Collection' },
     { id: 'recommend', label: 'Recommendations' },
     { id: 'search', label: 'Search' },
-    { id: 'favorites', label: `Find My Commander${favorites.size > 0 ? ` (${favorites.size}★)` : ''}` },
-    { id: 'mydecks', label: `My Decks${deckCount ? ` (${deckCount})` : ''}` },
+    { id: 'favorites', label: 'Find My Commander', badge: favorites.size > 0 ? `${favorites.size}★` : undefined },
+    { id: 'mydecks', label: 'My Decks', badge: deckCount ? String(deckCount) : undefined },
     { id: 'stats', label: 'Stats' },
   ];
+  const secondary: { id: Tab; label: string }[] = [
+    { id: 'guides', label: 'Guides' },
+    { id: 'about', label: 'About' },
+  ];
+  const isActive = (id: Tab) => tab === id || ((tab === 'detail' || tab === 'deckbuilder') && id === 'recommend');
 
-  const headerLink = (id: Tab, label: string) => (
+  const navButton = (t: { id: Tab; label: string; badge?: string }, muted = false) => (
     <button
-      onClick={() => setTab(id)}
-      className={`text-sm font-medium transition-colors ${tab === id ? 'text-blue-400' : 'text-gray-400 hover:text-gray-200'}`}
+      key={t.id}
+      onClick={() => setTab(t.id)}
+      className={`w-auto md:w-full flex-shrink-0 whitespace-nowrap flex items-center justify-between gap-2 px-3 py-1.5 rounded text-left text-sm transition-colors duration-1 ${
+        isActive(t.id)
+          ? 'bg-surface-3 text-ink'
+          : muted ? 'text-ink-faint hover:text-ink-muted hover:bg-surface-2' : 'text-ink-muted hover:text-ink hover:bg-surface-2'
+      }`}
     >
-      {label}
+      <span className="flex items-center gap-2">
+        <span className={`w-1 h-1 rounded-full ${isActive(t.id) ? 'bg-accent' : 'bg-transparent'}`} />
+        {t.label}
+      </span>
+      {t.badge && <span className="text-[10px] num text-accent">{t.badge}</span>}
     </button>
   );
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen md:flex">
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} onLogin={handleLogin} />
 
-      {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <h1 className="text-xl font-bold">MTG Commander Recommender</h1>
-            <nav className="flex items-center gap-6">
-              {headerLink('guides', 'Guides')}
-              {headerLink('about', 'About')}
-            </nav>
-          </div>
-          <div className="flex items-center gap-4">
-            {collectionCount > 0 && <span className="text-sm text-gray-400">{collectionCount} cards</span>}
-            {user && syncStatus && (
-              <span className={`text-xs px-2 py-1 rounded ${
-                syncStatus === 'syncing' ? 'bg-blue-900/50 text-blue-400' :
-                syncStatus === 'synced' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-              }`}>
-                {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'synced' ? 'Saved!' : 'Sync failed'}
-              </span>
-            )}
+      {/* Rail */}
+      <aside className="md:w-60 md:flex-shrink-0 md:h-screen md:sticky md:top-0 bg-surface-1 border-b md:border-b-0 md:border-r border-line flex flex-col">
+        <div className="px-5 pt-4 md:pt-5 pb-3 md:pb-4 flex items-center justify-between">
+          <button onClick={() => setTab('upload')} className="text-left">
+            <div className="font-display text-xl font-semibold leading-tight text-ink"><span className="md:hidden">Commander Recommender</span><span className="hidden md:inline">Commander<br />Recommender</span></div>
+            <div className="hidden md:block text-[10px] uppercase tracking-[0.18em] text-ink-faint mt-1.5">From your collection</div>
+          </button>
+          <div className="md:hidden">
             {user ? (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-400"><span className="text-green-400">●</span> {user.username}</span>
-                <button onClick={syncToServer} className="text-xs text-blue-400 hover:text-blue-300" title="Sync to cloud">Sync</button>
-                <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-400">Logout</button>
-              </div>
+              <span className="text-xs text-ink-muted">{user.username}</span>
             ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-sm font-medium transition-colors"
-              >
-                Login / Sign Up
-              </button>
+              <Button variant="outline" size="sm" onClick={() => setShowAuthModal(true)}>Log in</Button>
             )}
           </div>
         </div>
-      </header>
 
-      {/* Nav */}
-      <nav className="bg-gray-900/50 border-b border-gray-800 px-6">
-        <div className="max-w-7xl mx-auto flex gap-1 items-center">
-          {tabs.map((t) => {
-            const active = tab === t.id || ((tab === 'detail' || tab === 'deckbuilder') && t.id === 'recommend');
-            return (
+        <nav className="px-2 md:space-y-0.5 flex md:block gap-1 md:gap-0 overflow-x-auto md:overflow-visible pb-3 md:pb-0">
+          {tabs.map((t) => navButton(t))}
+          <span className="md:hidden contents">{secondary.map((t) => navButton(t, true))}</span>
+        </nav>
+
+        {compareList.length > 0 && (
+          <div className="px-4 pt-4">
+            {compareList.length >= 2 ? (
               <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  active ? 'border-blue-500 text-blue-400'
-                    : t.id === 'favorites' && favorites.size > 0 ? 'border-transparent text-yellow-400/80 hover:text-yellow-300'
-                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                onClick={() => setTab('compare')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm transition-colors duration-1 border ${
+                  tab === 'compare' ? 'bg-secondary text-surface-0 border-secondary' : 'text-secondary border-secondary/40 hover:bg-secondary/10'
                 }`}
               >
-                {t.label}
+                <span>Compare</span>
+                <span className="num text-xs">{compareList.length}</span>
               </button>
-            );
-          })}
+            ) : (
+              <p className="text-xs text-ink-faint px-1">Pick {2 - compareList.length} more to compare</p>
+            )}
+            <button onClick={() => setCompareList([])} className="mt-1 px-1 text-[11px] text-ink-faint hover:text-danger">Clear selection</button>
+          </div>
+        )}
 
-          {compareList.length >= 2 && (
-            <button
-              onClick={() => setTab('compare')}
-              className={`ml-4 px-4 py-1.5 rounded text-sm font-medium transition-all ${
-                tab === 'compare' ? 'bg-purple-600 text-white' : 'bg-purple-700/50 text-purple-300 hover:bg-purple-700'
-              }`}
-            >
-              Compare ({compareList.length})
-            </button>
-          )}
-          {compareList.length > 0 && compareList.length < 2 && (
-            <span className="ml-4 text-xs text-gray-500">Select {2 - compareList.length} more to compare</span>
-          )}
-          {compareList.length > 0 && (
-            <button onClick={() => setCompareList([])} className="ml-2 text-xs text-gray-500 hover:text-red-400">Clear</button>
-          )}
+        <div className="hidden md:block mt-auto px-2 pb-4 pt-6 space-y-4">
+          <div className="space-y-0.5">{secondary.map((t) => navButton(t, true))}</div>
+
+          <div className="mx-2 border-t border-line pt-4 space-y-2">
+            {collectionCount > 0 && (
+              <p className="text-xs text-ink-muted px-1">
+                <span className="num text-ink">{collectionCount.toLocaleString()}</span> cards loaded
+              </p>
+            )}
+            {user ? (
+              <div className="px-1 space-y-1.5">
+                <p className="text-sm text-ink flex items-center gap-2">
+                  <span className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'error' ? 'bg-danger' : 'bg-ok'}`} />
+                  {user.username}
+                </p>
+                <div className="flex items-center gap-3 text-xs">
+                  <button onClick={syncToServer} className="text-accent hover:text-accent-hi" title="Sync to cloud">
+                    {syncStatus === 'syncing' ? 'Syncing…' : syncStatus === 'synced' ? 'Saved' : syncStatus === 'error' ? 'Sync failed' : 'Sync'}
+                  </button>
+                  <button onClick={handleLogout} className="text-ink-faint hover:text-danger">Log out</button>
+                </div>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAuthModal(true)}>
+                Log in / Sign up
+              </Button>
+            )}
+          </div>
         </div>
-      </nav>
+      </aside>
 
       {/* Content: list tabs stay mounted to keep their state */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="flex-1 min-w-0 px-5 md:px-10 py-8 max-w-[1400px]">
         <div style={{ display: tab === 'upload' ? 'block' : 'none' }}>
           <CollectionUpload onUploaded={handleUploaded} collectionCount={collectionCount} />
         </div>

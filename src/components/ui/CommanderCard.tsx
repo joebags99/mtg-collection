@@ -1,4 +1,5 @@
-import { getColorGlow } from '../../lib/colors';
+import type { CSSProperties } from 'react';
+import { identityAccentStyle } from '../../lib/colors';
 import type { Commander, ScoredCommander } from '../../types/api';
 import { ColorBadge } from './ColorBadge';
 import { MatchBar } from './MatchBar';
@@ -14,39 +15,39 @@ interface Props {
   onToggleCompare?: (commander: CardCommander) => void;
 }
 
+/** Card art with a foil sheen on hover, the name in the display face, and match data when present. */
 export function CommanderCard({ commander, onClick, selectable, selected, onToggleCompare }: Props) {
   const match = commander.match_percentage;
   const hasMatch = match !== undefined;
-  const colorGlow = getColorGlow(commander.color_identity);
+  const price = commander.missing_price ?? 0;
 
   return (
     <div
-      className={`rounded-xl cursor-pointer relative transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${selected ? 'ring-2 ring-purple-500' : ''}`}
-      style={{
-        boxShadow: `0 8px 32px ${colorGlow}, 0 0 0 1px rgba(255,255,255,0.05)`,
-        background: 'linear-gradient(145deg, rgba(31, 41, 55, 0.95) 0%, rgba(17, 24, 39, 0.98) 100%)',
-      }}
+      className={`group rounded-lg relative bg-surface-2 border transition-all duration-2 hover:-translate-y-0.5 ${
+        selected ? 'border-secondary ring-1 ring-secondary/50' : 'border-line hover:border-[rgb(var(--accent)/0.6)]'
+      }`}
+      style={identityAccentStyle(commander.color_identity) as CSSProperties}
     >
       {selectable && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleCompare?.(commander); }}
-          className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all backdrop-blur-sm ${
-            selected ? 'bg-purple-500 border-purple-500 text-white scale-110' : 'bg-gray-900/80 border-gray-400 text-gray-400 hover:border-purple-400 hover:scale-105'
+          className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-full border flex items-center justify-center text-xs font-bold transition-all duration-1 backdrop-blur-sm ${
+            selected ? 'bg-secondary border-secondary text-surface-0' : 'bg-surface-0/70 border-line-strong text-ink-muted opacity-0 group-hover:opacity-100 hover:border-secondary hover:text-secondary'
           }`}
           title={selected ? 'Remove from comparison' : 'Add to comparison'}
         >
           {selected ? '✓' : '+'}
         </button>
       )}
-      <div onClick={() => onClick?.(commander)} className="overflow-hidden rounded-xl">
+      <div onClick={() => onClick?.(commander)} className="cursor-pointer overflow-hidden rounded-lg">
         {commander.image_uri && (
-          <div className="relative">
+          <div className="relative foil bg-surface-3">
             <img src={commander.image_uri} alt={commander.name} className="w-full aspect-[5/7] object-cover" loading="lazy" />
             {hasMatch && (
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-2 pb-2 pt-8">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-gray-300">{commander.owned_count}/{commander.total_cards}</span>
-                  <span className={`text-lg font-bold ${match >= 60 ? 'text-green-400' : match >= 40 ? 'text-yellow-400' : 'text-gray-400'}`}>
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-surface-0/95 via-surface-0/70 to-transparent px-3 pb-2.5 pt-10">
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <span className="text-[11px] text-ink-muted num">{commander.owned_count}/{commander.total_cards}</span>
+                  <span className={`text-xl font-display font-semibold ${match >= 60 ? 'text-ok' : match >= 40 ? 'text-warn' : 'text-ink-muted'}`}>
                     {match}%
                   </span>
                 </div>
@@ -55,21 +56,19 @@ export function CommanderCard({ commander, onClick, selectable, selected, onTogg
             )}
           </div>
         )}
-        <div className="p-3 space-y-1.5">
-          <h3 className="font-bold text-sm leading-tight">{commander.name}</h3>
+        <div className="p-3 space-y-2">
+          <h3 className="font-display font-semibold text-[15px] leading-snug text-ink">{commander.name}</h3>
           <div className="flex items-center justify-between">
             <ColorBadge colors={commander.color_identity} />
             {(commander.num_decks ?? 0) > 0 && (
-              <span className="text-xs text-gray-500">{commander.num_decks!.toLocaleString()} decks</span>
+              <span className="text-[11px] text-ink-faint num">{commander.num_decks!.toLocaleString()} decks</span>
             )}
           </div>
-          {hasMatch && (commander.missing_price ?? 0) > 0 && (
-            <div className="bg-gray-900/80 rounded px-2 py-1.5 flex items-center justify-between border border-gray-700/50">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wide">To complete</span>
-              <span className={`text-sm font-bold ${
-                commander.missing_price! < 50 ? 'text-green-400' : commander.missing_price! < 150 ? 'text-yellow-400' : 'text-red-400'
-              }`}>
-                ${commander.missing_price!.toFixed(2)}
+          {hasMatch && price > 0 && (
+            <div className="flex items-center justify-between border-t border-line pt-2">
+              <span className="text-[10px] text-ink-faint uppercase tracking-[0.14em]">To complete</span>
+              <span className={`text-sm num ${price < 50 ? 'text-ok' : price < 150 ? 'text-warn' : 'text-danger'}`}>
+                ${price.toFixed(2)}
               </span>
             </div>
           )}

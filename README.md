@@ -56,7 +56,17 @@ src/
   components/ui/   shared primitives: mana symbols, badges, cards, pickers, hero, headers
   lib/             API client, localStorage helpers, color and card-grouping helpers
   types/           API response types and the Tab union
+  styles/          design tokens (tokens.css)
 ```
+
+## Design system
+
+Every color, font, radius, and duration is a CSS custom property in `src/styles/tokens.css`,
+exposed to Tailwind through `tailwind.config.js`. Components use token utilities such as
+`bg-surface-2`, `text-ink-muted`, `border-line`, and `text-accent` rather than raw palette
+colors. Commander views re-point `--accent` at the commander's color identity, so panels and
+highlights take on that identity automatically. Headings use Fraunces, body text IBM Plex Sans,
+and numbers IBM Plex Mono via the `num` class.
 
 ## Tests
 

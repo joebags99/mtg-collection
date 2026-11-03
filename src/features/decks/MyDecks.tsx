@@ -145,24 +145,24 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
       />
 
       {/* Add new deck */}
-      <div className="bg-gray-800/80 backdrop-blur rounded-xl p-6 space-y-4 border border-gray-700/50">
+      <div className="bg-surface-2/80 backdrop-blur rounded-xl p-6 space-y-4 border border-line">
         <SectionHeader color="blue">Add New Deck</SectionHeader>
         <div className="flex gap-3">
           <div className="flex-1">
-            <label className="block text-xs text-gray-400 mb-1">Deck Name *</label>
+            <label className="block text-xs text-ink-muted mb-1">Deck Name *</label>
             <input
               value={newName} onChange={(e) => setNewName(e.target.value)}
               placeholder="e.g. Ur-Dragon Tribal"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-surface-1 border border-line rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent/70"
             />
           </div>
           <div className="flex-1">
-            <label className="block text-xs text-gray-400 mb-1">Commander</label>
+            <label className="block text-xs text-ink-muted mb-1">Commander</label>
             <CommanderAutocomplete
               value={newCommander}
               onChange={(v) => { setNewCommander(v); setNewPartner(null); }}
               placeholder="e.g. The Ur-Dragon"
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-surface-1 border border-line rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent/70"
             />
           </div>
         </div>
@@ -174,35 +174,35 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
           />
         )}
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Card List (paste from Archidekt/Moxfield export)</label>
+          <label className="block text-xs text-ink-muted mb-1">Card List (paste from Archidekt/Moxfield export)</label>
           <textarea
             value={newCards} onChange={(e) => { setNewCards(e.target.value); setInvalidCards([]); }}
             placeholder={'1 Sol Ring\n1 Command Tower\n1 Arcane Signet\n...'}
             rows={8}
-            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-sm font-mono focus:outline-none focus:border-blue-500"
+            className="w-full bg-surface-1 border border-line rounded p-3 text-sm font-mono focus:outline-none focus:border-accent/70"
           />
         </div>
         {invalidCards.length > 0 && (
-          <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
-            <p className="text-sm text-red-400 font-medium">Unrecognized cards:</p>
-            <ul className="text-xs text-red-300 space-y-0.5">
+          <div className="bg-danger/10 border border-danger/40 rounded p-3 space-y-1">
+            <p className="text-sm text-danger font-medium">Unrecognized cards:</p>
+            <ul className="text-xs text-danger space-y-0.5">
               {invalidCards.map((name) => <li key={name}>- {name}</li>)}
             </ul>
           </div>
         )}
         <button
           onClick={validateAndAdd} disabled={!newName.trim() || validating}
-          className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded font-medium"
+          className="bg-accent text-accent-ink hover:bg-accent-hi disabled:bg-surface-3 disabled:text-ink-faint px-4 py-2 rounded font-medium"
         >
           {validating ? 'Validating cards...' : 'Add Deck'}
         </button>
       </div>
 
-      {error && <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>}
+      {error && <div className="bg-danger/10 border border-danger/40 rounded p-3 text-danger">{error}</div>}
 
       {/* Deck list */}
       {deckList.length === 0 && (
-        <p className="text-gray-500 text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
+        <p className="text-ink-faint text-center py-8">No decks added yet. Add a deck above to start tracking card usage.</p>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 grid-stagger">
@@ -223,13 +223,13 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
 
       {/* Legend */}
       {deckList.length > 0 && (
-        <div className="bg-gray-800/50 rounded-lg p-4 space-y-2">
-          <h4 className="text-sm font-medium text-gray-400">Availability Legend</h4>
-          <div className="flex flex-wrap gap-4 text-xs text-gray-400">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> Available</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In deck, have spares</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> All copies in decks</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> Not owned</span>
+        <div className="bg-surface-2/50 rounded-lg p-4 space-y-2">
+          <h4 className="text-sm font-medium text-ink-muted">Availability Legend</h4>
+          <div className="flex flex-wrap gap-4 text-xs text-ink-muted">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-ok" /> Available</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-warn" /> In deck, have spares</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-ink-faint" /> All copies in decks</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-danger" /> Not owned</span>
           </div>
         </div>
       )}
@@ -254,12 +254,12 @@ function DeckTile({ deck, editing, validating, editCards, invalidCards, onEditCa
   const glowStyle = { boxShadow: `0 0 20px 2px ${glow}, inset 0 0 20px 0px ${glow}` };
 
   return (
-    <div className="relative bg-gray-800 rounded-xl overflow-hidden transition-all hover:scale-[1.02]" style={glowStyle}>
+    <div className="relative bg-surface-2 rounded-xl overflow-hidden transition-all hover:scale-[1.02]" style={glowStyle}>
       {/* Commander art banner */}
       {deck.art_crop && (
         <div className="absolute inset-0 z-0">
           <img src={deck.art_crop} alt="" className="w-full h-full object-cover opacity-20" />
-          <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/80 to-gray-900/40" />
+          <div className="absolute inset-0 bg-gradient-to-t from-surface-0 via-surface-0/80 to-surface-0/40" />
         </div>
       )}
       <div className="relative z-10 p-4 flex flex-col h-full">
@@ -287,7 +287,7 @@ function DeckTile({ deck, editing, validating, editCards, invalidCards, onEditCa
         </div>
         <h4 className="font-bold text-center text-sm">{deck.name}</h4>
         {deck.commander && (
-          <p className="text-xs text-gray-400 text-center mt-0.5">
+          <p className="text-xs text-ink-muted text-center mt-0.5">
             {deck.commander}{deck.partner ? ` + ${deck.partner}` : ''}
           </p>
         )}
@@ -295,21 +295,21 @@ function DeckTile({ deck, editing, validating, editCards, invalidCards, onEditCa
           {deck.color_identity && deck.color_identity.length > 0 && (
             <ColorBadge colors={deck.color_identity} />
           )}
-          <span className="text-xs text-gray-500">{deck.card_count || 0} cards</span>
+          <span className="text-xs text-ink-faint">{deck.card_count || 0} cards</span>
         </div>
         <div className="flex gap-2 justify-center mt-3">
           <button
             onClick={onEdit}
             disabled={validating}
             className={`px-3 py-1 rounded text-xs ${
-              editing ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-700 hover:bg-gray-600'
+              editing ? 'bg-ok text-surface-0 hover:bg-ok/90' : 'bg-surface-3 hover:bg-line-strong'
             }`}
           >
             {editing ? (validating ? 'Validating...' : 'Save') : 'Edit'}
           </button>
           <button
             onClick={onDelete}
-            className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs"
+            className="text-danger hover:bg-danger/10 px-3 py-1 rounded text-xs"
           >
             Delete
           </button>
@@ -319,12 +319,12 @@ function DeckTile({ deck, editing, validating, editCards, invalidCards, onEditCa
             <textarea
               value={editCards} onChange={(e) => onEditCardsChange(e.target.value)}
               rows={8}
-              className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono focus:outline-none focus:border-blue-500"
+              className="w-full bg-surface-1 border border-line rounded p-3 text-xs font-mono focus:outline-none focus:border-accent/70"
             />
             {invalidCards.length > 0 && (
-              <div className="bg-red-900/30 border border-red-700 rounded p-3 space-y-1">
-                <p className="text-xs text-red-400 font-medium">Unrecognized cards:</p>
-                <ul className="text-[11px] text-red-300 space-y-0.5">
+              <div className="bg-danger/10 border border-danger/40 rounded p-3 space-y-1">
+                <p className="text-xs text-danger font-medium">Unrecognized cards:</p>
+                <ul className="text-[11px] text-danger space-y-0.5">
                   {invalidCards.map((name) => <li key={name}>- {name}</li>)}
                 </ul>
               </div>

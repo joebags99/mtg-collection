@@ -59,26 +59,26 @@ export function CommanderSearch({ onSelectCommander, compareList, onToggleCompar
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Search Commanders</h2>
-      <p className="text-gray-400">
+      <p className="text-ink-muted">
         Search any commander and see how close you are to their average EDHREC deck.
       </p>
 
-      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+      <div className="bg-surface-2 rounded-lg p-4 space-y-3">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Type a commander name (min 2 characters)..."
-          className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          className="w-full bg-surface-1 border border-line rounded px-3 py-2 text-sm focus:outline-none focus:border-accent/70"
         />
         <div className="flex gap-1 items-center">
-          <span className="text-xs text-gray-400 mr-2">Filter:</span>
+          <span className="text-xs text-ink-muted mr-2">Filter:</span>
           {ALL_COLORS.map((c) => (
             <button
               key={c}
               onClick={() => toggleColor(c)}
               className={`w-7 h-7 rounded font-bold text-xs transition-all ${
                 colorFilter.includes(c)
-                  ? 'ring-2 ring-white scale-110'
+                  ? 'ring-2 ring-ink scale-110'
                   : 'opacity-50 hover:opacity-75'
               }`}
               style={{ backgroundColor: COLOR_MAP[c].bg, color: COLOR_MAP[c].text }}
@@ -87,17 +87,17 @@ export function CommanderSearch({ onSelectCommander, compareList, onToggleCompar
             </button>
           ))}
           {colorFilter.length > 0 && (
-            <button onClick={() => setColorFilter([])} className="text-xs text-gray-400 hover:text-white ml-2">
+            <button onClick={() => setColorFilter([])} className="text-xs text-ink-muted hover:text-ink ml-2">
               Clear
             </button>
           )}
         </div>
       </div>
 
-      {loading && <div className="text-center py-4 text-gray-400">Searching...</div>}
+      {loading && <div className="text-center py-4 text-ink-muted">Searching...</div>}
 
       {showPopular && popular.length > 0 && (
-        <h3 className="text-sm font-medium text-gray-400">Popular Commanders</h3>
+        <h3 className="text-sm font-medium text-ink-muted">Popular Commanders</h3>
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 grid-stagger">

@@ -276,7 +276,7 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
   const ownershipDot = (card: BuilderCard) => {
     const inDecks = card.qty_in_decks || 0;
     return {
-      className: !card.owned ? 'bg-red-500' : inDecks >= (card.qty_owned || 1) ? 'bg-gray-500' : inDecks > 0 ? 'bg-yellow-500' : 'bg-green-500',
+      className: !card.owned ? 'bg-danger' : inDecks >= (card.qty_owned || 1) ? 'bg-ink-faint' : inDecks > 0 ? 'bg-warn' : 'bg-ok',
       title: !card.owned ? 'Not owned' : inDecks > 0 ? `In ${(card.in_decks || []).map((d) => d.name).join(', ')}` : 'Owned',
     };
   };
@@ -288,27 +288,27 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
         {includedGroups.map(({ type, cards }) => (
           <div key={type}>
             <TypeSectionHeader type={type} count={cards.reduce((s, c) => s + c.qty, 0)} />
-            <div className="bg-gray-800 rounded-lg divide-y divide-gray-700">
+            <div className="bg-surface-2 rounded-lg divide-y divide-gray-700">
               {cards.map((card) => (
-                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group deck-card-enhanced hover:bg-gray-700/50">
+                <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group hover:bg-surface-3/50">
                   <div className="flex items-center gap-2">
                     <AvailDot card={card} />
                     <CardName name={card.name} className="text-sm" favorites={favorites} onToggleFavorite={onToggleFavorite} />
-                    {card.isRecommendation && <span className="text-xs text-purple-400 bg-purple-900/30 px-1.5 py-0.5 rounded">rec</span>}
-                    {card.isCommander && <span className="text-xs text-yellow-400 bg-yellow-900/30 px-1.5 py-0.5 rounded">cmdr</span>}
+                    {card.isRecommendation && <span className="text-xs text-secondary bg-secondary/10 px-1.5 py-0.5 rounded">rec</span>}
+                    {card.isCommander && <span className="text-xs text-warn bg-warn/10 px-1.5 py-0.5 rounded">cmdr</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     <DeckBadges inDecks={card.in_decks} />
                     {canHaveMultiple(card.name) ? (
                       <div className="flex items-center gap-1">
-                        <button onClick={() => setQty(card.name, card.qty - 1)} className="w-5 h-5 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">-</button>
+                        <button onClick={() => setQty(card.name, card.qty - 1)} className="w-5 h-5 rounded bg-surface-3 hover:bg-surface-3 text-xs flex items-center justify-center">-</button>
                         <span className="text-xs w-5 text-center">{card.qty}</span>
-                        <button onClick={() => setQty(card.name, card.qty + 1)} className="w-5 h-5 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">+</button>
+                        <button onClick={() => setQty(card.name, card.qty + 1)} className="w-5 h-5 rounded bg-surface-3 hover:bg-surface-3 text-xs flex items-center justify-center">+</button>
                       </div>
                     ) : (
-                      card.qty > 1 && <span className="text-xs text-gray-500">x{card.qty}</span>
+                      card.qty > 1 && <span className="text-xs text-ink-faint">x{card.qty}</span>
                     )}
-                    <button onClick={() => toggle(card.name)} className="text-xs text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => toggle(card.name)} className="text-xs text-danger opacity-0 group-hover:opacity-100 transition-opacity">
                       Remove
                     </button>
                   </div>
@@ -321,20 +321,20 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
 
       <div className="space-y-4">
         <SectionHeader color="gray" count={excludedCards.length}>Removed / Available</SectionHeader>
-        <div className="bg-gray-800 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
+        <div className="bg-surface-2 rounded-lg divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
           {excludedCards.map((card) => (
             <div key={card.name} className="px-3 py-1.5 flex justify-between items-center group">
               <div className="flex items-center gap-2">
                 <AvailDot card={card} />
-                <CardName name={card.name} className="text-sm text-gray-400" favorites={favorites} onToggleFavorite={onToggleFavorite} />
+                <CardName name={card.name} className="text-sm text-ink-muted" favorites={favorites} onToggleFavorite={onToggleFavorite} />
                 <DeckBadges inDecks={card.in_decks} />
               </div>
-              <button onClick={() => toggle(card.name)} className="text-xs text-green-400 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => toggle(card.name)} className="text-xs text-ok opacity-0 group-hover:opacity-100 transition-opacity">
                 Add
               </button>
             </div>
           ))}
-          {excludedCards.length === 0 && <p className="px-3 py-4 text-gray-500 text-sm">No removed cards</p>}
+          {excludedCards.length === 0 && <p className="px-3 py-4 text-ink-faint text-sm">No removed cards</p>}
         </div>
       </div>
     </div>
@@ -352,18 +352,18 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
                 <div key={card.name} className="relative group">
                   <DeckCardImage name={card.name} small />
                   {card.qty > 1 && (
-                    <span className="absolute top-1 right-1 bg-black/80 text-white text-xs font-bold px-1.5 py-0.5 rounded">x{card.qty}</span>
+                    <span className="absolute top-1 right-1 bg-surface-0/80 text-ink text-xs font-bold px-1.5 py-0.5 rounded">x{card.qty}</span>
                   )}
-                  <span className={`absolute top-1 left-1 w-2.5 h-2.5 rounded-full border border-black ${dot.className}`} title={dot.title} />
-                  <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 rounded-lg">
+                  <span className={`absolute top-1 left-1 w-2.5 h-2.5 rounded-full border border-surface-0 ${dot.className}`} title={dot.title} />
+                  <div className="absolute inset-0 bg-surface-0/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 rounded-lg">
                     {canHaveMultiple(card.name) && (
                       <>
-                        <button onClick={() => setQty(card.name, card.qty - 1)} className="w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">-</button>
+                        <button onClick={() => setQty(card.name, card.qty - 1)} className="w-6 h-6 rounded bg-surface-3 hover:bg-surface-3 text-xs flex items-center justify-center">-</button>
                         <span className="text-xs font-bold w-4 text-center">{card.qty}</span>
-                        <button onClick={() => setQty(card.name, card.qty + 1)} className="w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-xs flex items-center justify-center">+</button>
+                        <button onClick={() => setQty(card.name, card.qty + 1)} className="w-6 h-6 rounded bg-surface-3 hover:bg-surface-3 text-xs flex items-center justify-center">+</button>
                       </>
                     )}
-                    <button onClick={() => toggle(card.name)} className="w-6 h-6 rounded bg-red-700 hover:bg-red-600 text-xs flex items-center justify-center ml-1">✕</button>
+                    <button onClick={() => toggle(card.name)} className="w-6 h-6 rounded bg-danger hover:bg-danger text-xs flex items-center justify-center ml-1">✕</button>
                   </div>
                 </div>
               );
@@ -426,11 +426,11 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
 
   return (
     <div className="space-y-6">
-      <button onClick={onBack} className="text-blue-400 hover:underline">← Back to Detail</button>
+      <button onClick={onBack} className="text-accent hover:underline">← Back to Detail</button>
 
       <div
-        className="bg-gray-800/80 rounded-xl p-4 flex items-center justify-between flex-wrap gap-4"
-        style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 4px 20px ${colorGlow}` }}
+        className="bg-surface-2/80 rounded-xl p-4 flex items-center justify-between flex-wrap gap-4"
+        style={{ boxShadow: `0 4px 20px ${colorGlow}` }}
       >
         <div className="flex items-center gap-4">
           {commander.image_uri && (
@@ -446,68 +446,68 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
               Deck Builder
               <ColorBadge colors={commander.color_identity} />
             </h2>
-            <p className="text-gray-400 text-sm">{commander.name}</p>
+            <p className="text-ink-muted text-sm">{commander.name}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
           <div className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
-            deckSize === 100 ? 'bg-green-900/50 text-green-400 border border-green-700' :
-            deckSize > 100 ? 'bg-red-900/50 text-red-400 border border-red-700' :
-            'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
+            deckSize === 100 ? 'bg-ok/10 text-ok border border-ok/40' :
+            deckSize > 100 ? 'bg-danger/10 text-danger border border-danger/40' :
+            'bg-warn/10 text-warn border border-warn/40'
           }`}>
             {deckSize}/100 cards
           </div>
-          <div className="px-3 py-1.5 rounded-lg text-sm bg-gray-700/50 border border-gray-600">
-            <span className="text-green-400 font-medium">{ownedCount}</span>
-            <span className="text-gray-500 mx-1">/</span>
-            <span className="text-red-400 font-medium">{neededCount}</span>
-            <span className="text-gray-500 ml-1 text-xs">own/need</span>
+          <div className="px-3 py-1.5 rounded-lg text-sm bg-surface-3/50 border border-line-strong">
+            <span className="text-ok font-medium">{ownedCount}</span>
+            <span className="text-ink-faint mx-1">/</span>
+            <span className="text-danger font-medium">{neededCount}</span>
+            <span className="text-ink-faint ml-1 text-xs">own/need</span>
           </div>
           {priceToComplete > 0 && (
-            <div className="px-3 py-1.5 rounded-lg text-sm bg-yellow-900/30 text-yellow-400 border border-yellow-700/50">
+            <div className="px-3 py-1.5 rounded-lg text-sm bg-warn/10 text-warn border border-warn/40/50">
               ~${priceToComplete.toFixed(2)}
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
+          <div className="flex bg-surface-1 rounded-lg overflow-hidden border border-line">
             {VIEW_MODES.map((v) => (
               <button
                 key={v.id}
                 onClick={() => setViewMode(v.id)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  viewMode === v.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  viewMode === v.id ? 'bg-accent text-accent-ink text-ink' : 'text-ink-muted hover:text-ink hover:bg-surface-2'
                 }`}
               >
                 {v.label}
               </button>
             ))}
           </div>
-          <button onClick={openSettings} className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors" title="Deck Composition Settings">
-            <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <button onClick={openSettings} className="p-2 bg-surface-3 hover:bg-surface-3 rounded-lg transition-colors" title="Deck Composition Settings">
+            <svg className="w-5 h-5 text-ink" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
-          <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          <button onClick={handleExport} className="bg-accent text-accent-ink hover:bg-accent-hi px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             Export Deck
           </button>
         </div>
       </div>
 
       {exportText && (
-        <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+        <div className="bg-surface-2 rounded-lg p-4 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-green-400">Copied to clipboard!</p>
-            <button onClick={() => setExportText('')} className="text-xs text-gray-400 hover:text-white">Close</button>
+            <p className="text-sm text-ok">Copied to clipboard!</p>
+            <button onClick={() => setExportText('')} className="text-xs text-ink-muted hover:text-ink">Close</button>
           </div>
           <textarea
             readOnly
             value={exportText}
             rows={6}
-            className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono"
+            className="w-full bg-surface-1 border border-line rounded p-3 text-xs font-mono"
             onFocus={(e) => e.target.select()}
           />
         </div>
@@ -520,17 +520,17 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
         <DeckStats cards={includedCards} />
       </div>
 
-      <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-4 space-y-4">
+      <div className="bg-surface-2/50 rounded-xl border border-line p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h3 className="text-sm font-semibold text-gray-300">Deck Composition</h3>
+            <h3 className="text-sm font-semibold text-ink">Deck Composition</h3>
             <div className="flex items-center gap-1">
               {MODE_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setSuggestionMode(opt.value)}
                   className={`px-2 py-0.5 text-[10px] rounded-full transition-colors ${
-                    suggestionMode === opt.value ? 'bg-yellow-600 text-white' : 'bg-gray-700 text-gray-500 hover:text-gray-300'
+                    suggestionMode === opt.value ? 'bg-warn text-ink' : 'bg-surface-3 text-ink-faint hover:text-ink'
                   }`}
                 >
                   {opt.label}
@@ -538,7 +538,7 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
               ))}
             </div>
           </div>
-          <button onClick={openSettings} className="text-xs text-gray-400 hover:text-white transition-colors">
+          <button onClick={openSettings} className="text-xs text-ink-muted hover:text-ink transition-colors">
             Edit Targets
           </button>
         </div>
@@ -551,19 +551,19 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
             return (
               <div key={key} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400">{label}</span>
-                  <span className={diff === 0 ? 'text-green-400' : diff > 0 ? 'text-yellow-400' : 'text-red-400'}>
+                  <span className="text-ink-muted">{label}</span>
+                  <span className={diff === 0 ? 'text-ok' : diff > 0 ? 'text-warn' : 'text-danger'}>
                     {actual}/{target}
                   </span>
                 </div>
-                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${diff === 0 ? 'bg-green-500' : diff > 0 ? 'bg-yellow-500' : color}`}
+                    className={`h-full rounded-full transition-all ${diff === 0 ? 'bg-ok' : diff > 0 ? 'bg-warn' : color}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
                 {diff !== 0 && (
-                  <p className="text-[10px] text-gray-500">{diff > 0 ? `${diff} over` : `${-diff} short`}</p>
+                  <p className="text-[10px] text-ink-faint">{diff > 0 ? `${diff} over` : `${-diff} short`}</p>
                 )}
               </div>
             );
@@ -571,23 +571,23 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
         </div>
 
         {swapSuggestions.length > 0 && (
-          <div className="border-t border-gray-700/50 pt-3 space-y-2">
-            <h4 className="text-xs font-medium text-gray-400">Suggested Swaps</h4>
+          <div className="border-t border-line pt-3 space-y-2">
+            <h4 className="text-xs font-medium text-ink-muted">Suggested Swaps</h4>
             {swapSuggestions.map((swap, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs bg-gray-900/50 rounded-lg px-3 py-2">
+              <div key={i} className="flex items-center gap-2 text-xs bg-surface-1/50 rounded-lg px-3 py-2">
                 <button
                   onClick={() => { removeOneIncluded(swap.remove.name); addOneExcluded(swap.add.name); }}
-                  className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-[10px] font-medium transition-colors flex-shrink-0"
+                  className="px-2 py-1 bg-warn hover:bg-warn text-ink rounded text-[10px] font-medium transition-colors flex-shrink-0"
                 >
                   Swap
                 </button>
-                <span className="text-red-400 truncate" title={swap.remove.name}>- {swap.remove.name}</span>
-                <span className="text-gray-500 flex-shrink-0 text-[10px]">({swap.remove.fromCategory})</span>
-                <svg className="w-3 h-3 text-gray-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <span className="text-danger truncate" title={swap.remove.name}>- {swap.remove.name}</span>
+                <span className="text-ink-faint flex-shrink-0 text-[10px]">({swap.remove.fromCategory})</span>
+                <svg className="w-3 h-3 text-ink-faint flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
-                <span className="text-green-400 truncate" title={swap.add.name}>+ {swap.add.name}</span>
-                <span className="text-gray-500 flex-shrink-0 text-[10px]">({swap.add.toCategory})</span>
+                <span className="text-ok truncate" title={swap.add.name}>+ {swap.add.name}</span>
+                <span className="text-ink-faint flex-shrink-0 text-[10px]">({swap.add.toCategory})</span>
               </div>
             ))}
           </div>

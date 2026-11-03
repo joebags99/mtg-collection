@@ -1,10 +1,10 @@
 import type { CSSProperties, ReactNode } from 'react';
 
 const ACCENTS: Record<string, string> = {
-  blue: '#3b82f6', green: '#22c55e', red: '#ef4444', purple: '#a855f7',
-  yellow: '#eab308', gray: '#6b7280', orange: '#f97316',
+  blue: 'rgb(var(--info))', green: 'rgb(var(--ok))', red: 'rgb(var(--danger))', purple: 'rgb(var(--secondary))',
+  yellow: 'rgb(var(--warn))', gray: 'rgb(var(--ink-faint))', orange: 'rgb(var(--warn))', accent: 'rgb(var(--accent))',
 };
-const SIZES = { sm: 'text-sm font-medium', md: 'text-lg font-semibold', lg: 'text-xl font-bold' } as const;
+const SIZES = { sm: 'text-xs font-medium uppercase tracking-[0.14em]', md: 'text-base font-semibold', lg: 'text-xl font-semibold font-display' } as const;
 
 interface SectionHeaderProps {
   children: ReactNode;
@@ -15,14 +15,14 @@ interface SectionHeaderProps {
   className?: string;
 }
 
-export function SectionHeader({ children, color = 'blue', size = 'md', count, className = '' }: SectionHeaderProps) {
+export function SectionHeader({ children, color = 'accent', size = 'md', count, className = '' }: SectionHeaderProps) {
   return (
     <h3
-      className={`section-header ${SIZES[size]} ${className}`}
+      className={`section-header text-ink ${SIZES[size]} ${className}`}
       style={{ '--accent-color': ACCENTS[color] || color } as CSSProperties}
     >
       {children}
-      {count !== undefined && <span className="text-gray-500 font-normal ml-2">({count})</span>}
+      {count !== undefined && <span className="text-ink-faint font-normal ml-2 num text-sm">{count}</span>}
     </h3>
   );
 }
@@ -32,8 +32,8 @@ export function TypeSectionHeader({ type, count, className = '' }: { type: strin
   return (
     <div className={`card-type-section pt-3 pb-2 ${typeClass} ${className}`}>
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-gray-300">{type}</span>
-        <span className="text-xs text-gray-500">{count}</span>
+        <span className="text-xs font-medium uppercase tracking-[0.14em] text-ink-muted">{type}</span>
+        <span className="text-xs text-ink-faint num">{count}</span>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
-import { useState, type CSSProperties } from 'react';
-import { CardName, LoadingOverlay, ManaSymbol, PageHero } from '../../components/ui';
+import { useState } from 'react';
+import { CardName, LoadingOverlay, ManaSymbol, PageHero, ColorBadge, Button } from '../../components/ui';
 import { apiGet } from '../../lib/api';
-import { ALL_COLORS, COLOR_MAP, getColorGlow } from '../../lib/colors';
+import { ALL_COLORS, COLOR_MAP } from '../../lib/colors';
 import type { CollectionStats as CollectionStatsData } from '../../types/api';
 
 interface Props {
@@ -10,17 +10,17 @@ interface Props {
 
 const TYPE_ORDER = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
 const TYPE_COLORS: Record<string, string> = {
-  Creature: '#22c55e', Instant: '#3b82f6', Sorcery: '#ef4444',
-  Enchantment: '#a855f7', Artifact: '#eab308', Planeswalker: '#f97316',
-  Land: '#92400e', Other: '#6b7280',
+  Creature: 'rgb(var(--mana-g))', Instant: 'rgb(var(--mana-u))', Sorcery: 'rgb(var(--mana-r))',
+  Enchantment: 'rgb(var(--mana-b))', Artifact: 'rgb(var(--mana-c))', Planeswalker: 'rgb(var(--accent))',
+  Land: 'rgb(var(--warn))', Other: 'rgb(var(--ink-faint))',
 };
 const PIP_COLORS: Record<string, { bg: string; text: string }> = {
-  W: { bg: '#f9faf4', text: '#333' },
-  U: { bg: '#0e68ab', text: '#fff' },
-  B: { bg: '#2b2b2b', text: '#ccc' },
-  R: { bg: '#d32029', text: '#fff' },
-  G: { bg: '#00733e', text: '#fff' },
-  C: { bg: '#6b7280', text: '#fff' },
+  W: { bg: 'rgb(var(--mana-w))', text: 'rgb(var(--surface-0))' },
+  U: { bg: 'rgb(var(--mana-u))', text: 'rgb(var(--surface-0))' },
+  B: { bg: 'rgb(var(--mana-b))', text: 'rgb(var(--surface-0))' },
+  R: { bg: 'rgb(var(--mana-r))', text: 'rgb(var(--surface-0))' },
+  G: { bg: 'rgb(var(--mana-g))', text: 'rgb(var(--surface-0))' },
+  C: { bg: 'rgb(var(--mana-c))', text: 'rgb(var(--surface-0))' },
 };
 const PIP_ORDER = ['W', 'U', 'B', 'R', 'G', 'C'];
 const CMC_BUCKETS = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -46,8 +46,8 @@ export function CollectionStats({ collectionCount }: Props) {
   if (collectionCount === 0) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
-        <p className="text-gray-500 text-center py-12">Upload a collection to see your stats.</p>
+        <h2 className="text-2xl font-semibold">Collection Statistics</h2>
+        <p className="text-ink-faint text-center py-12">Upload a collection to see your stats.</p>
       </div>
     );
   }
@@ -59,11 +59,9 @@ export function CollectionStats({ collectionCount }: Props) {
   if (error) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Collection Statistics</h2>
-        <div className="bg-red-900/50 border border-red-700 rounded p-3 text-red-300">{error}</div>
-        <button onClick={loadStats} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">
-          Retry
-        </button>
+        <h2 className="text-2xl font-semibold">Collection Statistics</h2>
+        <div className="bg-danger/10 border border-danger/40 rounded p-3 text-danger">{error}</div>
+        <Button onClick={loadStats} size="sm">Retry</Button>
       </div>
     );
   }
@@ -76,30 +74,11 @@ export function CollectionStats({ collectionCount }: Props) {
           subtitle={`Analyze your ${collectionCount.toLocaleString()} cards to see type distribution, mana curve, color breakdown, and estimated value.`}
           colorIdentity={['U', 'R']}
         >
-          <div className="flex items-center gap-6 mt-6">
-            <div className="flex gap-2">
-              {ALL_COLORS.map((c) => (
-                <div
-                  key={c}
-                  className="mana-orb opacity-50"
-                  style={{
-                    backgroundColor: COLOR_MAP[c].bg,
-                    color: COLOR_MAP[c].text,
-                    '--orb-color': getColorGlow([c]),
-                  } as CSSProperties}
-                >
-                  {c}
-                </div>
-              ))}
-            </div>
-            <button
-              onClick={loadStats}
-              className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-medium transition-colors animated-border"
-            >
-              Load Statistics
-            </button>
+          <div className="flex items-center gap-5 mt-6">
+            <ColorBadge colors={ALL_COLORS} size="md" />
+            <Button onClick={loadStats}>Load Statistics</Button>
           </div>
-          <p className="text-xs text-gray-500 mt-3">
+          <p className="text-xs text-ink-faint mt-3">
             This fetches data from Scryfall and may take a moment for large collections.
           </p>
         </PageHero>
@@ -129,8 +108,8 @@ export function CollectionStats({ collectionCount }: Props) {
       />
 
       <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-300">Card Type Distribution</h3>
+        <div className="bg-surface-2 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-ink">Card Type Distribution</h3>
           <div className="flex rounded-full overflow-hidden h-4 bar-animate">
             {presentTypes.map((type) => (
               <div
@@ -144,9 +123,9 @@ export function CollectionStats({ collectionCount }: Props) {
             {presentTypes.map((type) => (
               <div key={type} className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: TYPE_COLORS[type] }} />
-                <span className="text-xs text-gray-400 flex-1">{type}</span>
-                <span className="text-xs text-gray-300 font-medium">{stats.type_counts[type]}</span>
-                <span className="text-xs text-gray-500 w-10 text-right">
+                <span className="text-xs text-ink-muted flex-1">{type}</span>
+                <span className="text-xs text-ink font-medium">{stats.type_counts[type]}</span>
+                <span className="text-xs text-ink-faint w-10 text-right">
                   {((stats.type_counts[type] / totalTyped) * 100).toFixed(1)}%
                 </span>
               </div>
@@ -154,39 +133,31 @@ export function CollectionStats({ collectionCount }: Props) {
           </div>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-300">Color Distribution</h3>
+        <div className="bg-surface-2 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-ink">Color Distribution</h3>
           {totalPips > 0 && (
             <>
-              <div className="flex gap-2">
-                {presentColors.map((color) => (
-                  <div
-                    key={color}
-                    className="rounded-lg py-4 flex flex-col items-center justify-center transition-all relative"
-                    style={{
-                      backgroundColor: PIP_COLORS[color].bg,
-                      color: PIP_COLORS[color].text,
-                      flex: stats.color_counts[color],
-                      minWidth: '60px',
-                    }}
-                  >
-                    <div
-                      className="absolute opacity-15 pointer-events-none"
-                      style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}
-                    >
-                      <ManaSymbol symbol={color} size={80} />
-                    </div>
-                    <span className="text-xl font-bold relative z-10 drop-shadow-sm">{stats.color_counts[color]}</span>
-                    <p className="text-[10px] opacity-75 relative z-10">{colorLabel(color)}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="flex rounded-full overflow-hidden h-3">
+              <div className="flex rounded-full overflow-hidden h-4 bar-animate">
                 {presentColors.map((color) => (
                   <div
                     key={color}
                     style={{ width: `${(stats.color_counts[color] / totalPips) * 100}%`, backgroundColor: PIP_COLORS[color].bg }}
+                    title={`${colorLabel(color)}: ${stats.color_counts[color]}`}
                   />
+                ))}
+              </div>
+              <div className="space-y-1.5">
+                {presentColors.map((color) => (
+                  <div key={color} className="flex items-center justify-between text-xs">
+                    <span className="inline-flex items-center gap-2 text-ink-muted">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: PIP_COLORS[color].bg }} />
+                      {colorLabel(color)}
+                    </span>
+                    <span className="num">
+                      <span className="text-ink">{stats.color_counts[color]}</span>
+                      <span className="text-ink-faint ml-2 w-12 inline-block text-right">{((stats.color_counts[color] / totalPips) * 100).toFixed(1)}%</span>
+                    </span>
+                  </div>
                 ))}
               </div>
             </>
@@ -195,20 +166,20 @@ export function CollectionStats({ collectionCount }: Props) {
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-300">Collection Mana Curve</h3>
+        <div className="bg-surface-2 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-ink">Collection Mana Curve</h3>
           <div className="flex items-end gap-2" style={{ height: '140px' }}>
             {CMC_BUCKETS.map((cmc, i) => {
               const pct = cmcCounts[i] / maxCmc;
               return (
                 <div key={cmc} className="flex-1 flex flex-col items-center h-full justify-end">
-                  <span className="text-xs text-gray-400 mb-1">{cmcCounts[i] > 0 ? cmcCounts[i] : ''}</span>
+                  <span className="text-xs text-ink-muted mb-1">{cmcCounts[i] > 0 ? cmcCounts[i] : ''}</span>
                   <div
-                    className="w-full bg-blue-600 rounded-t transition-all duration-300"
+                    className="w-full bg-accent text-accent-ink rounded-t transition-all duration-300"
                     style={{ height: `${Math.max(pct * 100, cmcCounts[i] > 0 ? 3 : 0)}%` }}
                   />
                   <span className="mt-1 flex items-center justify-center">
-                    {cmc === 7 ? <span className="text-xs text-gray-500">7+</span> : <ManaSymbol symbol={String(cmc)} size={16} />}
+                    {cmc === 7 ? <span className="text-xs text-ink-faint">7+</span> : <ManaSymbol symbol={String(cmc)} size={16} />}
                   </span>
                 </div>
               );
@@ -216,20 +187,20 @@ export function CollectionStats({ collectionCount }: Props) {
           </div>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-300">Most Valuable Cards</h3>
+        <div className="bg-surface-2 rounded-lg p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-ink">Most Valuable Cards</h3>
           <div className="divide-y divide-gray-700">
             {stats.top_valuable.map((card, i) => (
               <div key={card.name} className="flex items-center justify-between py-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-600 w-5">{i + 1}.</span>
+                  <span className="text-xs text-ink-faint w-5">{i + 1}.</span>
                   <CardName name={card.name} className="text-sm" />
-                  {card.qty > 1 && <span className="text-xs text-gray-500">x{card.qty}</span>}
+                  {card.qty > 1 && <span className="text-xs text-ink-faint">x{card.qty}</span>}
                 </div>
-                <span className="text-sm font-medium text-yellow-400">${(card.price ?? 0).toFixed(2)}</span>
+                <span className="text-sm font-medium text-warn">${(card.price ?? 0).toFixed(2)}</span>
               </div>
             ))}
-            {stats.top_valuable.length === 0 && <p className="text-gray-500 text-sm py-4">No price data available</p>}
+            {stats.top_valuable.length === 0 && <p className="text-ink-faint text-sm py-4">No price data available</p>}
           </div>
         </div>
       </div>

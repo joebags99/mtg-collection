@@ -1,0 +1,55 @@
+/* Design tokens. Colors are RGB triplets so Tailwind can apply opacity: rgb(var(--x) / 0.5). */
+:root {
+  /* Ink: the page and its surfaces, darkest to most raised */
+  --surface-0: 12 11 15;
+  --surface-1: 19 18 24;
+  --surface-2: 26 25 32;
+  --surface-3: 36 35 44;
+
+  /* Hairlines */
+  --line: 42 41 51;
+  --line-strong: 62 60 74;
+
+  /* Parchment text */
+  --ink: 236 230 216;
+  --ink-muted: 166 159 143;
+  --ink-faint: 111 106 95;
+
+  /* Accent: gilt by default; commander views override it with their identity */
+  --accent: 212 179 106;
+  --accent-hi: 232 203 138;
+  --accent-ink: 26 20 8;
+
+  /* Secondary accent for compare and partner affordances */
+  --secondary: 180 140 224;
+
+  /* Semantic */
+  --ok: 111 191 138;
+  --warn: 217 180 91;
+  --danger: 224 112 112;
+  --info: 106 164 224;
+
+  /* The five colors of Magic, tuned for dark surfaces */
+  --mana-w: 233 227 201;
+  --mana-u: 79 143 214;
+  --mana-b: 169 139 200;
+  --mana-r: 224 90 79;
+  --mana-g: 95 174 115;
+  --mana-c: 160 156 150;
+
+  /* Type */
+  --font-display: 'Fraunces', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* Motion: one curve, three durations */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 420ms;
+
+  /* Shape */
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+}

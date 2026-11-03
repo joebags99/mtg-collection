@@ -1,626 +1,168 @@
-/* Loading spinner */
-@keyframes spinSmooth {
-  to { transform: rotate(360deg); }
+/* Component-level styles that need more than utilities: panels, motion, and the commander art effects. */
+
+/* --- Panels --- */
+.panel {
+  background: rgb(var(--surface-2));
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--r-lg);
+}
+.panel-raised {
+  background: rgb(var(--surface-3));
+  border: 1px solid rgb(var(--line-strong));
+  border-radius: var(--r-lg);
+}
+.panel-accent {
+  background: rgb(var(--surface-2));
+  border: 1px solid rgb(var(--accent) / 0.35);
+  border-radius: var(--r-lg);
 }
 
-.loading-spinner {
-  width: 48px;
-  height: 48px;
-  border: 3px solid #4b5563 !important;
-  border-top-color: #3b82f6 !important;
-  border-radius: 9999px;
-  animation: spinSmooth 0.8s linear infinite;
+/* --- Headings --- */
+.rule-accent {
+  position: relative;
+  padding-bottom: 0.5rem;
 }
-
-/* Page transition animations */
-@keyframes fadeSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.page-fade-in {
-  animation: fadeSlideIn 0.3s ease-out;
-}
-
-/* Card hover lift effect */
-@keyframes cardEnter {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.card-animate {
-  animation: cardEnter 0.25s ease-out both;
-}
-
-/* Staggered grid animation */
-.grid-stagger > * {
-  animation: fadeSlideIn 0.3s ease-out both;
-}
-.grid-stagger > *:nth-child(1) { animation-delay: 0ms; }
-.grid-stagger > *:nth-child(2) { animation-delay: 30ms; }
-.grid-stagger > *:nth-child(3) { animation-delay: 60ms; }
-.grid-stagger > *:nth-child(4) { animation-delay: 90ms; }
-.grid-stagger > *:nth-child(5) { animation-delay: 120ms; }
-.grid-stagger > *:nth-child(6) { animation-delay: 150ms; }
-.grid-stagger > *:nth-child(7) { animation-delay: 180ms; }
-.grid-stagger > *:nth-child(8) { animation-delay: 210ms; }
-.grid-stagger > *:nth-child(9) { animation-delay: 240ms; }
-.grid-stagger > *:nth-child(10) { animation-delay: 270ms; }
-.grid-stagger > *:nth-child(n+11) { animation-delay: 300ms; }
-
-/* Smooth tab underline transition */
-nav button {
-  transition: color 0.2s ease, border-color 0.2s ease;
-}
-
-/* Commander card hover lift */
-.card-lift {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.card-lift:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
-}
-
-/* Stats number count-up feel */
-@keyframes numberPop {
-  0% { transform: scale(0.8); opacity: 0; }
-  60% { transform: scale(1.05); }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-.number-pop {
-  animation: numberPop 0.4s ease-out;
-}
-
-/* Progress bar fill animation */
-@keyframes barFill {
-  from { width: 0; }
-}
-
-.bar-animate {
-  animation: barFill 0.6s ease-out;
-}
-
-/* Commander backdrop blur effect */
-.commander-backdrop {
+.rule-accent::after {
+  content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 400px;
-  background-size: cover;
-  background-position: center top;
-  filter: blur(60px) saturate(1.5);
-  opacity: 0.25;
-  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%);
-  pointer-events: none;
-  z-index: 0;
-  animation: backdropFadeIn 0.6s ease-out;
+  left: 0; bottom: 0;
+  width: 3rem; height: 2px;
+  background: rgb(var(--accent));
 }
 
-@keyframes backdropFadeIn {
-  from {
-    opacity: 0;
-    filter: blur(80px) saturate(1);
-  }
-  to {
-    opacity: 0.25;
-    filter: blur(60px) saturate(1.5);
-  }
-}
-
-/* Section header styling */
 .section-header {
   position: relative;
   padding-left: 12px;
 }
-
 .section-header::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 50%;
+  left: 0; top: 50%;
   transform: translateY(-50%);
-  width: 3px;
-  height: 70%;
-  border-radius: 2px;
-  background: linear-gradient(to bottom, var(--accent-color, #3b82f6), transparent);
+  width: 2px; height: 70%;
+  border-radius: 1px;
+  background: var(--accent-color, rgb(var(--accent)));
 }
 
-/* Card type section styling for deck builder */
 .card-type-section {
   position: relative;
-  overflow: hidden;
+  border-top: 1px solid rgb(var(--line));
 }
-
 .card-type-section::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(to right, var(--section-color, #4b5563), transparent);
+  top: -1px; left: 0;
+  width: 2.5rem; height: 1px;
+  background: var(--section-color, rgb(var(--ink-faint)));
+}
+.type-creature { --section-color: rgb(var(--mana-g)); }
+.type-instant { --section-color: rgb(var(--mana-u)); }
+.type-sorcery { --section-color: rgb(var(--mana-r)); }
+.type-artifact { --section-color: rgb(var(--mana-c)); }
+.type-enchantment { --section-color: rgb(var(--mana-b)); }
+.type-planeswalker { --section-color: rgb(var(--accent)); }
+.type-land { --section-color: rgb(var(--warn)); }
+.type-other { --section-color: rgb(var(--ink-faint)); }
+
+/* --- Motion --- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-spinner {
+  width: 40px; height: 40px;
+  border: 2px solid rgb(var(--line-strong));
+  border-top-color: rgb(var(--accent));
+  border-radius: 9999px;
+  animation: spin 0.8s linear infinite;
 }
 
-/* Enhanced deck card with subtle glow */
-.deck-card-enhanced {
-  transition: transform 0.2s ease, box-shadow 0.3s ease;
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
+.page-fade-in { animation: fade-up var(--dur-3) var(--ease); }
+.grid-stagger > * { animation: fade-up var(--dur-3) var(--ease) both; }
+.grid-stagger > :nth-child(n + 2) { animation-delay: 40ms; }
+.grid-stagger > :nth-child(n + 4) { animation-delay: 80ms; }
+.grid-stagger > :nth-child(n + 7) { animation-delay: 120ms; }
+.grid-stagger > :nth-child(n + 11) { animation-delay: 160ms; }
 
-.deck-card-enhanced:hover {
-  transform: translateY(-2px);
+@keyframes bar-fill { from { width: 0; } }
+.bar-animate { animation: bar-fill var(--dur-3) var(--ease); }
+
+/* --- Commander art --- */
+/* A foil sheen that sweeps across card art on hover. */
+.foil {
+  position: relative;
+  overflow: hidden;
 }
-
-/* Owned/Missing indicator shimmer */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-.owned-indicator {
-  background: linear-gradient(90deg, #22c55e 0%, #4ade80 50%, #22c55e 100%);
-  background-size: 200% 100%;
-}
-
-.missing-indicator {
-  background: linear-gradient(90deg, #ef4444 0%, #f87171 50%, #ef4444 100%);
-  background-size: 200% 100%;
-}
-
-/* Stats card enhancement */
-.stats-card {
-  background: linear-gradient(135deg, rgba(31, 41, 55, 1) 0%, rgba(17, 24, 39, 1) 100%);
-  border: 1px solid rgba(75, 85, 99, 0.5);
-}
-
-.stats-card:hover {
-  border-color: rgba(99, 102, 241, 0.5);
-}
-
-/* Type header colors by MTG card type */
-.type-creature { --section-color: #22c55e; }
-.type-instant { --section-color: #3b82f6; }
-.type-sorcery { --section-color: #ef4444; }
-.type-artifact { --section-color: #a1a1aa; }
-.type-enchantment { --section-color: #a855f7; }
-.type-planeswalker { --section-color: #f97316; }
-.type-land { --section-color: #a16207; }
-.type-other { --section-color: #6b7280; }
-
-/* ============================================
-   IMMERSIVE AMBIENT BACKGROUND SYSTEM
-   ============================================ */
-
-/* Floating mana particles */
-@keyframes floatUp {
-  0% {
-    transform: translateY(100vh) rotate(0deg) scale(0);
-    opacity: 0;
-  }
-  10% { opacity: 1; transform: translateY(90vh) rotate(36deg) scale(1); }
-  90% { opacity: 0.8; }
-  100% {
-    transform: translateY(-10vh) rotate(360deg) scale(0.5);
-    opacity: 0;
-  }
-}
-
-.mana-particle {
+.foil::after {
+  content: '';
   position: absolute;
-  pointer-events: none;
-  border-radius: 50%;
-  filter: blur(1px);
-  animation: floatUp linear infinite;
-  z-index: 0;
-}
-
-/* Ambient floating orbs - large glowing spheres */
-@keyframes orbFloat {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(30px, -20px) scale(1.1); }
-  50% { transform: translate(-20px, 20px) scale(0.95); }
-  75% { transform: translate(10px, 30px) scale(1.05); }
-}
-
-@keyframes orbPulse {
-  0%, 100% { opacity: 0.15; filter: blur(80px); }
-  50% { opacity: 0.25; filter: blur(60px); }
-}
-
-.ambient-orb {
-  position: absolute;
-  border-radius: 50%;
-  pointer-events: none;
-  animation:
-    orbFloat 20s ease-in-out infinite,
-    orbPulse 8s ease-in-out infinite;
-  z-index: 0;
-}
-
-/* Playmat texture overlay */
-.playmat-bg {
-  position: fixed;
   inset: 0;
-  background:
-    radial-gradient(ellipse at 30% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 70% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(17, 24, 39, 0.5) 0%, transparent 100%);
+  background: linear-gradient(115deg, transparent 35%, rgb(var(--ink) / 0.14) 48%, rgb(var(--accent) / 0.18) 52%, transparent 65%);
+  transform: translateX(-120%);
+  transition: transform var(--dur-3) var(--ease);
+  pointer-events: none;
+}
+.foil:hover::after { transform: translateX(120%); }
+
+/* Blurred art behind a commander page, fading into the page color. */
+.commander-backdrop {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 420px;
+  background-size: cover;
+  background-position: center 20%;
+  filter: blur(48px) saturate(1.2);
+  opacity: 0.22;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%);
   pointer-events: none;
   z-index: 0;
+  animation: fade-up var(--dur-3) var(--ease);
 }
 
-/* ============================================
-   CARD HOVER EFFECTS
-   ============================================ */
-
-/* ============================================
-   GLASSMORPHISM PANELS
-   ============================================ */
-
-.glass-panel {
-  background: rgba(17, 24, 39, 0.7);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+/* --- Form controls --- */
+.field {
+  width: 100%;
+  background: rgb(var(--surface-1));
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--r-md);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: rgb(var(--ink));
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
 }
-
-.glass-panel-light {
-  background: rgba(31, 41, 55, 0.6);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.field::placeholder { color: rgb(var(--ink-faint)); }
+.field:focus {
+  outline: none;
+  border-color: rgb(var(--accent) / 0.7);
+  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.15);
 }
-
-/* ============================================
-   RANGE SLIDER STYLING
-   ============================================ */
 
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 8px;
-  border-radius: 4px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgb(var(--line-strong));
   outline: none;
 }
-
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px;
-  height: 18px;
+  width: 16px; height: 16px;
   border-radius: 50%;
-  background: #eab308;
+  background: rgb(var(--accent));
+  border: 2px solid rgb(var(--surface-0));
   cursor: pointer;
-  border: 2px solid #fef08a;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-
-input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-  box-shadow: 0 3px 10px rgba(234, 179, 8, 0.4);
-}
-
 input[type="range"]::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
+  width: 16px; height: 16px;
   border-radius: 50%;
-  background: #eab308;
+  background: rgb(var(--accent));
+  border: 2px solid rgb(var(--surface-0));
   cursor: pointer;
-  border: 2px solid #fef08a;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
-/* ============================================
-   COMPACT STAT BAR (replaces hero)
-   ============================================ */
-
-.stat-bar {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1.25rem;
-  border-radius: 9999px;
-  background: rgba(17, 24, 39, 0.8);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.stat-pill {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  background: rgba(59, 130, 246, 0.2);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
-/* ============================================
-   NEON GLOW EFFECTS
-   ============================================ */
-
-.neon-text {
-  text-shadow:
-    0 0 10px var(--neon-color, rgba(59, 130, 246, 0.8)),
-    0 0 20px var(--neon-color, rgba(59, 130, 246, 0.6)),
-    0 0 40px var(--neon-color, rgba(59, 130, 246, 0.4));
-}
-
-.neon-border {
-  box-shadow:
-    0 0 10px var(--neon-color, rgba(59, 130, 246, 0.5)),
-    inset 0 0 10px var(--neon-color, rgba(59, 130, 246, 0.1));
-}
-
-/* ============================================
-   ANIMATED UNDERLINES
-   ============================================ */
-
-@keyframes underlineGlow {
-  0%, 100% {
-    box-shadow: 0 2px 10px var(--glow-color, rgba(59, 130, 246, 0.5));
-    transform: scaleX(1);
-  }
-  50% {
-    box-shadow: 0 2px 20px var(--glow-color, rgba(59, 130, 246, 0.8));
-    transform: scaleX(1.02);
-  }
-}
-
-.glow-underline {
-  position: relative;
-}
-
-.glow-underline::after {
-  content: '';
-  position: absolute;
-  bottom: -4px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--glow-color, #3b82f6);
-  animation: underlineGlow 2s ease-in-out infinite;
-}
-
-/* ============================================
-   EXISTING STYLES (keep these)
-   ============================================ */
-
-/* Hero header with animated gradient */
-.page-hero {
-  position: relative;
-  overflow: hidden;
-  border-radius: 1rem;
-  background: linear-gradient(135deg, rgba(31, 41, 55, 0.9) 0%, rgba(17, 24, 39, 0.95) 100%);
-}
-
-.page-hero::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background:
-    radial-gradient(ellipse at 20% 50%, var(--hero-glow, rgba(59, 130, 246, 0.15)) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 50%, var(--hero-glow-2, rgba(139, 92, 246, 0.1)) 0%, transparent 50%);
-  animation: heroGlow 8s ease-in-out infinite alternate;
-}
-
-@keyframes heroGlow {
-  0% { opacity: 0.5; transform: scale(1); }
-  100% { opacity: 1; transform: scale(1.1); }
-}
-
-.hero-art-strip {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 50%;
-  overflow: hidden;
-  mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.3) 30%, rgba(0,0,0,0.5) 100%);
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.3) 30%, rgba(0,0,0,0.5) 100%);
-}
-
-.hero-art-strip img {
-  position: absolute;
-  height: 100%;
-  width: auto;
-  object-fit: cover;
-  filter: saturate(1.2);
-  animation: artSlide 20s ease-in-out infinite alternate;
-}
-
-@keyframes artSlide {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-10%); }
-}
-
-/* Floating commander cards for showcase */
-.commander-showcase {
-  display: flex;
-  gap: -20px;
-  perspective: 1000px;
-}
-
-.showcase-card {
-  transition: transform 0.4s ease, z-index 0.1s;
-  transform-style: preserve-3d;
-}
-
-.showcase-card:hover {
-  transform: translateY(-10px) rotateY(5deg) scale(1.05);
-  z-index: 10;
-}
-
-/* Glowing card border effect */
-.card-glow {
-  position: relative;
-}
-
-.card-glow::after {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: inherit;
-  background: var(--card-glow-color, transparent);
-  z-index: -1;
-  filter: blur(8px);
-  opacity: 0.6;
-  transition: opacity 0.3s ease;
-}
-
-.card-glow:hover::after {
-  opacity: 1;
-}
-
-/* Animated stat counter */
-.stat-highlight {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  position: relative;
-  overflow: hidden;
-}
-
-.stat-highlight::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(
-    45deg,
-    transparent 40%,
-    rgba(255,255,255,0.03) 50%,
-    transparent 60%
-  );
-  animation: statShine 3s ease-in-out infinite;
-}
-
-@keyframes statShine {
-  0% { transform: translateX(-100%) rotate(45deg); }
-  100% { transform: translateX(100%) rotate(45deg); }
-}
-
-/* Mana orb decorations */
-.mana-orb {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 18px;
-  box-shadow:
-    0 4px 15px var(--orb-color, rgba(0,0,0,0.3)),
-    inset 0 2px 4px rgba(255,255,255,0.2);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.mana-orb:hover {
-  transform: scale(1.15);
-  box-shadow:
-    0 6px 25px var(--orb-color, rgba(0,0,0,0.5)),
-    inset 0 2px 4px rgba(255,255,255,0.3);
-}
-
-/* Commander art background for cards */
-.commander-card-art-bg {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-}
-
-.commander-card-art-bg img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: blur(20px) saturate(0.8);
-  opacity: 0.15;
-  transform: scale(1.2);
-}
-
-/* Animated border gradient */
-@keyframes borderGradient {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-.animated-border {
-  position: relative;
-}
-
-.animated-border::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  padding: 2px;
-  border-radius: inherit;
-  background: linear-gradient(
-    90deg,
-    var(--border-color-1, #3b82f6),
-    var(--border-color-2, #8b5cf6),
-    var(--border-color-3, #ec4899),
-    var(--border-color-2, #8b5cf6),
-    var(--border-color-1, #3b82f6)
-  );
-  background-size: 300% 100%;
-  animation: borderGradient 4s linear infinite;
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-}
-
-/* Deck showcase with stacked effect */
-.deck-stack {
-  position: relative;
-  transform-style: preserve-3d;
-}
-
-.deck-stack::before,
-.deck-stack::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: inherit;
-  z-index: -1;
-}
-
-.deck-stack::before {
-  transform: translateY(4px) translateX(2px) rotate(2deg);
-  opacity: 0.6;
-}
-
-.deck-stack::after {
-  transform: translateY(8px) translateX(4px) rotate(4deg);
-  opacity: 0.3;
-}
+/* Tabular figures for anything numeric */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
