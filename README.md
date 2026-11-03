@@ -1,70 +1,55 @@
-# Getting Started with Create React App
+# MTG Commander Recommender
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Upload your Magic: The Gathering collection, see which Commander decks you can
+already build most of, and track the decks you own.
 
-## Available Scripts
+## Running it
 
-In the project directory, you can run:
+Backend (FastAPI):
 
-### `npm start`
+```bash
+pip install -r backend/requirements.txt
+python -m uvicorn backend.app:app --reload
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Frontend (React, served on port 3000 and proxied to the backend on 8000):
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```bash
+npm install
+npm start
+```
 
-### `npm test`
+Or everything at once with Docker:
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```bash
+docker compose up --build
+```
 
-### `npm run build`
+Configuration is read from the environment; see `.env.example`.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Backend layout
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```
+backend/app/
+  main.py          FastAPI app factory and startup
+  config.py        environment settings and cache lifetimes
+  api/             one thin router per resource (auth, user, collection, decks, commanders, recommendations)
+  services/        Scryfall and EDHREC clients, user persistence, and the analysis built on them
+  domain/          pure functions: name normalization, list parsing, partner rules, card classification
+  state.py         the working collection and deck lists
+  cache.py         process-local caches for external data
+  auth.py          password hashing, JWT, auth dependencies
+  db.py            SQLite connection and schema
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Routes stay thin: they validate input, call a service, and return its result.
+External calls that block run in a thread pool so they do not stall the event loop.
 
-### `npm run eject`
+## Tests
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```bash
+pip install -r backend/requirements-dev.txt
+cd backend && python -m pytest
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+The suite stubs Scryfall and EDHREC, so it runs offline.
