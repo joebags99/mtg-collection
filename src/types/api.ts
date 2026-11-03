@@ -209,3 +209,9 @@ export interface ValidateCardsResponse {
   valid: string[];
   invalid: string[];
 }
+
+export interface FavoritesRecommendationResponse {
+  results: FavoriteMatch[];
+  detected_colors: Color[];
+  total_commanders_checked: number;
+}

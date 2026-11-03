@@ -73,3 +73,64 @@ export function makeAddComparator(mode: SuggestionMode): (a: BuilderCard, b: Bui
     return (b.synergy || 0) - (a.synergy || 0);
   };
 }
+
+export interface PlannedRemoval { name: string; qty: number; category: string }
+export interface PlannedAdd { name: string; qty: number; category: string; owned: boolean; synergy?: number }
+
+export interface CompositionPlan {
+  removals: PlannedRemoval[];
+  adds: PlannedAdd[];
+  /** Extra copies to add to already-included unlimited cards (basic lands). */
+  increases: PlannedAdd[];
+}
+
+/**
+ * Work out which cards to cut and add to move actual category counts toward `targets`.
+ * Used both for the live preview and for applying the targets.
+ */
+export function planComposition(
+  targets: Record<FunctionalCategory, number>,
+  counts: Record<FunctionalCategory, number>,
+  included: BuilderCard[],
+  excluded: BuilderCard[],
+  mode: SuggestionMode,
+  meta: { key: FunctionalCategory; label: string }[],
+): CompositionPlan {
+  const compareForAdd = makeAddComparator(mode);
+  const removals: PlannedRemoval[] = [];
+  const adds: PlannedAdd[] = [];
+  const increases: PlannedAdd[] = [];
+
+  for (const { key, label } of meta) {
+    const diff = counts[key] - targets[key];
+    if (diff > 0) {
+      const candidates = included.filter((c) => classifyFunctionalCategory(c) === key).sort(compareForRemoval);
+      let remaining = diff;
+      for (const c of candidates) {
+        if (remaining <= 0) break;
+        const take = Math.min(c.qty, remaining);
+        removals.push({ name: c.name, qty: take, category: label });
+        remaining -= take;
+      }
+    } else if (diff < 0) {
+      let remaining = Math.abs(diff);
+      const candidates = excluded.filter((c) => classifyFunctionalCategory(c) === key).sort(compareForAdd);
+      for (const c of candidates) {
+        if (remaining <= 0) break;
+        adds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy });
+        remaining -= 1;
+      }
+      if (remaining > 0) {
+        const unlimited = included
+          .filter((c) => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
+          .sort(compareForAdd);
+        for (const c of unlimited) {
+          if (remaining <= 0) break;
+          increases.push({ name: c.name, qty: remaining, category: label, owned: c.owned, synergy: c.synergy });
+          remaining = 0;
+        }
+      }
+    }
+  }
+  return { removals, adds, increases };
+}
