@@ -12,11 +12,11 @@ pip install -r backend/requirements.txt
 python -m uvicorn backend.app:app --reload
 ```
 
-Frontend (React, served on port 3000 and proxied to the backend on 8000):
+Frontend (React with Vite and TypeScript, on port 3000, talking to the backend on 8000):
 
 ```bash
 npm install
-npm start
+npm run dev
 ```
 
 Or everything at once with Docker:
@@ -45,11 +45,33 @@ backend/app/
 Routes stay thin: they validate input, call a service, and return its result.
 External calls that block run in a thread pool so they do not stall the event loop.
 
+## Frontend layout
+
+```
+src/
+  main.tsx         entry point
+  App.tsx          root: tab state, auth, sync, and screen switching
+  features/        one folder per screen: collection, commanders, deckbuilder, decks, favorites, auth
+  pages/           static pages (About, Guides)
+  components/ui/   shared primitives: mana symbols, badges, cards, pickers, hero, headers
+  lib/             API client, localStorage helpers, color and card-grouping helpers
+  types/           API response types and the Tab union
+```
+
 ## Tests
+
+Backend:
 
 ```bash
 pip install -r backend/requirements-dev.txt
 cd backend && python -m pytest
 ```
 
-The suite stubs Scryfall and EDHREC, so it runs offline.
+Frontend:
+
+```bash
+npm test
+npm run typecheck
+```
+
+Both suites stub the network, so they run offline.

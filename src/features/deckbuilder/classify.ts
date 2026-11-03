@@ -1,6 +1,7 @@
+export { groupByType, type TypeGroup } from '../../lib/cards';
 import type { FunctionalCategory } from '../../types/api';
 import {
-  CARD_TYPE_ORDER, DRAW_NAMES, RAMP_NAMES, REMOVAL_NAMES, UNLIMITED_CARDS, UTILITY_NAMES,
+  DRAW_NAMES, RAMP_NAMES, REMOVAL_NAMES, UNLIMITED_CARDS, UTILITY_NAMES,
   type BuilderCard, type SuggestionMode,
 } from './constants';
 
@@ -28,20 +29,6 @@ export function classifyFunctionalCategory(card: BuilderCard): FunctionalCategor
   // Avg deck cards that aren't common staples are synergy picks for this commander.
   if (!card.isRecommendation && !card.isBasicLand) return 'synergy';
   return 'utility';
-}
-
-export interface TypeGroup {
-  type: string;
-  cards: BuilderCard[];
-}
-
-export function groupByType(cards: BuilderCard[]): TypeGroup[] {
-  const groups: Record<string, BuilderCard[]> = {};
-  for (const card of cards) {
-    const type = card.card_type || 'Other';
-    (groups[type] ??= []).push(card);
-  }
-  return CARD_TYPE_ORDER.filter((t) => groups[t]?.length > 0).map((t) => ({ type: t, cards: groups[t] }));
 }
 
 /** Cut order: basic lands, then unowned, then most expensive, then lowest synergy. */
@@ -75,13 +62,20 @@ export function makeAddComparator(mode: SuggestionMode): (a: BuilderCard, b: Bui
 }
 
 export interface PlannedRemoval { name: string; qty: number; category: string }
-export interface PlannedAdd { name: string; qty: number; category: string; owned: boolean; synergy?: number }
+export interface PlannedAdd {
+  name: string;
+  qty: number;
+  category: string;
+  owned: boolean;
+  synergy?: number;
+  /** True when this adds copies to an already-included unlimited card (basic lands). */
+  increase: boolean;
+}
 
 export interface CompositionPlan {
   removals: PlannedRemoval[];
+  /** In display order: excluded cards to add, then increases, category by category. */
   adds: PlannedAdd[];
-  /** Extra copies to add to already-included unlimited cards (basic lands). */
-  increases: PlannedAdd[];
 }
 
 /**
@@ -99,7 +93,6 @@ export function planComposition(
   const compareForAdd = makeAddComparator(mode);
   const removals: PlannedRemoval[] = [];
   const adds: PlannedAdd[] = [];
-  const increases: PlannedAdd[] = [];
 
   for (const { key, label } of meta) {
     const diff = counts[key] - targets[key];
@@ -117,7 +110,7 @@ export function planComposition(
       const candidates = excluded.filter((c) => classifyFunctionalCategory(c) === key).sort(compareForAdd);
       for (const c of candidates) {
         if (remaining <= 0) break;
-        adds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy });
+        adds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy, increase: false });
         remaining -= 1;
       }
       if (remaining > 0) {
@@ -126,11 +119,11 @@ export function planComposition(
           .sort(compareForAdd);
         for (const c of unlimited) {
           if (remaining <= 0) break;
-          increases.push({ name: c.name, qty: remaining, category: label, owned: c.owned, synergy: c.synergy });
+          adds.push({ name: c.name, qty: remaining, category: label, owned: c.owned, synergy: c.synergy, increase: true });
           remaining = 0;
         }
       }
     }
   }
-  return { removals, adds, increases };
+  return { removals, adds };
 }

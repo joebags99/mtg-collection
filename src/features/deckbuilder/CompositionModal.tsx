@@ -36,7 +36,7 @@ export function CompositionModal({
 }: CompositionModalProps) {
   const total = Object.values(tempComposition).reduce((a, b) => a + b, 0);
   const plan = planComposition(tempComposition, categoryCounts, nonCommanderIncluded, nonCommanderExcluded, suggestionMode, CATEGORY_META);
-  const previewAdds = [...plan.adds, ...plan.increases];
+  const previewAdds = plan.adds;
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">

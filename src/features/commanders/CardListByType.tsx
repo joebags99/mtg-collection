@@ -1,23 +1,6 @@
+import { groupByType } from '../../lib/cards';
 import type { DeckCard } from '../../types/api';
 import { AvailDot, CardName, DeckBadges, SectionHeader, TypeSectionHeader, type FavoriteProps } from '../../components/ui';
-
-export const CARD_TYPE_ORDER = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
-
-export interface TypeGroup<T> {
-  type: string;
-  cards: T[];
-}
-
-/** Bucket cards by card_type in canonical order, dropping empty types. */
-export function groupByType<T extends { card_type?: string }>(cards: T[]): TypeGroup<T>[] {
-  const groups: Record<string, T[]> = {};
-  for (const card of cards) {
-    const type = card.card_type || 'Other';
-    if (!groups[type]) groups[type] = [];
-    groups[type].push(card);
-  }
-  return CARD_TYPE_ORDER.filter((t) => (groups[t]?.length ?? 0) > 0).map((t) => ({ type: t, cards: groups[t] }));
-}
 
 export interface CardListByTypeProps extends FavoriteProps {
   ownedCards: DeckCard[];

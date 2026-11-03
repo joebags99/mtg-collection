@@ -50,7 +50,7 @@ export const CATEGORY_META: CategoryMeta[] = [
   { key: 'utility', label: 'Utility', color: 'bg-gray-400' },
 ];
 
-export const CARD_TYPE_ORDER = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Other'];
+export { CARD_TYPE_ORDER } from '../../lib/cards';
 
 /** Basic land for each color. */
 export const COLOR_TO_BASICS: Record<Color, string> = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
