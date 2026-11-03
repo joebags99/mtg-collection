@@ -5,9 +5,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY public ./public
 COPY src ./src
-COPY tailwind.config.js ./
-ARG REACT_APP_API_URL=""
-ENV REACT_APP_API_URL=$REACT_APP_API_URL
+COPY index.html vite.config.ts tsconfig.json tailwind.config.js postcss.config.js ./
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 # --- Stage 2: Python backend + static files ---
@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 
 # Copy built frontend
-COPY --from=frontend-build /app/build ./static
+COPY --from=frontend-build /app/dist ./static
 
 # Serve static files from FastAPI
 RUN echo '\n\
@@ -36,7 +36,7 @@ if os.path.exists(static_dir):\n\
     @app.get("/")\n\
     async def serve_root():\n\
         return FileResponse(os.path.join(static_dir, "index.html"))\n\
-    app.mount("/static", StaticFiles(directory=os.path.join(static_dir, "static")), name="static-files")\n\
+    app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")\n\
     @app.get("/{full_path:path}")\n\
     async def serve_spa(full_path: str):\n\
         file_path = os.path.join(static_dir, full_path)\n\

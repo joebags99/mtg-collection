@@ -5,7 +5,7 @@ services:
     build:
       context: .
       args:
-        REACT_APP_API_URL: ""
+        VITE_API_URL: ""
     ports:
       - "8000:8000"
     environment:
