@@ -161,14 +161,6 @@ export interface Deck {
   partner_color_identity?: Color[];
 }
 
-/** The deck shape kept in localStorage and synced to the server. */
-export interface StoredDeck {
-  id: string;
-  name: string;
-  commander: string;
-  partner?: string;
-  cards: Record<string, number>;
-}
 
 export interface CompareEntry {
   name: string;
@@ -199,11 +191,6 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
-export interface UserData {
-  collection: { cards: Record<string, number>; count: number };
-  decks: { decks: Record<string, StoredDeck>; count: number };
-  favorites: { cards: string[]; count: number };
-}
 
 export interface ValidateCardsResponse {
   valid: string[];

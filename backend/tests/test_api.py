@@ -1,5 +1,9 @@
 def test_health(client):
-    assert client.get("/api/health").json() == {"status": "ok", "collection_size": 0}
+    assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_requests_without_identity_are_rejected(client):
+    assert client.get("/api/collection", headers={"X-Session-Id": ""}).status_code == 401
 
 
 def test_collection_text_upload_and_summary(client):
@@ -7,11 +11,17 @@ def test_collection_text_upload_and_summary(client):
     assert r.status_code == 200
     assert r.json() == {"count": 2, "total_cards": 3, "cards": {"sol ring": 2, "swamp": 1}}
     assert client.get("/api/collection").json()["count"] == 2
+    assert client.delete("/api/collection").json()["count"] == 0
+    assert client.get("/api/collection").json()["count"] == 0
 
 
-def test_collection_restore_accepts_legacy_list(client):
-    r = client.post("/api/collection/restore", json={"cards": ["Sol Ring", "Sol Ring"]})
-    assert r.json()["cards"] == {"sol ring": 2}
+def test_collections_are_isolated_per_session(client):
+    client.post("/api/collection/text", json={"text": "1 Sol Ring"})
+    other = {"X-Session-Id": "another-session-0002"}
+    assert client.get("/api/collection", headers=other).json()["count"] == 0
+    client.post("/api/collection/text", json={"text": "1 Swamp\n1 Island"}, headers=other)
+    assert client.get("/api/collection").json()["cards"] == {"sol ring": 1}
+    assert client.get("/api/collection", headers=other).json()["count"] == 2
 
 
 def test_deck_crud_and_availability(client):
@@ -23,6 +33,7 @@ def test_deck_crud_and_availability(client):
     assert deck["card_count"] == 1
 
     assert len(client.get("/api/decks").json()["decks"]) == 1
+    assert client.get("/api/decks", headers={"X-Session-Id": "another-session-0002"}).json()["decks"] == []
     avail = client.get("/api/collection/availability").json()
     assert avail["sol ring"] == {"owned": 1, "in_decks": 1, "available": 0,
                                  "decks": [{"id": deck["id"], "name": "Test"}]}
@@ -31,6 +42,13 @@ def test_deck_crud_and_availability(client):
     assert r.json()["name"] == "Renamed" and r.json()["card_count"] == 0
     assert client.delete(f"/api/decks/{deck['id']}").json() == {"ok": True}
     assert client.get(f"/api/decks/{deck['id']}").status_code == 404
+
+
+def test_favorites_round_trip(client):
+    assert client.get("/api/favorites").json() == {"cards": [], "count": 0}
+    r = client.put("/api/favorites", json={"cards": ["Sol Ring", "sol ring", " Rhystic Study "]})
+    assert r.json()["cards"] == ["sol ring", "rhystic study"]
+    assert client.get("/api/favorites").json()["count"] == 2
 
 
 def test_commander_endpoints(client):
@@ -53,8 +71,8 @@ def test_commander_detail_splits_owned_and_missing(client):
     body = r.json()
     assert body["owned_count"] == 1 and body["missing_count"] == 1
     assert body["owned_cards"][0]["name"] == "Sol Ring"
-    assert body["owned_cards"][0]["functional_category"] == "utility"
-    assert body["missing_cards"][0]["functional_category"] == "utility"
+    assert body["owned_cards"][0]["functional_category"] == "ramp"
+    assert body["missing_cards"][0]["functional_category"] == "removal"
 
 
 def test_recommendations_require_collection(client):
@@ -72,20 +90,31 @@ def test_compare(client):
     assert client.post("/api/compare", json={"commanders": ["only one"]}).status_code == 400
 
 
-def test_auth_and_user_sync(client):
+def test_register_claims_anonymous_data_and_token_wins(client):
+    client.post("/api/collection/text", json={"text": "1 Sol Ring"})
+    client.put("/api/favorites", json={"cards": ["sol ring"]})
     r = client.post("/api/auth/register", json={"username": "joe", "password": "pass"})
     assert r.status_code == 200
-    token = r.json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    auth = {"Authorization": f"Bearer {r.json()['token']}"}
     assert client.post("/api/auth/register", json={"username": "joe", "password": "pass"}).status_code == 400
-    assert client.post("/api/auth/login", json={"username": "joe", "password": "wrong"}).status_code == 401
-    assert client.get("/api/auth/me", headers=headers).json()["user"]["username"] == "joe"
+    assert client.get("/api/auth/me", headers=auth).json()["user"]["username"] == "joe"
     assert client.get("/api/auth/me").status_code == 401
 
-    client.post("/api/user/collection/save", json={"cards": {"sol ring": 1}}, headers=headers)
-    client.post("/api/user/decks/save", json={"decks": {"d1": {"name": "D", "commander": "X", "cards": {}}}}, headers=headers)
-    client.post("/api/user/favorites/save", json={"cards": ["Sol Ring"]}, headers=headers)
-    data = client.get("/api/user/data", headers=headers).json()
-    assert data["collection"]["cards"] == {"sol ring": 1}
-    assert data["decks"]["decks"]["d1"]["name"] == "D"
-    assert data["favorites"]["cards"] == ["Sol Ring"]
+    # The account now owns what the browser session had; the session itself is empty.
+    assert client.get("/api/collection", headers=auth).json()["cards"] == {"sol ring": 1}
+    assert client.get("/api/favorites", headers=auth).json()["cards"] == ["sol ring"]
+    assert client.get("/api/collection").json()["count"] == 0
+
+
+def test_login_keeps_account_data_over_session_data(client):
+    r = client.post("/api/auth/register", json={"username": "amy", "password": "pass"}, headers={"X-Session-Id": "fresh-session-0003"})
+    auth = {"Authorization": f"Bearer {r.json()['token']}"}
+    client.post("/api/collection/text", json={"text": "1 Rhystic Study"}, headers=auth)
+
+    client.post("/api/collection/text", json={"text": "1 Sol Ring"})  # the test session
+    assert client.post("/api/auth/login", json={"username": "amy", "password": "wrong"}).status_code == 401
+    r = client.post("/api/auth/login", json={"username": "amy", "password": "pass"})
+    assert r.status_code == 200
+    auth = {"Authorization": f"Bearer {r.json()['token']}"}
+    assert client.get("/api/collection", headers=auth).json()["cards"] == {"rhystic study": 1}
+    assert client.get("/api/collection").json()["count"] == 0

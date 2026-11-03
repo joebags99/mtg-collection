@@ -1,33 +1,15 @@
 export { groupByType, type TypeGroup } from '../../lib/cards';
 import type { FunctionalCategory } from '../../types/api';
-import {
-  DRAW_NAMES, RAMP_NAMES, REMOVAL_NAMES, UNLIMITED_CARDS, UTILITY_NAMES,
-  type BuilderCard, type SuggestionMode,
-} from './constants';
+import { UNLIMITED_CARDS, type BuilderCard, type SuggestionMode } from './constants';
 
 export function canHaveMultiple(name: string): boolean {
   return UNLIMITED_CARDS.has(name.toLowerCase());
 }
 
-/** Backend category when specific; otherwise type and name heuristics. */
-export function classifyFunctionalCategory(card: BuilderCard): FunctionalCategory {
-  if (card.functional_category && card.functional_category !== 'utility' && card.functional_category !== 'synergy') {
-    return card.functional_category;
-  }
-  const ct = (card.card_type || '').toLowerCase();
-  if (ct === 'land') return 'lands';
-
-  const name = (card.name || '').toLowerCase();
-  if (RAMP_NAMES.has(name) || name.includes('signet') || name.includes('talisman')) return 'ramp';
-  if (DRAW_NAMES.has(name)) return 'cardDraw';
-  if (REMOVAL_NAMES.has(name)) return 'removal';
-  if (UTILITY_NAMES.has(name)) return 'utility';
-
-  // Trust a backend synergy/utility verdict when present.
+/** The server's role for a card; basic lands added client-side count as lands. */
+export function roleOf(card: BuilderCard): FunctionalCategory {
   if (card.functional_category) return card.functional_category;
-
-  // Avg deck cards that aren't common staples are synergy picks for this commander.
-  if (!card.isRecommendation && !card.isBasicLand) return 'synergy';
+  if (card.isBasicLand || (card.card_type || '').toLowerCase() === 'land') return 'lands';
   return 'utility';
 }
 
@@ -97,7 +79,7 @@ export function planComposition(
   for (const { key, label } of meta) {
     const diff = counts[key] - targets[key];
     if (diff > 0) {
-      const candidates = included.filter((c) => classifyFunctionalCategory(c) === key).sort(compareForRemoval);
+      const candidates = included.filter((c) => roleOf(c) === key).sort(compareForRemoval);
       let remaining = diff;
       for (const c of candidates) {
         if (remaining <= 0) break;
@@ -107,7 +89,7 @@ export function planComposition(
       }
     } else if (diff < 0) {
       let remaining = Math.abs(diff);
-      const candidates = excluded.filter((c) => classifyFunctionalCategory(c) === key).sort(compareForAdd);
+      const candidates = excluded.filter((c) => roleOf(c) === key).sort(compareForAdd);
       for (const c of candidates) {
         if (remaining <= 0) break;
         adds.push({ name: c.name, qty: 1, category: label, owned: c.owned, synergy: c.synergy, increase: false });
@@ -115,7 +97,7 @@ export function planComposition(
       }
       if (remaining > 0) {
         const unlimited = included
-          .filter((c) => classifyFunctionalCategory(c) === key && canHaveMultiple(c.name))
+          .filter((c) => roleOf(c) === key && canHaveMultiple(c.name))
           .sort(compareForAdd);
         for (const c of unlimited) {
           if (remaining <= 0) break;

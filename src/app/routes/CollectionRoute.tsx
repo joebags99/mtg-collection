@@ -19,8 +19,8 @@ export function CollectionRoute() {
 }
 
 export function CollectionUploadRoute() {
-  const { collectionCount, handleUploaded } = useAppState();
-  return <CollectionUpload onUploaded={handleUploaded} collectionCount={collectionCount} />;
+  const { collectionCount } = useAppState();
+  return <CollectionUpload collectionCount={collectionCount} />;
 }
 
 export function CollectionStatsRoute() {

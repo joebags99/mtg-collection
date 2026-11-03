@@ -1,15 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api';
 import { getColorGlow } from '../../lib/colors';
-import { saveDecks } from '../../lib/storage';
+import { keys, useDecks } from '../../lib/queries';
 import type { Commander, Deck, ValidateCardsResponse } from '../../types/api';
 import { ColorBadge, CommanderAutocomplete, PageHero, PartnerPicker, SectionHeader } from '../../components/ui';
-
-interface MyDecksProps {
-  onDecksChanged: () => void;
-  /** True once the app has restored saved decks to the server; the list loads after that. */
-  decksReady: boolean;
-}
 
 /** Strip leading quantities ("2x Sol Ring" -> "Sol Ring") from a pasted list. */
 function parseCardNames(text: string): string[] {
@@ -26,8 +21,18 @@ function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
-  const [decks, setDecks] = useState<Record<string, Deck>>({});
+export function MyDecks() {
+  const queryClient = useQueryClient();
+  const decksQuery = useDecks();
+  const decks = useMemo<Record<string, Deck>>(
+    () => Object.fromEntries((decksQuery.data ?? []).map((d) => [d.id, d])),
+    [decksQuery.data],
+  );
+  /** Decks changed: refresh the list and the collection's availability. */
+  const decksChanged = () => {
+    queryClient.invalidateQueries({ queryKey: keys.decks });
+    queryClient.invalidateQueries({ queryKey: keys.collection });
+  };
   const [newName, setNewName] = useState('');
   const [newCommander, setNewCommander] = useState('');
   const [newPartner, setNewPartner] = useState<Commander | null>(null);
@@ -37,17 +42,6 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
   const [error, setError] = useState('');
   const [validating, setValidating] = useState(false);
   const [invalidCards, setInvalidCards] = useState<string[]>([]);
-
-  // Load decks only after restore is complete
-  useEffect(() => {
-    if (!decksReady) return;
-    apiGet<{ decks: Deck[] }>('/api/decks').then((data) => {
-      const deckMap: Record<string, Deck> = {};
-      (data.decks || []).forEach((d) => { deckMap[d.id] = d; });
-      setDecks(deckMap);
-      saveDecks(deckMap);
-    }).catch(() => {});
-  }, [decksReady]);
 
   /** Returns false (and sets the error) when the list has unrecognized cards. Network failures pass. */
   const validateCards = async (text: string): Promise<boolean> => {
@@ -78,13 +72,10 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
     if (!(await validateCards(newCards))) return;
 
     try {
-      const deck = await apiPost<Deck>('/api/decks', {
+      await apiPost<Deck>('/api/decks', {
         name: newName, commander: newCommander, partner: newPartner?.name || '', cards_text: newCards,
       });
-      const updated = { ...decks, [deck.id]: deck };
-      setDecks(updated);
-      saveDecks(updated);
-      onDecksChanged();
+      decksChanged();
       setNewName(''); setNewCommander(''); setNewPartner(null); setNewCards('');
       setInvalidCards([]);
     } catch (e) { setError(errorMessage(e)); }
@@ -93,11 +84,7 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
   const handleDelete = async (id: string) => {
     try {
       await apiDelete<{ ok: boolean }>(`/api/decks/${id}`);
-      const updated = { ...decks };
-      delete updated[id];
-      setDecks(updated);
-      saveDecks(updated);
-      onDecksChanged();
+      decksChanged();
     } catch (e) { setError(errorMessage(e)); }
   };
 
@@ -108,11 +95,8 @@ export function MyDecks({ onDecksChanged, decksReady }: MyDecksProps) {
       if (!(await validateCards(editCards))) return;
 
       try {
-        const deck = await apiPut<Deck>(`/api/decks/${id}`, { cards_text: editCards });
-        const updated = { ...decks, [id]: deck };
-        setDecks(updated);
-        saveDecks(updated);
-        onDecksChanged();
+        await apiPut<Deck>(`/api/decks/${id}`, { cards_text: editCards });
+        decksChanged();
         setEditingId(null);
         setInvalidCards([]);
       } catch (e) { setError(errorMessage(e)); }

@@ -1,20 +1,17 @@
 import { useState, type ChangeEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { LoadingOverlay } from '../../components/ui';
-import { apiPost, apiUpload } from '../../lib/api';
-import { clearCollection, loadCollection, saveCollection } from '../../lib/storage';
+import { apiDelete, apiPost, apiUpload } from '../../lib/api';
+import { keys } from '../../lib/queries';
 import type { CollectionSummary } from '../../types/api';
 
-export interface UploadedCollection {
-  count: number;
-  cards?: Record<string, number>;
-}
-
 interface Props {
-  onUploaded: (data: UploadedCollection) => void;
   collectionCount: number;
 }
 
-export function CollectionUpload({ onUploaded, collectionCount }: Props) {
+export function CollectionUpload({ collectionCount }: Props) {
+  const queryClient = useQueryClient();
+  const collectionChanged = () => queryClient.invalidateQueries({ queryKey: keys.collection });
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -28,8 +25,7 @@ export function CollectionUpload({ onUploaded, collectionCount }: Props) {
     try {
       const data = await apiUpload<CollectionSummary>('/api/collection/upload', file);
       setResult(data);
-      saveCollection(data.cards);
-      onUploaded(data);
+      collectionChanged();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -43,18 +39,22 @@ export function CollectionUpload({ onUploaded, collectionCount }: Props) {
     try {
       const data = await apiPost<CollectionSummary>('/api/collection/text', { text });
       setResult(data);
-      saveCollection(data.cards);
-      onUploaded(data);
+      collectionChanged();
     } catch (err) {
       setError((err as Error).message);
     }
     setLoading(false);
   };
 
-  const handleClear = () => {
-    clearCollection();
-    setResult(null);
-    onUploaded({ count: 0 });
+  const handleClear = async () => {
+    setError('');
+    try {
+      await apiDelete('/api/collection');
+      setResult(null);
+      collectionChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   return (
@@ -62,14 +62,13 @@ export function CollectionUpload({ onUploaded, collectionCount }: Props) {
       <h2 className="text-2xl font-bold">Upload Collection</h2>
       <p className="text-ink-muted">
         Upload a CSV export from <strong>Archidekt</strong> or <strong>Moxfield</strong>,
-        or paste a card list. Your collection is saved locally in your browser.
+        or paste a card list. It is kept on the server for this browser, and moves to your account when you log in.
       </p>
 
       {collectionCount > 0 && (
         <div className="bg-accent/10 border border-accent rounded-lg p-4 flex items-center justify-between">
           <p className="text-accent">
             Collection loaded: <strong>{collectionCount}</strong> unique cards
-            {loadCollection() && <span className="text-accent/70 text-sm ml-2">(saved in browser)</span>}
           </p>
           <button onClick={handleClear} className="text-danger hover:text-danger text-sm">
             Clear Collection

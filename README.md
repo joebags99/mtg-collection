@@ -45,17 +45,29 @@ backend/app/
 Routes stay thin: they validate input, call a service, and return its result.
 External calls that block run in a thread pool so they do not stall the event loop.
 
+## Data model
+
+Everything a visitor builds lives on the server, keyed by an owner string. A browser
+without an account sends a random session id in the `X-Session-Id` header and owns
+`anon:<id>`; a logged-in user sends a bearer token and owns `user:<id>`. Logging in or
+registering folds the browser session's collection, decks, and favorites into the account
+when the account has none of its own. Logging out starts a new anonymous session.
+
+The frontend keeps only the session id and auth token in the browser. Server data flows
+through TanStack Query (`src/lib/queries.ts`), so screens share one cache and mutations
+invalidate by key instead of hand-syncing state.
+
 ## Frontend layout
 
 ```
 src/
   main.tsx         entry point
   App.tsx          router: routes map to the surfaces below
-  app/             app-wide state (AppContext), the rail shell, the compare drawer, route components
+  app/             app-wide state (AppContext), Discover filter state, the rail shell, the compare drawer, route components
   features/        one folder per screen: collection, commanders, deckbuilder, decks, favorites, auth
   pages/           static pages (About, Guides)
   components/ui/   shared primitives: mana symbols, badges, cards, pickers, hero, headers
-  lib/             API client, localStorage helpers, color and card-grouping helpers
+  lib/             API client, session id, query cache and keys, color and card-grouping helpers
   types/           API response types and the Tab union
   styles/          design tokens (tokens.css)
 ```

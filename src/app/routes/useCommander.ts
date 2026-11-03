@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLocation, useParams } from 'react-router-dom';
-import { apiGet } from '../../lib/api';
+import { commanderLookupQuery } from '../../lib/queries';
 import type { CardCommander } from '../../components/ui';
-import type { Commander } from '../../types/api';
 
 interface Resolved {
   name: string;
@@ -16,21 +15,14 @@ export function useCommander(): Resolved {
   const { name = '' } = useParams<{ name: string }>();
   const location = useLocation();
   const fromState = (location.state as { commander?: CardCommander } | null)?.commander;
-  const [commander, setCommander] = useState<CardCommander | null>(fromState && fromState.name === name ? fromState : null);
-  const [loading, setLoading] = useState(!commander);
-  const [error, setError] = useState('');
+  const stateMatches = !!fromState && fromState.name === name;
+  const lookup = useQuery({ ...commanderLookupQuery(name), enabled: !stateMatches && name.length > 0 });
 
-  useEffect(() => {
-    if (fromState && fromState.name === name) { setCommander(fromState); setLoading(false); return; }
-    let cancelled = false;
-    setLoading(true);
-    setError('');
-    apiGet<Commander>('/api/commanders/lookup', { name })
-      .then((c) => { if (!cancelled) setCommander(c); })
-      .catch((e: Error) => { if (!cancelled) setError(e.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [name, fromState]);
-
-  return { name, commander, loading, error };
+  if (stateMatches) return { name, commander: fromState, loading: false, error: '' };
+  return {
+    name,
+    commander: lookup.data ?? null,
+    loading: lookup.isPending,
+    error: lookup.error ? (lookup.error as Error).message : '',
+  };
 }

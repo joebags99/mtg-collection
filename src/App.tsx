@@ -1,25 +1,23 @@
-import { useEffect } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useAppState } from './app/AppContext';
+import { DiscoverProvider } from './app/DiscoverState';
 import { paths } from './app/paths';
 import { Shell } from './app/Shell';
 import { BuildRoute } from './app/routes/BuildRoute';
 import { CollectionRoute, CollectionStatsRoute, CollectionUploadRoute } from './app/routes/CollectionRoute';
 import { CommanderRoute } from './app/routes/CommanderRoute';
 import { DecksRoute } from './app/routes/DecksRoute';
-import { DiscoverRoute } from './app/routes/DiscoverRoute';
+import { DiscoverRoute, FavoritesPanel, RecommendationsPanel, SearchPanel } from './app/routes/DiscoverRoute';
+import { queryClient } from './lib/queries';
 import { AboutPage } from './pages/AboutPage';
 import { GuidesPage } from './pages/GuidesPage';
 
-/** On first load at the root, land on Discover when a saved collection was restored. */
+/** The root lands on Discover when a collection is already loaded, else on Collection. */
 function Landing() {
-  const { collectionRestored } = useAppState();
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
-  useEffect(() => {
-    if (collectionRestored && pathname === '/') navigate(paths.discover, { replace: true });
-  }, [collectionRestored, pathname, navigate]);
-  return <Navigate to={paths.collection} replace />;
+  const { collectionLoaded, collectionCount } = useAppState();
+  if (!collectionLoaded) return null;
+  return <Navigate to={collectionCount > 0 ? paths.discover : paths.collection} replace />;
 }
 
 function AppRoutes() {
@@ -31,9 +29,11 @@ function AppRoutes() {
           <Route index element={<CollectionUploadRoute />} />
           <Route path="stats" element={<CollectionStatsRoute />} />
         </Route>
-        <Route path="discover" element={<DiscoverRoute />} />
-        <Route path="discover/search" element={<DiscoverRoute />} />
-        <Route path="discover/favorites" element={<DiscoverRoute />} />
+        <Route path="discover" element={<DiscoverRoute />}>
+          <Route index element={<RecommendationsPanel />} />
+          <Route path="search" element={<SearchPanel />} />
+          <Route path="favorites" element={<FavoritesPanel />} />
+        </Route>
         <Route path="commander/:name" element={<CommanderRoute />} />
         <Route path="commander/:name/build" element={<BuildRoute />} />
         <Route path="decks" element={<DecksRoute />} />
@@ -47,10 +47,14 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AppProvider>
-        <AppRoutes />
-      </AppProvider>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppProvider>
+          <DiscoverProvider>
+            <AppRoutes />
+          </DiscoverProvider>
+        </AppProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }

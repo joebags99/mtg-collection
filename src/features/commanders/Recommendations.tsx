@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiPost } from '../../lib/api';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { apiPost, type Params } from '../../lib/api';
+import { keys } from '../../lib/queries';
+import { useDiscoverState } from '../../app/DiscoverState';
 import { ALL_COLORS, COLOR_MAP } from '../../lib/colors';
 import type { Color, ScoredCommander } from '../../types/api';
 import { CommanderCard, LoadingOverlay, PageHero, type CardCommander } from '../../components/ui';
@@ -16,43 +19,33 @@ export interface RecommendationsProps {
 }
 
 export function Recommendations({ collectionCount, onSelectCommander, compareList, onToggleCompare, excludeInDecks, onToggleExclude, deckCount }: RecommendationsProps) {
-  const [results, setResults] = useState<ScoredCommander[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [colorFilter, setColorFilter] = useState<Color[]>([]);
-  const [minOwned, setMinOwned] = useState(20);
-  const [fetched, setFetched] = useState(false);
-  const [sortBy, setSortBy] = useState<SortKey>('match_desc');
+  const { recs, setRecs } = useDiscoverState();
+  const { minOwned, colorFilter, search, sortBy, applied } = recs;
+  const setMinOwned = (v: number) => setRecs({ minOwned: v });
+  const setSearch = (v: string) => setRecs({ search: v });
+  const setSortBy = (v: SortKey) => setRecs({ sortBy: v });
+  const setColorFilter = (v: Color[] | ((prev: Color[]) => Color[])) =>
+    setRecs({ colorFilter: typeof v === 'function' ? v(colorFilter) : v });
+  const [localError, setLocalError] = useState('');
 
-  const fetchRecommendations = useCallback(async () => {
-    if (collectionCount === 0) {
-      setError('Upload your collection first.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const color = colorFilter.length > 0 ? colorFilter.join('') : null;
-      const data = await apiPost<{ results: ScoredCommander[] }>(
-        `/api/recommendations?min_owned=${minOwned}&limit=100${color ? '&color=' + color : ''}${search ? '&search=' + encodeURIComponent(search) : ''}${excludeInDecks ? '&exclude_in_decks=true' : ''}`,
-        {},
-      );
-      setResults(data.results || []);
-      setFetched(true);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-    setLoading(false);
-  }, [collectionCount, colorFilter, minOwned, search, excludeInDecks]);
+  const params: Params | null = applied ? { ...applied, exclude_in_decks: excludeInDecks || null, limit: 100 } : null;
+  const query = useQuery({
+    queryKey: keys.recommendations(params ?? {}),
+    queryFn: async () => (await apiPost<{ results: ScoredCommander[] }>('/api/recommendations', {}, params ?? {})).results ?? [],
+    enabled: params !== null && collectionCount > 0,
+  });
+  const results = query.data ?? [];
+  const loading = query.isFetching;
+  const error = localError || (query.error ? (query.error as Error).message : '');
+  const fetched = params !== null && query.isSuccess;
 
-  // Auto-refetch when excludeInDecks toggle changes (if already fetched)
-  useEffect(() => {
-    if (fetched) {
-      fetchRecommendations();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [excludeInDecks]);
+  const fetchRecommendations = () => {
+    if (collectionCount === 0) { setLocalError('Upload your collection first.'); return; }
+    setLocalError('');
+    const next = { min_owned: minOwned, color: colorFilter.length > 0 ? colorFilter.join('') : null, search: search || null };
+    if (applied && JSON.stringify(applied) === JSON.stringify(next)) query.refetch();
+    else setRecs({ applied: next });
+  };
 
   const toggleColor = (c: Color) => {
     setColorFilter((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));

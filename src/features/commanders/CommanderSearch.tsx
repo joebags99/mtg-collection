@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../../lib/api';
+import { keys, popularQuery } from '../../lib/queries';
+import { useDebounced } from '../../lib/useDebounced';
+import { useDiscoverState } from '../../app/DiscoverState';
 import { ALL_COLORS, COLOR_MAP } from '../../lib/colors';
 import type { Color, Commander } from '../../types/api';
 import { CommanderCard, type CardCommander } from '../../components/ui';
@@ -12,41 +15,23 @@ export interface CommanderSearchProps {
 }
 
 export function CommanderSearch({ onSelectCommander, compareList, onToggleCompare }: CommanderSearchProps) {
-  const [commanders, setCommanders] = useState<Commander[]>([]);
-  const [popular, setPopular] = useState<Commander[]>([]);
-  const [search, setSearch] = useState('');
-  const [colorFilter, setColorFilter] = useState<Color[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadedPopular, setLoadedPopular] = useState(false);
+  const { search: state, setSearch: setState } = useDiscoverState();
+  const { query: search, colorFilter } = state;
+  const setSearch = (v: string) => setState({ query: v });
+  const setColorFilter = (v: Color[] | ((prev: Color[]) => Color[])) =>
+    setState({ colorFilter: typeof v === 'function' ? v(colorFilter) : v });
+  const debounced = useDebounced(search, 300);
+  const color = colorFilter.length > 0 ? colorFilter.join('') : null;
 
-  // Load popular on mount
-  useEffect(() => {
-    if (!loadedPopular) {
-      apiGet<{ commanders: Commander[] }>('/api/commanders/popular').then((data) => {
-        setPopular(data.commanders || []);
-        setLoadedPopular(true);
-      }).catch(() => {});
-    }
-  }, [loadedPopular]);
-
-  const doSearch = useCallback(async () => {
-    setLoading(true);
-    try {
-      const color = colorFilter.length > 0 ? colorFilter.join('') : null;
-      const data = await apiGet<{ count: number; commanders: Commander[] }>('/api/commanders', { search, color });
-      setCommanders(data.commanders || []);
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  }, [search, colorFilter]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (search.length >= 2) doSearch();
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search, colorFilter, doSearch]);
+  const popularList = useQuery(popularQuery);
+  const popular = popularList.data ?? [];
+  const searchQuery = useQuery({
+    queryKey: keys.commanderSearch(debounced, color),
+    queryFn: async () => (await apiGet<{ count: number; commanders: Commander[] }>('/api/commanders', { search: debounced, color })).commanders ?? [],
+    enabled: debounced.length >= 2,
+  });
+  const commanders = debounced.length >= 2 ? (searchQuery.data ?? []) : [];
+  const loading = searchQuery.isFetching;
 
   const toggleColor = (c: Color) => {
     setColorFilter((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));

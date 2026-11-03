@@ -14,7 +14,7 @@ interface NavItem {
 }
 
 export function Shell() {
-  const { collectionCount, deckCount, favorites, compareList, clearCompare, user, syncStatus, showAuthModal, setShowAuthModal, handleLogin, handleLogout, syncToServer } = useAppState();
+  const { collectionCount, deckCount, favorites, compareList, clearCompare, user, showAuthModal, setShowAuthModal, handleLogin, handleLogout } = useAppState();
   const [compareOpen, setCompareOpen] = useState(false);
 
   const surfaces: NavItem[] = [
@@ -103,15 +103,10 @@ export function Shell() {
             {user ? (
               <div className="px-1 space-y-1.5">
                 <p className="text-sm text-ink flex items-center gap-2">
-                  <span className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'error' ? 'bg-danger' : 'bg-ok'}`} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-ok" />
                   {user.username}
                 </p>
-                <div className="flex items-center gap-3 text-xs">
-                  <button onClick={syncToServer} className="text-accent hover:text-accent-hi" title="Sync to cloud">
-                    {syncStatus === 'syncing' ? 'Syncing…' : syncStatus === 'synced' ? 'Saved' : syncStatus === 'error' ? 'Sync failed' : 'Sync'}
-                  </button>
-                  <button onClick={handleLogout} className="text-ink-faint hover:text-danger">Log out</button>
-                </div>
+                <button onClick={handleLogout} className="text-xs text-ink-faint hover:text-danger">Log out</button>
               </div>
             ) : (
               <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAuthModal(true)}>

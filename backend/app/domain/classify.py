@@ -50,6 +50,64 @@ _UTILITY = ("search your library", "hexproof", "indestructible", "protection fro
             "whenever a nontoken creature", "whenever you cast", "at the beginning of your upkeep",
             "sacrifice a creature", "each opponent", "whenever an opponent")
 
+# Well-known staples whose role is clearer than their oracle text. Checked before any pattern.
+_STAPLE_ROLES: dict[str, str] = {}
+for _name in (
+    "sol ring", "mana crypt", "mana vault", "arcane signet", "mind stone", "thought vessel",
+    "fellwar stone", "commander's sphere", "chromatic lantern", "gilded lotus",
+    "thran dynamo", "worn powerstone", "hedron archive", "dreamstone hedron",
+    "cultivate", "kodama's reach", "farseek", "rampant growth", "nature's lore",
+    "three visits", "skyshroud claim", "explosive vegetation", "migration path",
+    "sakura-tribe elder", "birds of paradise", "llanowar elves", "elvish mystic",
+    "fyndhorn elves", "avacyn's pilgrim", "bloom tender", "priest of titania",
+    "dark ritual", "cabal ritual", "dockside extortionist",
+):
+    _STAPLE_ROLES[_name] = "ramp"
+for _name in (
+    "rhystic study", "mystic remora", "phyrexian arena", "sylvan library", "necropotence",
+    "harmonize", "read the bones", "night's whisper", "sign in blood", "painful truths",
+    "brainstorm", "ponder", "preordain", "windfall", "wheel of fortune", "treasure cruise",
+    "dig through time", "fact or fiction", "blue sun's zenith", "pull from tomorrow",
+    "consecrated sphinx", "esper sentinel", "archivist of oghma", "beast whisperer",
+    "guardian project", "the great henge", "skullclamp", "mask of memory",
+):
+    _STAPLE_ROLES[_name] = "cardDraw"
+for _name in (
+    "swords to plowshares", "path to exile", "beast within", "chaos warp", "generous gift",
+    "assassin's trophy", "anguished unmaking", "vindicate", "mortify", "putrefy",
+    "counterspell", "swan song", "negate", "dovin's veto", "mana drain", "force of will",
+    "force of negation", "fierce guardianship", "pact of negation", "arcane denial",
+    "cyclonic rift", "toxic deluge", "wrath of god", "damnation", "blasphemous act",
+    "farewell", "vandalblast", "return to dust", "krosan grip", "nature's claim",
+    "go for the throat", "terminate", "reality shift", "rapid hybridization", "pongify",
+    "despark", "abrupt decay",
+):
+    _STAPLE_ROLES[_name] = "removal"
+for _name in (
+    "demonic tutor", "vampiric tutor", "enlightened tutor", "mystical tutor", "worldly tutor",
+    "gamble", "diabolic tutor", "diabolic intent", "final parting", "scheming symmetry",
+    "fabricate", "whir of invention", "tribute mage", "trophy mage", "trinket mage",
+    "imperial seal", "grim tutor", "wishclaw talisman", "profane tutor",
+    "lightning greaves", "swiftfoot boots", "whispersilk cloak", "darksteel plate",
+    "teferi's protection", "grand abolisher", "drannith magistrate", "defense grid",
+    "deflecting swat", "flawless maneuver", "tibalt's trickery", "red elemental blast",
+    "pyroblast", "veil of summer", "silence", "autumn's veil",
+    "eternal witness", "regrowth", "noxious revival", "sun titan", "reanimate",
+    "animate dead", "necromancy", "living death", "victimize", "karmic guide",
+    "phyrexian reclamation", "underworld breach",
+    "sevinne's reclamation", "brought back", "hall of heliod's generosity",
+):
+    _STAPLE_ROLES[_name] = "utility"
+
+
+def staple_role(name_normalized: str) -> str:
+    """The role of a well-known staple, or '' when the name is not one."""
+    if name_normalized in _STAPLE_ROLES:
+        return _STAPLE_ROLES[name_normalized]
+    if "signet" in name_normalized or "talisman" in name_normalized:
+        return "ramp"
+    return ""
+
 
 def _any(patterns, text: str) -> bool:
     return any(p in text for p in patterns)
@@ -68,6 +126,10 @@ def classify_functional_category(
     """
     if card_type == "Land":
         return "lands"
+
+    staple = staple_role(name_normalized)
+    if staple:
+        return staple
 
     mana_artifacts = {c.get("name_normalized") for c in type_data.get("top_mana_artifacts", [])}
     if name_normalized in mana_artifacts:

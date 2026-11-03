@@ -1,13 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import create_token, hash_password, require_user, verify_password
-from ..services import users
+from ..identity import session_key, user_key
+from ..services import store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _claim_session(request: Request, user_id: int) -> None:
+    """Fold the browser's anonymous data into the account when the account is empty."""
+    anon = session_key(request)
+    if anon:
+        store.claim_anonymous(anon, user_key(user_id))
+
+
 @router.post("/register")
-async def register(body: dict):
+async def register(body: dict, request: Request):
     username = body.get("username", "").strip().lower()
     password = body.get("password", "")
     if not username or len(username) < 3:
@@ -16,23 +24,25 @@ async def register(body: dict):
         raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
     if not username.isalnum():
         raise HTTPException(status_code=400, detail="Username must be alphanumeric")
-    if users.find_user_by_name(username):
+    if store.find_user_by_name(username):
         raise HTTPException(status_code=400, detail="Username already taken")
 
-    user_id = users.create_user(username, await hash_password(password))
+    user_id = store.create_user(username, await hash_password(password))
+    _claim_session(request, user_id)
     return {"token": create_token(user_id, username), "user": {"id": user_id, "username": username}}
 
 
 @router.post("/login")
-async def login(body: dict):
+async def login(body: dict, request: Request):
     username = body.get("username", "").strip().lower()
     password = body.get("password", "")
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username and password required")
 
-    user = users.find_user_by_name(username)
+    user = store.find_user_by_name(username)
     if not user or not await verify_password(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    _claim_session(request, user["id"])
     return {"token": create_token(user["id"], user["username"]),
             "user": {"id": user["id"], "username": user["username"]}}
 

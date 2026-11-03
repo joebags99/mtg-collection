@@ -1,27 +1,27 @@
-"""Deck lists held in the working state."""
-from fastapi import APIRouter, HTTPException
+"""The owner's saved deck lists."""
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..domain.parsing import parse_card_lines
-from ..services import analysis
-from ..state import state
+from ..identity import Owner, get_owner
+from ..services import analysis, store
 
 router = APIRouter(prefix="/decks", tags=["decks"])
 
 
-def _get(deck_id: str) -> dict:
-    deck = state.deck_lists.get(deck_id)
+def _get(owner: Owner, deck_id: str) -> dict:
+    deck = store.get_deck(owner.key, deck_id)
     if deck is None:
         raise HTTPException(status_code=404, detail="Deck not found")
     return deck
 
 
 @router.get("")
-async def list_decks():
-    return {"decks": [analysis.enrich_deck(d) for d in state.deck_lists.values()]}
+async def list_decks(owner: Owner = Depends(get_owner)):
+    return {"decks": [analysis.enrich_deck(d) for d in store.list_decks(owner.key).values()]}
 
 
 @router.post("")
-async def create_deck(body: dict):
+async def create_deck(body: dict, owner: Owner = Depends(get_owner)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Deck name is required")
@@ -32,26 +32,18 @@ async def create_deck(body: dict):
         "partner": body.get("partner", "").strip(),
         "cards": parse_card_lines(body.get("cards_text", "")),
     }
-    state.deck_lists[deck["id"]] = deck
+    store.save_deck(owner.key, deck)
     return analysis.enrich_deck(deck)
 
 
-@router.post("/restore")
-async def restore_decks(body: dict):
-    decks = body.get("decks", {})
-    state.deck_lists.clear()
-    state.deck_lists.update(decks)
-    return {"count": len(state.deck_lists)}
-
-
 @router.get("/{deck_id}")
-async def get_deck(deck_id: str):
-    return analysis.enrich_deck(_get(deck_id))
+async def get_deck(deck_id: str, owner: Owner = Depends(get_owner)):
+    return analysis.enrich_deck(_get(owner, deck_id))
 
 
 @router.put("/{deck_id}")
-async def update_deck(deck_id: str, body: dict):
-    deck = _get(deck_id)
+async def update_deck(deck_id: str, body: dict, owner: Owner = Depends(get_owner)):
+    deck = _get(owner, deck_id)
     if "name" in body:
         deck["name"] = body["name"].strip()
     if "commander" in body:
@@ -60,11 +52,12 @@ async def update_deck(deck_id: str, body: dict):
         deck["partner"] = body["partner"].strip() if body["partner"] else ""
     if "cards_text" in body:
         deck["cards"] = parse_card_lines(body["cards_text"])
+    store.save_deck(owner.key, deck)
     return analysis.enrich_deck(deck)
 
 
 @router.delete("/{deck_id}")
-async def delete_deck(deck_id: str):
-    _get(deck_id)
-    del state.deck_lists[deck_id]
+async def delete_deck(deck_id: str, owner: Owner = Depends(get_owner)):
+    if not store.delete_deck(owner.key, deck_id):
+        raise HTTPException(status_code=404, detail="Deck not found")
     return {"ok": True}

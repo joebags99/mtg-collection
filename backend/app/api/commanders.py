@@ -3,13 +3,13 @@ import asyncio
 from functools import partial
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..config import RATE_LIMIT
 from ..domain.partners import compatible_partners
 from ..ratelimit import rate_limit
-from ..services import analysis, scryfall
-from ..state import state
+from ..identity import Owner, get_owner
+from ..services import analysis, scryfall, store
 
 router = APIRouter(tags=["commanders"])
 
@@ -77,7 +77,9 @@ async def get_commander_detail(
     include_prices: bool = True,
     exclude_in_decks: bool = False,
     partner: Optional[str] = None,
+    owner: Owner = Depends(get_owner),
 ):
+    state = store.load_state(owner.key)
     work = partial(analysis.commander_detail, state, commander_name, budget=budget, theme=theme,
                    include_prices=include_prices, exclude_in_decks=exclude_in_decks, partner=partner)
     return await asyncio.get_event_loop().run_in_executor(None, work)

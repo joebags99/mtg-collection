@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import uuid
 
 import pytest
 
@@ -30,7 +31,6 @@ def client(monkeypatch):
 
     from backend.app import app
     from backend.app.services import edhrec, scryfall
-    from backend.app.state import state
 
     monkeypatch.setattr(scryfall, "get_commanders", lambda: FAKE_COMMANDERS)
     monkeypatch.setattr(scryfall, "fetch_prices", lambda names: {})
@@ -45,7 +45,6 @@ def client(monkeypatch):
     monkeypatch.setattr(edhrec, "get_synergy_lists", lambda name: {k: [] for k in edhrec.SYNERGY_SECTIONS})
     monkeypatch.setattr(edhrec, "polite_pause", lambda seconds=0.1: None)
 
-    state.collection.clear()
-    state.deck_lists.clear()
-    with TestClient(app) as c:
+    # A fresh anonymous session per test keeps the shared database from leaking state between tests.
+    with TestClient(app, headers={"X-Session-Id": f"test-{uuid.uuid4().hex}"}) as c:
         yield c

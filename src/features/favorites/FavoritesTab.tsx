@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { ColorBadge, MatchBar, PageHero, SectionHeader, type CardCommander } from '../../components/ui';
-import { apiGet, apiPost } from '../../lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiPost } from '../../lib/api';
+import { commanderDetailQuery, keys } from '../../lib/queries';
+import { useDiscoverState } from '../../app/DiscoverState';
 import type { Color, CommanderDetail, FavoriteMatch, FavoritesRecommendationResponse } from '../../types/api';
 
 interface Props {
@@ -23,13 +26,23 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, onSelectCommander, onOpenDeckBuilder }: Props) {
-  const [results, setResults] = useState<FavoriteMatch[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [detectedColors, setDetectedColors] = useState<Color[]>([]);
-  const [searched, setSearched] = useState(false);
+  const queryClient = useQueryClient();
+  const { fav, setFav } = useDiscoverState();
+  const [localError, setLocalError] = useState('');
   const [buildingDeck, setBuildingDeck] = useState<string | null>(null);
-  const [expandedCommander, setExpandedCommander] = useState<string | null>(null);
+  const expandedCommander = fav.expanded;
+  const setExpandedCommander = (name: string | null) => setFav({ expanded: name });
+
+  const matches = useQuery({
+    queryKey: keys.favoriteMatches(fav.searched ?? []),
+    queryFn: () => apiPost<FavoritesRecommendationResponse>('/api/recommendations/from-favorites', { card_names: fav.searched }),
+    enabled: fav.searched !== null && fav.searched.length > 0,
+  });
+  const results = matches.data?.results ?? [];
+  const detectedColors: Color[] = matches.data?.detected_colors ?? [];
+  const loading = matches.isFetching;
+  const error = localError || (matches.error ? (matches.error as Error).message : '');
+  const searched = fav.searched !== null && matches.isSuccess;
 
   const [cardSearch, setCardSearch] = useState('');
   const [cardSuggestions, setCardSuggestions] = useState<string[]>([]);
@@ -71,29 +84,21 @@ export function FavoritesTab({ favorites, onToggleFavorite, onClearFavorites, on
     setShowSuggestions(false);
   };
 
-  const handleFind = async () => {
+  const handleFind = () => {
     if (favList.length === 0) return;
-    setLoading(true);
-    setError('');
-    setExpandedCommander(null);
-    try {
-      const data = await apiPost<FavoritesRecommendationResponse>('/api/recommendations/from-favorites', { card_names: favList });
-      setResults(data.results || []);
-      setDetectedColors(data.detected_colors || []);
-      setSearched(true);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-    setLoading(false);
+    setLocalError('');
+    const sorted = [...favList].sort();
+    if (fav.searched && JSON.stringify(fav.searched) === JSON.stringify(sorted)) matches.refetch();
+    else setFav({ searched: sorted, expanded: null });
   };
 
   const handleBuildDeck = async (cmd: FavoriteMatch) => {
     setBuildingDeck(cmd.name);
     try {
-      const data = await apiGet<CommanderDetail>(`/api/commander/${encodeURIComponent(cmd.name)}`);
+      const data = await queryClient.fetchQuery(commanderDetailQuery(cmd.name));
       onOpenDeckBuilder(data, cmd);
     } catch (err) {
-      setError((err as Error).message);
+      setLocalError((err as Error).message);
     }
     setBuildingDeck(null);
   };

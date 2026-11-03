@@ -6,7 +6,7 @@ import type { AuthResponse, AuthUser } from '../../types/api';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onLogin: (user: AuthUser, token: string) => void;
+  onLogin: (user: AuthUser) => void;
 }
 
 type Mode = 'login' | 'register';
@@ -27,7 +27,7 @@ export function AuthModal({ isOpen, onClose, onLogin }: Props) {
       const data = await apiPost<AuthResponse>(endpoint, { username, password });
       saveAuthToken(data.token);
       saveAuthUser(data.user);
-      onLogin(data.user, data.token);
+      onLogin(data.user);
       onClose();
       setLoading(false);
     } catch (err) {

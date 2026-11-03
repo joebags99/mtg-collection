@@ -1,37 +1,44 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { clearAuth, loadAuthUser, loadCollection, loadDecks, loadFavorites, saveAuthToken, saveAuthUser, saveCollection, saveDecks, saveFavorites, loadAuthToken } from '../storage';
+import { getSessionId, resetSession } from '../session';
+import { clearAuth, clearLegacyStorage, loadAuthToken, loadAuthUser, saveAuthToken, saveAuthUser } from '../storage';
 
 describe('storage', () => {
   beforeEach(() => localStorage.clear());
 
-  it('round-trips the collection', () => {
-    expect(loadCollection()).toBeNull();
-    saveCollection({ 'sol ring': 2 });
-    expect(loadCollection()).toEqual({ 'sol ring': 2 });
-  });
-
-  it('round-trips decks', () => {
-    saveDecks({ d1: { id: 'd1', name: 'A', commander: 'X', cards: { 'sol ring': 1 } } });
-    expect(loadDecks()?.d1.cards).toEqual({ 'sol ring': 1 });
-  });
-
-  it('stores favorites as a Set', () => {
-    expect(loadFavorites()).toEqual(new Set());
-    saveFavorites(new Set(['sol ring']));
-    expect(loadFavorites().has('sol ring')).toBe(true);
-  });
-
-  it('tolerates corrupt JSON', () => {
-    localStorage.setItem('mtg_favorites', '{not json');
-    expect(loadFavorites()).toEqual(new Set());
-  });
-
-  it('clears auth', () => {
+  it('round-trips auth and clears it', () => {
     saveAuthToken('t');
     saveAuthUser({ id: 1, username: 'joe' });
     expect(loadAuthToken()).toBe('t');
+    expect(loadAuthUser()).toEqual({ id: 1, username: 'joe' });
     clearAuth();
     expect(loadAuthToken()).toBeNull();
     expect(loadAuthUser()).toBeNull();
+  });
+
+  it('tolerates corrupt JSON', () => {
+    localStorage.setItem('mtg_auth_user', '{not json');
+    expect(loadAuthUser()).toBeNull();
+  });
+
+  it('removes keys written by earlier versions', () => {
+    localStorage.setItem('mtg_collection', '{}');
+    clearLegacyStorage();
+    expect(localStorage.getItem('mtg_collection')).toBeNull();
+  });
+});
+
+describe('session', () => {
+  beforeEach(() => { localStorage.clear(); resetSession(); });
+
+  it('is stable across calls and persisted', () => {
+    const id = getSessionId();
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    expect(getSessionId()).toBe(id);
+    expect(localStorage.getItem('mtg_session')).toBe(id);
+  });
+
+  it('changes on reset', () => {
+    const before = getSessionId();
+    expect(resetSession()).not.toBe(before);
   });
 });

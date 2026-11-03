@@ -1,61 +1,56 @@
-"""The working collection: upload, restore, availability, and stats."""
+"""The owner's collection: upload, clear, availability, and stats."""
 import asyncio
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from ..domain.names import normalize_card_name
 from ..domain.parsing import parse_collection
-from ..services import analysis
-from ..state import state
+from ..identity import Owner, get_owner
+from ..services import analysis, store
+from ..state import WorkingState
 
 router = APIRouter(prefix="/collection", tags=["collection"])
 
 
+def _summary(cards: dict[str, int]) -> dict:
+    return WorkingState(cards).collection_summary()
+
+
 @router.post("/upload")
-async def upload_collection(file: UploadFile = File(...)):
+async def upload_collection(file: UploadFile = File(...), owner: Owner = Depends(get_owner)):
     text = (await file.read()).decode("utf-8")
     cards = parse_collection(text, file.filename or "upload.txt")
     if not cards:
         raise HTTPException(status_code=400, detail="No cards found in uploaded file")
-    state.replace_collection(cards)
-    return state.collection_summary()
+    store.set_collection(owner.key, cards)
+    return _summary(cards)
 
 
 @router.post("/text")
-async def upload_text_collection(body: dict):
+async def upload_text_collection(body: dict, owner: Owner = Depends(get_owner)):
     text = body.get("text", "")
     if not text.strip():
         raise HTTPException(status_code=400, detail="No text provided")
     cards = parse_collection(text)
     if not cards:
         raise HTTPException(status_code=400, detail="No cards found")
-    state.replace_collection(cards)
-    return state.collection_summary()
+    store.set_collection(owner.key, cards)
+    return _summary(cards)
 
 
 @router.get("")
-async def get_collection():
-    return state.collection_summary()
+async def get_collection(owner: Owner = Depends(get_owner)):
+    return _summary(store.get_collection(owner.key))
 
 
-@router.post("/restore")
-async def restore_collection(body: dict):
-    cards = body.get("cards", {})
-    if not cards:
-        raise HTTPException(status_code=400, detail="No cards provided")
-    restored: dict[str, int] = {}
-    if isinstance(cards, list):  # legacy format: list of names
-        for name in cards:
-            n = normalize_card_name(name)
-            restored[n] = restored.get(n, 0) + 1
-    else:
-        restored = {normalize_card_name(n): int(q) for n, q in cards.items()}
-    state.replace_collection(restored)
-    return state.collection_summary()
+@router.delete("")
+async def clear_collection(owner: Owner = Depends(get_owner)):
+    store.clear_collection(owner.key)
+    return _summary({})
 
 
 @router.get("/availability")
-async def get_collection_availability():
+async def get_collection_availability(owner: Owner = Depends(get_owner)):
+    state = store.load_state(owner.key)
     usage = state.cards_in_decks()
     return {
         name: {
@@ -69,7 +64,8 @@ async def get_collection_availability():
 
 
 @router.get("/stats")
-async def get_collection_stats():
+async def get_collection_stats(owner: Owner = Depends(get_owner)):
+    state = store.load_state(owner.key)
     if not state.collection:
         return {"error": "No collection loaded", "total_unique": 0}
     return await asyncio.get_event_loop().run_in_executor(None, analysis.collection_stats, state)

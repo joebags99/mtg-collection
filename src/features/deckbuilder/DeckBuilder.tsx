@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AvailDot, CardName, ColorBadge, DeckBadges, SectionHeader, TypeSectionHeader, type CardCommander } from '../../components/ui';
 import { getColorGlow } from '../../lib/colors';
 import type { Color, CommanderDetail, FunctionalCategory } from '../../types/api';
-import { canHaveMultiple, classifyFunctionalCategory, compareForRemoval, groupByType, makeAddComparator, planComposition } from './classify';
+import { canHaveMultiple, roleOf, compareForRemoval, groupByType, makeAddComparator, planComposition } from './classify';
 import { CompositionModal } from './CompositionModal';
 import {
   CATEGORY_META, COLOR_TO_BASICS, DEFAULT_COMPOSITION,
@@ -47,7 +47,7 @@ function buildInitialDeck(data: CommanderDetail, commander: CardCommander): { ca
   const initial: BuilderCard[] = [...data.owned_cards, ...data.missing_cards].map((c) => {
     const isCommander = (c.name_normalized || c.name?.toLowerCase()) === commanderNorm;
     const card: BuilderCard = { ...c, included: true, qty: 1, isCommander };
-    card.functional_category = classifyFunctionalCategory(card);
+    card.functional_category = roleOf(card);
     return card;
   });
   const recCards: BuilderCard[] = (data.recommendations || []).map((c) => {
@@ -63,14 +63,14 @@ function buildInitialDeck(data: CommanderDetail, commander: CardCommander): { ca
       isRecommendation: true,
       qty: 1,
     };
-    card.functional_category = classifyFunctionalCategory(card);
+    card.functional_category = roleOf(card);
     return card;
   });
 
   const deckCounts = emptyCounts();
   for (const c of initial) {
     if (c.isCommander) continue;
-    deckCounts[classifyFunctionalCategory(c)] += c.qty;
+    deckCounts[roleOf(c)] += c.qty;
   }
 
   // Auto-fill basic lands to reach 99 non-commander cards (commander is #100).
@@ -151,7 +151,7 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
   const activeComposition = composition || DEFAULT_COMPOSITION;
 
   const categoryCounts = emptyCounts();
-  for (const c of nonCommanderIncluded) categoryCounts[classifyFunctionalCategory(c)] += c.qty;
+  for (const c of nonCommanderIncluded) categoryCounts[roleOf(c)] += c.qty;
 
   const sortAddCandidates = makeAddComparator(suggestionMode);
 
@@ -165,7 +165,7 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
     for (const over of overCategories) {
       const excess = categoryCounts[over.key] - activeComposition[over.key];
       const candidates = nonCommanderIncluded
-        .filter((c) => classifyFunctionalCategory(c) === over.key)
+        .filter((c) => roleOf(c) === over.key)
         .sort(compareForRemoval)
         .slice(0, excess);
       for (const c of candidates) removable.push({ ...c, fromCategory: over.label });
@@ -175,7 +175,7 @@ export function DeckBuilder({ data, commander, onBack, favorites, onToggleFavori
     for (const under of underCategories) {
       const deficit = activeComposition[under.key] - categoryCounts[under.key];
       const candidates = nonCommanderExcluded
-        .filter((c) => classifyFunctionalCategory(c) === under.key)
+        .filter((c) => roleOf(c) === under.key)
         .sort(sortAddCandidates)
         .slice(0, deficit);
       for (const c of candidates) addable.push({ ...c, toCategory: under.label });

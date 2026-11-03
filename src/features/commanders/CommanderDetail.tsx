@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiGet } from '../../lib/api';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { commanderDetailQuery, partnersQuery } from '../../lib/queries';
 import { getColorGlow } from '../../lib/colors';
-import type { Color, Commander, CommanderDetail as CommanderDetailData, PartnersResponse } from '../../types/api';
+import type { Color, Commander, CommanderDetail as CommanderDetailData } from '../../types/api';
 import {
   CardName, ColorBadge, LoadingOverlay, MatchBar, PartnerPicker, SectionHeader, type CardCommander,
 } from '../../components/ui';
@@ -28,9 +29,6 @@ export interface CommanderDetailProps {
 }
 
 export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeInDecks, favorites, onToggleFavorite }: CommanderDetailProps) {
-  const [data, setData] = useState<CommanderDetailData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [budget, setBudget] = useState('');
   const [theme, setTheme] = useState('');
   const [showOwned, setShowOwned] = useState(true);
@@ -40,93 +38,26 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
   const [recFilter, setRecFilter] = useState<RecFilter>('all');
   const [recTypeFilter, setRecTypeFilter] = useState('all');
   const [selectedPartner, setSelectedPartner] = useState<Commander | null>(null);
-  const [partnerData, setPartnerData] = useState<PartnersResponse | null>(null);
-  const initialFetchDone = useRef(false);
-  const currentCommander = useRef(commander.name);
 
-  // Reset state when commander changes
-  useEffect(() => {
-    if (currentCommander.current !== commander.name) {
-      currentCommander.current = commander.name;
-      initialFetchDone.current = false;
-      setData(null);
-      setSelectedPartner(null);
-      setPartnerData(null);
-    }
-  }, [commander.name]);
+  // A named partner or a one-option variant is fixed, so resolve it before asking for the deck.
+  const lockedPartnerType = commander.partner_type === 'partner_with' || commander.partner_type === 'partner_variant';
+  const partners = useQuery({ ...partnersQuery(commander.name), enabled: lockedPartnerType });
+  const partnerData = partners.data ?? null;
+  const lockedPartner = lockedPartnerType && partnerData?.partners?.length === 1 ? partnerData.partners[0] : null;
+  useEffect(() => { if (lockedPartner) setSelectedPartner(lockedPartner); }, [lockedPartner]);
+  const partner = selectedPartner ?? lockedPartner;
 
-  // Fetch partner info and EDHREC data - runs once on mount
-  useEffect(() => {
-    if (initialFetchDone.current) return;
-    initialFetchDone.current = true;
+  const params: DetailParams = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
+  if (partner) params.partner = partner.name;
+  const detail = useQuery({
+    ...commanderDetailQuery(commander.name, params),
+    enabled: !lockedPartnerType || partners.isFetched,
+  });
+  const data = detail.data ?? null;
+  const loading = detail.isPending || detail.isFetching;
+  const error = detail.error ? (detail.error as Error).message : '';
 
-    const fetchInitial = async () => {
-      setLoading(true);
-      setError('');
-      let partner: Commander | null = null;
-
-      // Check for locked partner first
-      if (commander.partner_type && ['partner_with', 'partner_variant'].includes(commander.partner_type)) {
-        try {
-          const pData = await apiGet<PartnersResponse>(`/api/commander/${encodeURIComponent(commander.name)}/partners`);
-          setPartnerData(pData);
-          if ((pData.partner_type === 'partner_with' || pData.partner_type === 'partner_variant') && pData.partners?.length === 1) {
-            partner = pData.partners[0];
-            setSelectedPartner(partner);
-          }
-        } catch {
-          // Ignore partner fetch errors
-        }
-      }
-
-      // Now fetch EDHREC data (with partner if found)
-      try {
-        const params: DetailParams = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
-        if (partner) params.partner = partner.name;
-        const d = await apiGet<CommanderDetailData>(`/api/commander/${encodeURIComponent(commander.name)}`, params);
-        setData(d);
-      } catch (err) {
-        setError((err as Error).message);
-      }
-      setLoading(false);
-    };
-
-    fetchInitial();
-  }, [commander.name, commander.partner_type]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refetch when filters or partner selection changes (after initial load)
-  const fetchDetail = useCallback(async (partnerOverride?: Commander | null) => {
-    setLoading(true);
-    setError('');
-    try {
-      const params: DetailParams = { budget: budget || null, theme: theme || null, exclude_in_decks: excludeInDecks || null };
-      const p = partnerOverride !== undefined ? partnerOverride : selectedPartner;
-      if (p) params.partner = p.name;
-      const d = await apiGet<CommanderDetailData>(`/api/commander/${encodeURIComponent(commander.name)}`, params);
-      setData(d);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-    setLoading(false);
-  }, [commander.name, budget, theme, excludeInDecks, selectedPartner]);
-
-  // Refetch when filters change (but not on initial mount)
-  const prevFilters = useRef({ budget: '', theme: '' });
-  useEffect(() => {
-    if (!initialFetchDone.current || !data) return;
-    if (prevFilters.current.budget !== budget || prevFilters.current.theme !== theme) {
-      prevFilters.current = { budget, theme };
-      fetchDetail();
-    }
-  }, [budget, theme, data, fetchDetail]);
-
-  // Handle partner selection changes from PartnerPicker
-  const handlePartnerChange = useCallback((newPartner: Commander | null) => {
-    setSelectedPartner(newPartner);
-    if (initialFetchDone.current && data) {
-      fetchDetail(newPartner);
-    }
-  }, [data, fetchDetail]);
+  const handlePartnerChange = (newPartner: Commander | null) => setSelectedPartner(newPartner);
 
   const handleExport = (type: 'full' | 'missing') => {
     if (!data) return;

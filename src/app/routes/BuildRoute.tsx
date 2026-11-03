@@ -1,32 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { LoadingOverlay } from '../../components/ui';
 import { DeckBuilder } from '../../features/deckbuilder/DeckBuilder';
-import { apiGet } from '../../lib/api';
+import { commanderDetailQuery } from '../../lib/queries';
 import type { CommanderDetail } from '../../types/api';
 import { useAppState } from '../AppContext';
 import { commanderPath } from '../paths';
 import { useCommander } from './useCommander';
 
-/** The Build surface for one commander. Uses the detail payload handed over by the detail page, or fetches a fresh one on a direct load. */
+/** The Build surface for one commander. Uses the detail payload handed over by the detail page, or fetches one on a direct load. */
 export function BuildRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const { commander, loading: commanderLoading, error: commanderError, name } = useCommander();
   const { favorites, toggleFavorite, excludeInDecks } = useAppState();
 
-  const fromState = (location.state as { data?: CommanderDetail } | null)?.data;
-  const [data, setData] = useState<CommanderDetail | null>(fromState ?? null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (fromState || !commander) return;
-    let cancelled = false;
-    apiGet<CommanderDetail>(`/api/commander/${encodeURIComponent(commander.name)}`, { exclude_in_decks: excludeInDecks })
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch((e: Error) => { if (!cancelled) setError(e.message); });
-    return () => { cancelled = true; };
-  }, [fromState, commander, excludeInDecks]);
+  const fromState = (location.state as { data?: CommanderDetail } | null)?.data ?? null;
+  const detail = useQuery({
+    ...commanderDetailQuery(commander?.name ?? name, { exclude_in_decks: excludeInDecks || null }),
+    enabled: !fromState && !!commander,
+  });
+  const data = fromState ?? detail.data ?? null;
 
   if (commanderError) {
     return (
@@ -36,11 +30,11 @@ export function BuildRoute() {
       </div>
     );
   }
-  if (error) {
+  if (detail.error) {
     return (
       <div className="space-y-3">
         <h2 className="text-2xl font-semibold">Could not load deck data</h2>
-        <p className="text-danger">{error}</p>
+        <p className="text-danger">{(detail.error as Error).message}</p>
         <button onClick={() => navigate(commanderPath(name))} className="text-accent hover:underline">← Back to commander</button>
       </div>
     );
