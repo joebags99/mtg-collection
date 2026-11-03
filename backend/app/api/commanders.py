@@ -3,7 +3,7 @@ import asyncio
 from functools import partial
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from ..config import RATE_LIMIT
 from ..domain.partners import compatible_partners
@@ -38,6 +38,15 @@ async def search_commanders_autocomplete(q: str = ""):
         elif q in name:
             contains.append(c)
     return {"results": (prefix + contains)[:20]}
+
+
+@router.get("/commanders/lookup")
+async def lookup_commander(name: str = ""):
+    """One commander by exact name (front face), for deep links."""
+    commander = scryfall.find_commander(name) if name else None
+    if not commander:
+        raise HTTPException(status_code=404, detail="Commander not found")
+    return commander
 
 
 @router.get("/commanders/popular")

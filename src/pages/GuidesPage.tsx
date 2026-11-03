@@ -1,6 +1,6 @@
+import { Link } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { AmbientBackground } from '../components/ui';
-import type { Tab } from '../types/nav';
 
 interface Guide {
   id: string;
@@ -166,11 +166,7 @@ Arcane Signet`}
   },
 ];
 
-interface GuidesPageProps {
-  onNavigate: (tab: Tab) => void;
-}
-
-export function GuidesPage({ onNavigate }: GuidesPageProps) {
+export function GuidesPage() {
   const [selectedGuide, setSelectedGuide] = useState<string | null>(null);
   const guide = selectedGuide ? GUIDES.find((g) => g.id === selectedGuide) : undefined;
 
@@ -240,9 +236,9 @@ export function GuidesPage({ onNavigate }: GuidesPageProps) {
         <h2 className="text-2xl font-bold text-ink mb-3">Need More Help?</h2>
         <p className="text-ink-muted">
           Have questions that aren't covered in our guides?{' '}
-          <button onClick={() => onNavigate('about')} className="text-accent hover:underline">
+          <Link to="/about" className="text-accent hover:underline">
             Visit our About page
-          </button>{' '}
+          </Link>{' '}
           to learn more about MTG Commander Recommender.
         </p>
       </div>

@@ -220,10 +220,10 @@ export function CommanderDetail({ commander, onBack, onOpenDeckBuilder, excludeI
           <div className="space-y-3 flex-1">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-3xl font-bold">
+                <h1 className="text-3xl font-semibold">
                   {commander.name}
                   {selectedPartner && <span className="text-xl text-ink-muted font-normal"> + {selectedPartner.name}</span>}
-                </h2>
+                </h1>
                 <ColorBadge colors={combinedColors} />
               </div>
               <div className="flex items-center gap-3">

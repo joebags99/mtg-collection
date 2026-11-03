@@ -7,10 +7,12 @@ import { CardName, ColorBadge, LoadingOverlay, MatchBar, PageHero, SectionHeader
 export interface CompareViewProps {
   commanders: CardCommander[];
   onBack: () => void;
+  /** Hide the inline Back link when the view sits inside a drawer with its own close control. */
+  showBack?: boolean;
   onSelectCommander: (cmd: CardCommander) => void;
 }
 
-export function CompareView({ commanders, onBack, onSelectCommander }: CompareViewProps) {
+export function CompareView({ commanders, onBack, onSelectCommander, showBack = true }: CompareViewProps) {
   const [data, setData] = useState<CompareResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,7 +31,7 @@ export function CompareView({ commanders, onBack, onSelectCommander }: CompareVi
   if (error) {
     return (
       <div>
-        <button onClick={onBack} className="text-accent hover:underline mb-4">← Back</button>
+        {showBack && <button onClick={onBack} className="text-accent hover:underline mb-4">← Back</button>}
         <div className="bg-danger/10 border border-danger/40 rounded p-3 text-danger">{error}</div>
       </div>
     );
@@ -39,7 +41,7 @@ export function CompareView({ commanders, onBack, onSelectCommander }: CompareVi
 
   return (
     <div className="space-y-6">
-      <button onClick={onBack} className="text-accent hover:underline">← Back</button>
+      {showBack && <button onClick={onBack} className="text-accent hover:underline">← Back</button>}
 
       {/* Hero header with all commanders */}
       <PageHero

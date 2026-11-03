@@ -41,6 +41,11 @@ def test_commander_endpoints(client):
     assert [p["name"] for p in partners["partners"]] == ["Tymna the Weaver"]
 
 
+def test_commander_lookup(client):
+    assert client.get("/api/commanders/lookup", params={"name": "Tymna the Weaver // Back"}).json()["name"] == "Tymna the Weaver"
+    assert client.get("/api/commanders/lookup", params={"name": "Nobody"}).status_code == 404
+
+
 def test_commander_detail_splits_owned_and_missing(client):
     client.post("/api/collection/text", json={"text": "1 Sol Ring"})
     r = client.get("/api/commander/Atraxa, Praetors' Voice")

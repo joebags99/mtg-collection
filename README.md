@@ -50,7 +50,8 @@ External calls that block run in a thread pool so they do not stall the event lo
 ```
 src/
   main.tsx         entry point
-  App.tsx          root: tab state, auth, sync, and screen switching
+  App.tsx          router: routes map to the surfaces below
+  app/             app-wide state (AppContext), the rail shell, the compare drawer, route components
   features/        one folder per screen: collection, commanders, deckbuilder, decks, favorites, auth
   pages/           static pages (About, Guides)
   components/ui/   shared primitives: mana symbols, badges, cards, pickers, hero, headers
@@ -58,6 +59,18 @@ src/
   types/           API response types and the Tab union
   styles/          design tokens (tokens.css)
 ```
+
+## Surfaces and URLs
+
+| Surface | URL | What it holds |
+| --- | --- | --- |
+| Collection | `/collection`, `/collection/stats` | upload or paste a list; statistics |
+| Discover | `/discover`, `/discover/search`, `/discover/favorites` | recommendations, search, and Find My Commander |
+| Commander | `/commander/:name` | one commander's average deck against your collection |
+| Build | `/commander/:name/build` | the deck builder for that commander |
+| Decks | `/decks` | your saved deck lists |
+
+Compare opens as a drawer from the rail once two or three commanders are selected.
 
 ## Design system
 
