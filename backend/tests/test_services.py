@@ -142,6 +142,20 @@ def test_get_average_deck_prefers_budget_page_and_falls_back(monkeypatch):
     assert seen[:2] == ["average-decks/atraxa-praetors-voice/budget.json", "average-decks/atraxa-praetors-voice.json"]
 
 
+def test_s3_access_denied_counts_as_missing(monkeypatch):
+    denied = _Resp({}, status=403)
+    denied.text = '<?xml version="1.0"?><Error><Code>AccessDenied</Code></Error>'
+    monkeypatch.setattr(edhrec.http, "get", lambda url, timeout=None: denied)
+    assert edhrec.fetch_page("average-decks/passionate-archaeologist") is None
+
+    blocked = _Resp({}, status=403)
+    blocked.text = "forbidden by WAF"
+    monkeypatch.setattr(edhrec.http, "get", lambda url, timeout=None: blocked)
+    import pytest
+    with pytest.raises(RuntimeError):
+        edhrec.fetch_page("commanders/atraxa-praetors-voice")
+
+
 def test_missing_commander_gives_empty_shapes_not_errors(monkeypatch):
     monkeypatch.setattr(edhrec.http, "get", _json_host({}))
     cache.commander_decks._data.clear()

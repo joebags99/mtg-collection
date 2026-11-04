@@ -46,10 +46,17 @@ _SECTION_TAGS = {
 }
 
 
+def _is_missing(resp: requests.Response) -> bool:
+    """json.edhrec.com is an S3 bucket: a page that does not exist comes back as 403 AccessDenied, not 404."""
+    if resp.status_code == 404:
+        return True
+    return resp.status_code == 403 and "AccessDenied" in resp.text
+
+
 def fetch_page(path: str) -> dict | None:
     """The JSON behind an EDHREC page, e.g. "commanders/atraxa-praetors-voice". None when the page does not exist."""
     resp = http.get(f"{JSON_BASE}/{path}.json", timeout=30)
-    if resp.status_code == 404:
+    if _is_missing(resp):
         return None
     resp.raise_for_status()
     return resp.json()
