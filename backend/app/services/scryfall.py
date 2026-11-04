@@ -20,6 +20,21 @@ SEARCH_URL = "https://api.scryfall.com/cards/search"
 COLLECTION_URL = "https://api.scryfall.com/cards/collection"
 BATCH_SIZE = 75  # Scryfall's limit for /cards/collection
 
+# Scryfall rejects requests without a descriptive User-Agent and an Accept header.
+http = requests.Session()
+http.headers.update({
+    "User-Agent": "mtg-collection/0.1 (https://github.com/joebags99/mtg-collection)",
+    "Accept": "application/json",
+})
+
+
+def _describe_failure(resp: requests.Response) -> str:
+    """Scryfall error bodies carry a 'details' field; fall back to the raw text."""
+    try:
+        return resp.json().get("details") or resp.text[:200]
+    except ValueError:
+        return resp.text[:200]
+
 
 def _batches(items: list, size: int = BATCH_SIZE):
     for i in range(0, len(items), size):
@@ -28,7 +43,9 @@ def _batches(items: list, size: int = BATCH_SIZE):
 
 def _collection_lookup(names: list[str], timeout: int = 30) -> list[dict]:
     """POST a batch of names to /cards/collection. Returns the found cards (missing ones are dropped)."""
-    resp = requests.post(COLLECTION_URL, json={"identifiers": [{"name": n} for n in names]}, timeout=timeout)
+    resp = http.post(COLLECTION_URL, json={"identifiers": [{"name": n} for n in names]}, timeout=timeout)
+    if resp.status_code != 200:
+        logger.error("Scryfall collection error %s: %s", resp.status_code, _describe_failure(resp))
     resp.raise_for_status()
     return resp.json().get("data", [])
 
@@ -42,9 +59,9 @@ def _search_all(query: str) -> list[dict]:
     url, params = SEARCH_URL, {"q": query, "order": "edhrec", "unique": "cards"}
     found: list[dict] = []
     while url:
-        resp = requests.get(url, params=params)
+        resp = http.get(url, params=params, timeout=30)
         if resp.status_code != 200:
-            logger.error("Scryfall search error %s for %r", resp.status_code, query)
+            logger.error("Scryfall search error %s for %r: %s", resp.status_code, query, _describe_failure(resp))
             break
         data = resp.json()
         found.extend(data.get("data", []))

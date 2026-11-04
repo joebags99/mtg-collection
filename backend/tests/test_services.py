@@ -7,6 +7,7 @@ class _Resp:
     def __init__(self, payload, status=200):
         self.status_code = status
         self._payload = payload
+        self.text = ""
 
     def json(self):
         return self._payload
@@ -27,7 +28,7 @@ ETALI = {"name": "Etali, Primal Conqueror // Etali, Primal Sickness",
 
 def test_fetch_prices_prefers_usd_then_foil_and_caches(monkeypatch):
     calls = []
-    monkeypatch.setattr(scryfall.requests, "post", lambda *a, **k: calls.append(k) or _Resp({"data": [SOL_RING, ETALI]}))
+    monkeypatch.setattr(scryfall.http, "post", lambda *a, **k: calls.append(k) or _Resp({"data": [SOL_RING, ETALI]}))
     monkeypatch.setattr(scryfall.time, "sleep", lambda s: None)
     cache.prices._data.clear()
 
@@ -39,7 +40,7 @@ def test_fetch_prices_prefers_usd_then_foil_and_caches(monkeypatch):
 
 
 def test_fetch_card_facts_populate_all_caches(monkeypatch):
-    monkeypatch.setattr(scryfall.requests, "post", lambda *a, **k: _Resp({"data": [SOL_RING, ETALI]}))
+    monkeypatch.setattr(scryfall.http, "post", lambda *a, **k: _Resp({"data": [SOL_RING, ETALI]}))
     monkeypatch.setattr(scryfall.time, "sleep", lambda s: None)
     for d in (cache.card_types, cache.mana, cache.oracle_text):
         d.clear()
@@ -62,7 +63,7 @@ def test_fetch_all_commanders_includes_backgrounds_once(monkeypatch):
              "image_uris": {}, "edhrec_rank": 900, "color_identity": ["G"]},
         ], "has_more": False},
     }
-    monkeypatch.setattr(scryfall.requests, "get", lambda url, params=None: _Resp(pages[params["q"]]))
+    monkeypatch.setattr(scryfall.http, "get", lambda url, params=None, timeout=None: _Resp(pages[params["q"]]))
     cmds = scryfall.fetch_all_commanders()
     assert [(c["name"], c["partner_type"]) for c in cmds] == [
         ("Thrasios, Triton Hero", "partner"), ("Raised by Giants", "background")]
@@ -71,11 +72,11 @@ def test_fetch_all_commanders_includes_backgrounds_once(monkeypatch):
 
 def test_validate_card_names_groups_by_front_face_and_fails_open(monkeypatch):
     monkeypatch.setattr(scryfall.time, "sleep", lambda s: None)
-    monkeypatch.setattr(scryfall.requests, "post", lambda *a, **k: _Resp({"data": [ETALI]}))
+    monkeypatch.setattr(scryfall.http, "post", lambda *a, **k: _Resp({"data": [ETALI]}))
     valid, invalid = scryfall.validate_card_names(["Etali, Primal Conqueror // Etali, Primal Sickness", "Not A Card"])
     assert valid == ["Etali, Primal Conqueror // Etali, Primal Sickness"] and invalid == ["Not A Card"]
 
-    monkeypatch.setattr(scryfall.requests, "post", lambda *a, **k: _Resp({}, status=500))
+    monkeypatch.setattr(scryfall.http, "post", lambda *a, **k: _Resp({}, status=500))
     valid, invalid = scryfall.validate_card_names(["Anything"])
     assert valid == ["Anything"] and invalid == []
 
@@ -121,3 +122,8 @@ def test_get_synergy_lists_tolerates_section_failures(monkeypatch):
     lists = edhrec.get_synergy_lists("Atraxa, Praetors' Voice")
     assert lists["high_synergy"][0]["name_normalized"] == "doubling season"
     assert all(lists[k] == [] for k in edhrec.SYNERGY_SECTIONS if k != "high_synergy")
+
+
+def test_scryfall_session_sends_identifying_headers():
+    assert scryfall.http.headers["Accept"] == "application/json"
+    assert "mtg-collection" in scryfall.http.headers["User-Agent"]
