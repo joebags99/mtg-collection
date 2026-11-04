@@ -38,6 +38,8 @@ class TTLCache(Generic[T]):
         return self.get(key) is not None
 
 
+# EDHREC: commander slug -> raw commander page JSON (shared by the synergy lists and the average deck)
+commander_pages: TTLCache[dict] = TTLCache(EDHREC_TTL)
 # EDHREC: commander name (or budget/theme-qualified key) -> average deck payload
 commander_decks: TTLCache[dict] = TTLCache(EDHREC_TTL)
 # EDHREC: commander name -> synergy / top-card lists

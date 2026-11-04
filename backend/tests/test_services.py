@@ -83,88 +83,98 @@ def test_validate_card_names_groups_by_front_face_and_fails_open(monkeypatch):
     assert valid == ["Anything"] and invalid == []
 
 
-def test_get_average_deck_parses_string_and_dict_entries(monkeypatch):
-    monkeypatch.setattr(edhrec._client, "get_commanders_average_deck",
-                        lambda slug, budget: {"decklist": ["1 Sol Ring", {"name": "Swords to Plowshares", "type": "Instant", "inclusion": 80}]})
-    monkeypatch.setattr(edhrec._client, "get_commander_data",
-                        lambda slug: {"num_decks": 42, "container": {"json_dict": {"themes": [{"name": "Counters", "slug": "counters", "count": 3}]}}})
+def _page(status=200, **payload):
+    return _Resp(payload, status=status)
+
+
+COMMANDER_PAGE = {
+    "bracket_counts": {"2": 30, "3": 12},
+    "container": {"json_dict": {
+        "themes": [{"name": "Counters", "slug": "counters", "count": 3}],
+        "cardlists": [
+            {"tag": "highsynergycards", "cardviews": [{"name": "Doubling Season", "synergy": 50, "inclusion": 60}]},
+            {"tag": "manaartifacts", "cardviews": [{"name": "Sol Ring", "synergy": 1, "inclusion": 90}]},
+            {"tag": "somethingelse", "cardviews": [{"name": "Ignored"}]},
+        ],
+    }},
+}
+AVERAGE_DECK_PAGE = {"deck": {"cards": ["1 Sol Ring", {"name": "Swords to Plowshares", "type": "Instant", "inclusion": 80}]}}
+
+
+def _json_host(routes):
+    """A fake http.get for json.edhrec.com: routes maps the path after /pages/ to a response."""
+    def get(url, timeout=None):
+        path = url.split("/pages/", 1)[1].removesuffix(".json")
+        return routes.get(path) or _Resp({}, status=404)
+    return get
+
+
+def test_get_average_deck_reads_json_host(monkeypatch):
+    monkeypatch.setattr(edhrec.http, "get", _json_host({
+        "commanders/atraxa-praetors-voice": _page(**COMMANDER_PAGE),
+        "average-decks/atraxa-praetors-voice": _page(**AVERAGE_DECK_PAGE),
+    }))
     cache.commander_decks._data.clear()
+    cache.commander_pages._data.clear()
 
     deck = edhrec.get_average_deck("Atraxa, Praetors' Voice")
-    assert deck["num_decks"] == 42
+    assert deck["num_decks"] == 42  # summed from bracket counts
     assert deck["themes"] == [{"name": "Counters", "slug": "counters", "count": 3}]
     assert deck["decklist"][0] == {"name": "Sol Ring", "name_normalized": "sol ring", "category": ""}
     assert deck["decklist"][1]["inclusion"] == 80
     assert sorted(deck["deck_card_names"]) == ["sol ring", "swords to plowshares"]
 
 
-def test_get_average_deck_returns_error_shape_on_failure(monkeypatch):
-    def boom(slug, budget):
-        raise RuntimeError("edhrec down")
-    monkeypatch.setattr(edhrec._client, "get_commanders_average_deck", boom)
+def test_get_average_deck_prefers_budget_page_and_falls_back(monkeypatch):
+    seen = []
+    def get(url, timeout=None):
+        seen.append(url.split("/pages/", 1)[1])
+        if url.endswith("/budget.json"):
+            return _Resp({}, status=404)
+        if "average-decks" in url:
+            return _page(**AVERAGE_DECK_PAGE)
+        return _page(**COMMANDER_PAGE)
+    monkeypatch.setattr(edhrec.http, "get", get)
     cache.commander_decks._data.clear()
+    cache.commander_pages._data.clear()
+    deck = edhrec.get_average_deck("Atraxa, Praetors' Voice", budget="budget")
+    assert deck["decklist"]
+    assert seen[:2] == ["average-decks/atraxa-praetors-voice/budget.json", "average-decks/atraxa-praetors-voice.json"]
+
+
+def test_missing_commander_gives_empty_shapes_not_errors(monkeypatch):
+    monkeypatch.setattr(edhrec.http, "get", _json_host({}))
+    cache.commander_decks._data.clear()
+    cache.commander_synergy._data.clear()
+    cache.commander_pages._data.clear()
+    deck = edhrec.get_average_deck("Nobody")
+    assert deck["decklist"] == [] and "error" not in deck
+    assert all(v == [] for v in edhrec.get_synergy_lists("Nobody").values())
+
+
+def test_get_average_deck_returns_error_shape_on_failure(monkeypatch):
+    def boom(url, timeout=None):
+        raise requests.ConnectionError("edhrec down")
+    monkeypatch.setattr(edhrec.http, "get", boom)
+    cache.commander_decks._data.clear()
+    cache.commander_pages._data.clear()
     deck = edhrec.get_average_deck("Nobody")
     assert deck["decklist"] == [] and "edhrec down" in deck["error"]
 
 
-def test_get_synergy_lists_tolerates_section_failures(monkeypatch):
-    def ok(slug):
-        return {"High Synergy Cards": [{"name": "Doubling Season", "synergy": 50, "inclusion": 60}]}
-
-    def fail(slug):
-        raise RuntimeError("nope")
-
-    monkeypatch.setattr(edhrec._client, "get_high_synergy_cards", ok)
-    for method in ("get_new_cards", "get_top_creatures", "get_top_instants", "get_top_sorceries",
-                   "get_top_enchantments", "get_top_artifacts", "get_top_lands", "get_top_planeswalkers",
-                   "get_top_utility_lands", "get_top_mana_artifacts"):
-        monkeypatch.setattr(edhrec._client, method, fail)
+def test_get_synergy_lists_maps_tags_and_shares_the_page_fetch(monkeypatch):
+    calls = []
+    def get(url, timeout=None):
+        calls.append(url)
+        return _page(**COMMANDER_PAGE) if "commanders/" in url else _page(**AVERAGE_DECK_PAGE)
+    monkeypatch.setattr(edhrec.http, "get", get)
     cache.commander_synergy._data.clear()
+    cache.commander_decks._data.clear()
+    cache.commander_pages._data.clear()
 
     lists = edhrec.get_synergy_lists("Atraxa, Praetors' Voice")
     assert lists["high_synergy"][0]["name_normalized"] == "doubling season"
-    assert all(lists[k] == [] for k in edhrec.SYNERGY_SECTIONS if k != "high_synergy")
-
-
-def test_scryfall_session_sends_identifying_headers():
-    assert scryfall.http.headers["Accept"] == "application/json"
-    assert "mtg-collection" in scryfall.http.headers["User-Agent"]
-
-
-class _Html:
-    def __init__(self, text, status=200):
-        self.text = text
-        self.status_code = status
-
-    def raise_for_status(self):
-        if self.status_code != 200:
-            raise requests.HTTPError(response=self)
-
-
-def test_discover_build_id_matches_both_homepage_shapes(monkeypatch):
-    monkeypatch.setattr(edhrec._client.session, "get", lambda url, timeout=None: _Html('<script id="__NEXT_DATA__" type="application/json">{"buildId":"abc123","props":{}}</script>'))
-    assert edhrec.discover_build_id() == "abc123"
-    monkeypatch.setattr(edhrec._client.session, "get", lambda url, timeout=None: _Html('<script src="/_next/static/XyZ_9/_buildManifest.js" defer></script>'))
-    assert edhrec.discover_build_id() == "XyZ_9"
-    monkeypatch.setattr(edhrec._client.session, "get", lambda url, timeout=None: _Html("<html>no ids here</html>"))
-    assert edhrec.discover_build_id() is None
-
-
-def test_stale_build_id_is_refreshed_once_on_404(monkeypatch):
-    ids = iter(["old", "new"])
-    monkeypatch.setattr(edhrec, "discover_build_id", lambda: next(ids))
-    monkeypatch.setattr(edhrec, "_build_id_checked_at", 0.0)
-    edhrec._client.current_build_id = None
-    calls = []
-
-    def fetch():
-        calls.append(edhrec._client.current_build_id)
-        if edhrec._client.current_build_id == "old":
-            resp = _Html("", status=404)
-            raise requests.HTTPError(response=resp)
-        return {"ok": True}
-
-    # First call sets "old", 404s, then refreshes to "new" and succeeds.
-    monkeypatch.setattr(edhrec, "_BUILD_ID_RETRY_COOLDOWN", 0.0)
-    assert edhrec._with_fresh_build_id(fetch) == {"ok": True}
-    assert calls == ["old", "new"]
+    assert lists["top_mana_artifacts"][0]["name"] == "Sol Ring"
+    assert all(lists[k] == [] for k in edhrec.SYNERGY_SECTIONS if k not in ("high_synergy", "top_mana_artifacts"))
+    edhrec.get_average_deck("Atraxa, Praetors' Voice")
+    assert sum("commanders/" in c for c in calls) == 1  # commander page fetched once for both

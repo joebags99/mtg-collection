@@ -1,76 +1,27 @@
-"""EDHREC client: average decks and synergy / top-card lists for a commander."""
+"""EDHREC client: average decks and synergy / top-card lists for a commander.
+
+EDHREC publishes the data behind each page as JSON on json.edhrec.com, which is what
+the site itself loads. We read that directly; the HTML pages carry nothing extra.
+"""
 import logging
 import re
 import time
-from typing import Callable, TypeVar
 
 import requests
-from pyedhrec import EDHRec
 
 from .. import cache
 from ..domain.names import edhrec_slug, front_face, normalize_card_name
 
 logger = logging.getLogger(__name__)
 
-_client = EDHRec()
+JSON_BASE = "https://json.edhrec.com/pages"
 _QTY_LINE = re.compile(r"^\d+x?\s+(.+)")
 
-T = TypeVar("T")
-
-# EDHREC serves its data through Next.js routes that embed a build id, and the id changes on
-# every EDHREC deploy. pyedhrec scrapes it from the homepage with a pattern that no longer
-# matches, then falls back to a hardcoded id, which 404s for everything. So we find it ourselves.
-_BUILD_ID_PATTERNS = (
-    re.compile(r'"buildId"\s*:\s*"([^"]+)"'),
-    re.compile(r'/_next/static/([^/"\s]+)/_buildManifest\.js'),
-)
-_BUILD_ID_RETRY_COOLDOWN = 60.0
-_build_id_checked_at = 0.0
-
-
-def discover_build_id() -> str | None:
-    """The current Next.js build id from EDHREC's homepage, or None if it cannot be found."""
-    try:
-        resp = _client.session.get(_client.base_url, timeout=20)
-        resp.raise_for_status()
-        html = resp.text
-    except Exception as e:  # noqa: BLE001
-        logger.error("Could not load EDHREC homepage to find its build id: %s", e)
-        return None
-    for pattern in _BUILD_ID_PATTERNS:
-        match = pattern.search(html)
-        if match:
-            return match.group(1)
-    logger.error("EDHREC homepage did not contain a recognizable build id")
-    return None
-
-
-def refresh_build_id(force: bool = False) -> None:
-    """Set the client's build id, re-reading the homepage at most once a minute unless forced."""
-    global _build_id_checked_at
-    now = time.time()
-    if not force and _client.current_build_id and now - _build_id_checked_at < _BUILD_ID_RETRY_COOLDOWN:
-        return
-    _build_id_checked_at = now
-    build_id = discover_build_id()
-    if build_id and build_id != _client.current_build_id:
-        logger.info("EDHREC build id: %s", build_id)
-        _client.current_build_id = build_id
-
-
-def _with_fresh_build_id(call: Callable[[], T]) -> T:
-    """Run an EDHREC call; on a 404, refresh the build id once and retry, since a stale id 404s everything."""
-    if not _client.current_build_id:
-        refresh_build_id(force=True)
-    try:
-        return call()
-    except requests.HTTPError as e:
-        if e.response is None or e.response.status_code != 404:
-            raise
-        if time.time() - _build_id_checked_at < _BUILD_ID_RETRY_COOLDOWN:
-            raise  # id was just confirmed; this page really is missing
-        refresh_build_id(force=True)
-        return call()
+http = requests.Session()
+http.headers.update({
+    "User-Agent": "mtg-collection/0.1 (https://github.com/joebags99/mtg-collection)",
+    "Accept": "application/json",
+})
 
 SYNERGY_SECTIONS = (
     "high_synergy", "new_cards", "top_creatures", "top_instants", "top_sorceries",
@@ -78,6 +29,55 @@ SYNERGY_SECTIONS = (
     "top_utility_lands", "top_mana_artifacts",
 )
 TOP_TYPE_SECTIONS = tuple(s for s in SYNERGY_SECTIONS if s.startswith("top_"))
+
+# Our section name -> the `tag` EDHREC puts on that card list.
+_SECTION_TAGS = {
+    "high_synergy": "highsynergycards",
+    "new_cards": "newcards",
+    "top_creatures": "creatures",
+    "top_instants": "instants",
+    "top_sorceries": "sorceries",
+    "top_enchantments": "enchantments",
+    "top_artifacts": "utilityartifacts",
+    "top_lands": "lands",
+    "top_planeswalkers": "planeswalkers",
+    "top_utility_lands": "utilitylands",
+    "top_mana_artifacts": "manaartifacts",
+}
+
+
+def fetch_page(path: str) -> dict | None:
+    """The JSON behind an EDHREC page, e.g. "commanders/atraxa-praetors-voice". None when the page does not exist."""
+    resp = http.get(f"{JSON_BASE}/{path}.json", timeout=30)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _commander_page(slug: str) -> dict | None:
+    cached = cache.commander_pages.get(slug)
+    if cached is not None:
+        return cached
+    page = fetch_page(f"commanders/{slug}")
+    if page is not None:
+        cache.commander_pages.set(slug, page)
+    return page
+
+
+def _average_deck_page(slug: str, budget: str | None, theme: str | None) -> dict | None:
+    """Try the budget- or theme-specific average deck first, then the plain one."""
+    candidates = []
+    if budget in ("budget", "expensive"):
+        candidates.append(f"average-decks/{slug}/{budget}")
+    if theme:
+        candidates.append(f"average-decks/{slug}/{theme}")
+    candidates.append(f"average-decks/{slug}")
+    for path in candidates:
+        page = fetch_page(path)
+        if page is not None:
+            return page
+    return None
 
 
 def _cardviews(cardviews) -> list[dict]:
@@ -100,35 +100,40 @@ def _cardviews(cardviews) -> list[dict]:
     return results
 
 
+def _json_dict(page: dict) -> dict:
+    return page.get("container", {}).get("json_dict", {}) or {}
+
+
+def _num_decks(page: dict) -> int:
+    """How many decks EDHREC has for this commander, from whichever field carries it."""
+    for candidate in (page.get("num_decks"), _json_dict(page).get("num_decks"), _json_dict(page).get("card", {}).get("num_decks")):
+        if isinstance(candidate, int):
+            return candidate
+    counts = page.get("bracket_counts") or {}
+    return sum(v for v in counts.values() if isinstance(v, int))
+
+
 def get_synergy_lists(commander_name: str) -> dict[str, list[dict]]:
     """High synergy, new cards, and per-type top cards for a commander."""
     cached = cache.commander_synergy.get(commander_name)
     if cached is not None:
         return cached
 
+    result: dict[str, list[dict]] = {key: [] for key in SYNERGY_SECTIONS}
     slug = edhrec_slug(front_face(commander_name))
-    methods = {
-        "high_synergy": _client.get_high_synergy_cards,
-        "new_cards": _client.get_new_cards,
-        "top_creatures": _client.get_top_creatures,
-        "top_instants": _client.get_top_instants,
-        "top_sorceries": _client.get_top_sorceries,
-        "top_enchantments": _client.get_top_enchantments,
-        "top_artifacts": _client.get_top_artifacts,
-        "top_lands": _client.get_top_lands,
-        "top_planeswalkers": _client.get_top_planeswalkers,
-        "top_utility_lands": _client.get_top_utility_lands,
-        "top_mana_artifacts": _client.get_top_mana_artifacts,
-    }
-    result = {key: [] for key in SYNERGY_SECTIONS}
-    for key, method in methods.items():
-        try:
-            raw = _with_fresh_build_id(lambda m=method: m(slug))
-            if isinstance(raw, dict):
-                for cards in raw.values():
-                    result[key] = _cardviews(cards)
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error fetching %s for %s: %s", key, commander_name, e)
+    try:
+        page = _commander_page(slug)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Error fetching EDHREC commander page for %s: %s", commander_name, e)
+        return result
+    if page is None:
+        logger.info("EDHREC has no commander page for %s", commander_name)
+        cache.commander_synergy.set(commander_name, result)
+        return result
+
+    by_tag = {cl.get("tag"): cl.get("cardviews") for cl in _json_dict(page).get("cardlists", []) or [] if isinstance(cl, dict)}
+    for key, tag in _SECTION_TAGS.items():
+        result[key] = _cardviews(by_tag.get(tag))
 
     cache.commander_synergy.set(commander_name, result)
     return result
@@ -166,29 +171,36 @@ def get_average_deck(commander_name: str, budget: str | None = None, theme: str 
     if cached is not None:
         return cached
 
+    slug = edhrec_slug(front_face(commander_name))
     try:
-        slug = edhrec_slug(front_face(commander_name))
-        avg_deck = _with_fresh_build_id(lambda: _client.get_commanders_average_deck(slug, budget))
-        cmd_data = _with_fresh_build_id(lambda: _client.get_commander_data(slug)) or {}
-
-        themes = []
-        for t in cmd_data.get("container", {}).get("json_dict", {}).get("themes", []) or []:
-            if isinstance(t, dict):
-                themes.append({"name": t.get("name", ""), "slug": t.get("slug", ""), "count": t.get("count", 0)})
-
-        decklist = [e for e in map(_decklist_entry, (avg_deck or {}).get("decklist", [])) if e]
-        result = {
-            "commander": commander_name,
-            "num_decks": cmd_data.get("num_decks", 0),
-            "themes": themes,
-            "decklist": decklist,
-            "deck_card_names": list({c["name_normalized"] for c in decklist}),
-        }
-        cache.commander_decks.set(key, result)
-        return result
+        avg_page = _average_deck_page(slug, budget, theme)
+        cmd_page = _commander_page(slug) or {}
     except Exception as e:  # noqa: BLE001
         logger.error("Error fetching EDHREC data for %s: %s", commander_name, e)
         return _empty_deck(commander_name, str(e))
+
+    if avg_page is None:
+        logger.info("EDHREC has no average deck for %s", commander_name)
+        result = _empty_deck(commander_name)
+        cache.commander_decks.set(key, result)
+        return result
+
+    themes = []
+    for t in _json_dict(cmd_page).get("themes", []) or []:
+        if isinstance(t, dict):
+            themes.append({"name": t.get("name", ""), "slug": t.get("slug", ""), "count": t.get("count", 0)})
+
+    cards = (avg_page.get("deck") or {}).get("cards") or []
+    decklist = [e for e in map(_decklist_entry, cards) if e]
+    result = {
+        "commander": commander_name,
+        "num_decks": _num_decks(cmd_page) or _num_decks(avg_page),
+        "themes": themes,
+        "decklist": decklist,
+        "deck_card_names": list({c["name_normalized"] for c in decklist}),
+    }
+    cache.commander_decks.set(key, result)
+    return result
 
 
 def polite_pause(seconds: float = 0.1) -> None:
