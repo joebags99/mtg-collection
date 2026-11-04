@@ -1,4 +1,6 @@
 """Adapter tests with the HTTP layer mocked, since the sandbox cannot reach Scryfall or EDHREC."""
+import requests
+
 from backend.app import cache
 from backend.app.services import edhrec, scryfall
 
@@ -127,3 +129,42 @@ def test_get_synergy_lists_tolerates_section_failures(monkeypatch):
 def test_scryfall_session_sends_identifying_headers():
     assert scryfall.http.headers["Accept"] == "application/json"
     assert "mtg-collection" in scryfall.http.headers["User-Agent"]
+
+
+class _Html:
+    def __init__(self, text, status=200):
+        self.text = text
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code != 200:
+            raise requests.HTTPError(response=self)
+
+
+def test_discover_build_id_matches_both_homepage_shapes(monkeypatch):
+    monkeypatch.setattr(edhrec._client.session, "get", lambda url, timeout=None: _Html('<script id="__NEXT_DATA__" type="application/json">{"buildId":"abc123","props":{}}</script>'))
+    assert edhrec.discover_build_id() == "abc123"
+    monkeypatch.setattr(edhrec._client.session, "get", lambda url, timeout=None: _Html('<script src="/_next/static/XyZ_9/_buildManifest.js" defer></script>'))
+    assert edhrec.discover_build_id() == "XyZ_9"
+    monkeypatch.setattr(edhrec._client.session, "get", lambda url, timeout=None: _Html("<html>no ids here</html>"))
+    assert edhrec.discover_build_id() is None
+
+
+def test_stale_build_id_is_refreshed_once_on_404(monkeypatch):
+    ids = iter(["old", "new"])
+    monkeypatch.setattr(edhrec, "discover_build_id", lambda: next(ids))
+    monkeypatch.setattr(edhrec, "_build_id_checked_at", 0.0)
+    edhrec._client.current_build_id = None
+    calls = []
+
+    def fetch():
+        calls.append(edhrec._client.current_build_id)
+        if edhrec._client.current_build_id == "old":
+            resp = _Html("", status=404)
+            raise requests.HTTPError(response=resp)
+        return {"ok": True}
+
+    # First call sets "old", 404s, then refreshes to "new" and succeeds.
+    monkeypatch.setattr(edhrec, "_BUILD_ID_RETRY_COOLDOWN", 0.0)
+    assert edhrec._with_fresh_build_id(fetch) == {"ok": True}
+    assert calls == ["old", "new"]

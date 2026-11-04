@@ -2,7 +2,9 @@
 import logging
 import re
 import time
+from typing import Callable, TypeVar
 
+import requests
 from pyedhrec import EDHRec
 
 from .. import cache
@@ -12,6 +14,63 @@ logger = logging.getLogger(__name__)
 
 _client = EDHRec()
 _QTY_LINE = re.compile(r"^\d+x?\s+(.+)")
+
+T = TypeVar("T")
+
+# EDHREC serves its data through Next.js routes that embed a build id, and the id changes on
+# every EDHREC deploy. pyedhrec scrapes it from the homepage with a pattern that no longer
+# matches, then falls back to a hardcoded id, which 404s for everything. So we find it ourselves.
+_BUILD_ID_PATTERNS = (
+    re.compile(r'"buildId"\s*:\s*"([^"]+)"'),
+    re.compile(r'/_next/static/([^/"\s]+)/_buildManifest\.js'),
+)
+_BUILD_ID_RETRY_COOLDOWN = 60.0
+_build_id_checked_at = 0.0
+
+
+def discover_build_id() -> str | None:
+    """The current Next.js build id from EDHREC's homepage, or None if it cannot be found."""
+    try:
+        resp = _client.session.get(_client.base_url, timeout=20)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception as e:  # noqa: BLE001
+        logger.error("Could not load EDHREC homepage to find its build id: %s", e)
+        return None
+    for pattern in _BUILD_ID_PATTERNS:
+        match = pattern.search(html)
+        if match:
+            return match.group(1)
+    logger.error("EDHREC homepage did not contain a recognizable build id")
+    return None
+
+
+def refresh_build_id(force: bool = False) -> None:
+    """Set the client's build id, re-reading the homepage at most once a minute unless forced."""
+    global _build_id_checked_at
+    now = time.time()
+    if not force and _client.current_build_id and now - _build_id_checked_at < _BUILD_ID_RETRY_COOLDOWN:
+        return
+    _build_id_checked_at = now
+    build_id = discover_build_id()
+    if build_id and build_id != _client.current_build_id:
+        logger.info("EDHREC build id: %s", build_id)
+        _client.current_build_id = build_id
+
+
+def _with_fresh_build_id(call: Callable[[], T]) -> T:
+    """Run an EDHREC call; on a 404, refresh the build id once and retry, since a stale id 404s everything."""
+    if not _client.current_build_id:
+        refresh_build_id(force=True)
+    try:
+        return call()
+    except requests.HTTPError as e:
+        if e.response is None or e.response.status_code != 404:
+            raise
+        if time.time() - _build_id_checked_at < _BUILD_ID_RETRY_COOLDOWN:
+            raise  # id was just confirmed; this page really is missing
+        refresh_build_id(force=True)
+        return call()
 
 SYNERGY_SECTIONS = (
     "high_synergy", "new_cards", "top_creatures", "top_instants", "top_sorceries",
@@ -64,7 +123,7 @@ def get_synergy_lists(commander_name: str) -> dict[str, list[dict]]:
     result = {key: [] for key in SYNERGY_SECTIONS}
     for key, method in methods.items():
         try:
-            raw = method(slug)
+            raw = _with_fresh_build_id(lambda m=method: m(slug))
             if isinstance(raw, dict):
                 for cards in raw.values():
                     result[key] = _cardviews(cards)
@@ -109,8 +168,8 @@ def get_average_deck(commander_name: str, budget: str | None = None, theme: str 
 
     try:
         slug = edhrec_slug(front_face(commander_name))
-        avg_deck = _client.get_commanders_average_deck(slug, budget)
-        cmd_data = _client.get_commander_data(slug) or {}
+        avg_deck = _with_fresh_build_id(lambda: _client.get_commanders_average_deck(slug, budget))
+        cmd_data = _with_fresh_build_id(lambda: _client.get_commander_data(slug)) or {}
 
         themes = []
         for t in cmd_data.get("container", {}).get("json_dict", {}).get("themes", []) or []:
