@@ -146,22 +146,52 @@ def get_synergy_lists(commander_name: str) -> dict[str, list[dict]]:
     return result
 
 
+_NAME_KEYS = ("name", "card", "cardname", "card_name", "sanitized_wo", "sanitized")
+
+
 def _decklist_entry(card) -> dict | None:
+    """One average-deck card as our shape, from a "1 Name" string or a card object."""
     if isinstance(card, str):
         raw = card.strip()
         match = _QTY_LINE.match(raw)
         name = match.group(1) if match else raw
         return {"name": name, "name_normalized": normalize_card_name(name), "category": ""}
-    if isinstance(card, dict) and card.get("name"):
-        name = card["name"]
+    if isinstance(card, dict):
+        inner = card.get("card") if isinstance(card.get("card"), dict) else None
+        source = inner or card
+        name = next((source[k] for k in _NAME_KEYS if isinstance(source.get(k), str) and source[k]), None)
+        if not name:
+            return None
         return {
             "name": name,
             "name_normalized": normalize_card_name(name),
-            "category": card.get("type", card.get("category", "")),
-            "inclusion": card.get("inclusion", 0),
-            "synergy": card.get("synergy", 0),
+            "category": source.get("type", source.get("category", source.get("primary_type", ""))),
+            "inclusion": source.get("inclusion", card.get("inclusion", 0)),
+            "synergy": source.get("synergy", card.get("synergy", 0)),
         }
     return None
+
+
+def _deck_cards(avg_page: dict) -> list:
+    """The card entries of an average-deck page, whatever container EDHREC wraps them in."""
+    deck = avg_page.get("deck")
+    cards = deck.get("cards") if isinstance(deck, dict) else deck
+    if isinstance(cards, dict):
+        # {name: qty} or {name: {...}}: the key is the name
+        return [k if not isinstance(v, dict) else {"name": k, **v} for k, v in cards.items()]
+    if isinstance(cards, list):
+        return cards
+    return []
+
+
+def parse_decklist(avg_page: dict, commander_name: str = "") -> list[dict]:
+    cards = _deck_cards(avg_page)
+    decklist = [e for e in map(_decklist_entry, cards) if e]
+    if cards and not decklist:
+        sample = repr(cards[0])[:300]
+        logger.warning("EDHREC average deck for %s has %d entries but none parsed; first entry: %s",
+                       commander_name, len(cards), sample)
+    return decklist
 
 
 def _empty_deck(commander_name: str, error: str | None = None) -> dict:
@@ -197,8 +227,7 @@ def get_average_deck(commander_name: str, budget: str | None = None, theme: str 
         if isinstance(t, dict):
             themes.append({"name": t.get("name", ""), "slug": t.get("slug", ""), "count": t.get("count", 0)})
 
-    cards = (avg_page.get("deck") or {}).get("cards") or []
-    decklist = [e for e in map(_decklist_entry, cards) if e]
+    decklist = parse_decklist(avg_page, commander_name)
     result = {
         "commander": commander_name,
         "num_decks": _num_decks(cmd_page) or _num_decks(avg_page),

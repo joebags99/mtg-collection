@@ -250,3 +250,16 @@ def test_card_facts_and_prices_warm_from_disk(monkeypatch):
     assert cache.card_types["sol ring"] == "Artifact"
     assert cache.mana["sol ring"]["cmc"] == 1.0
     assert cache.prices.get("sol ring") == 1.5
+
+
+def test_parse_decklist_accepts_edhrec_card_object_shapes():
+    strings = {"deck": {"cards": ["1 Sol Ring", "Swamp"]}}
+    assert [c["name"] for c in edhrec.parse_decklist(strings)] == ["Sol Ring", "Swamp"]
+    wrapped = {"deck": {"cards": [{"card": {"name": "Sol Ring", "primary_type": "Artifact"}, "inclusion": 95}]}}
+    entry = edhrec.parse_decklist(wrapped)[0]
+    assert entry["name"] == "Sol Ring" and entry["category"] == "Artifact" and entry["inclusion"] == 95
+    keyed = {"deck": {"cards": {"Sol Ring": 1, "Swamp": {"inclusion": 50}}}}
+    assert sorted(c["name"] for c in edhrec.parse_decklist(keyed)) == ["Sol Ring", "Swamp"]
+    bare_list = {"deck": ["1 Sol Ring"]}
+    assert edhrec.parse_decklist(bare_list)[0]["name"] == "Sol Ring"
+    assert edhrec.parse_decklist({"deck": {"cards": [{"mystery": 1}]}}) == []
