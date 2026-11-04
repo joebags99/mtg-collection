@@ -21,6 +21,15 @@ FAKE_COMMANDERS = [
     {"name": "Tymna the Weaver", "name_normalized": "tymna the weaver",
      "color_identity": ["W", "B"], "image_uri": "", "art_crop": "",
      "edhrec_rank": 3, "partner_type": "partner", "type_line": "Legendary Creature"},
+    {"name": "Raised by Giants", "name_normalized": "raised by giants",
+     "color_identity": ["G"], "image_uri": "", "art_crop": "",
+     "edhrec_rank": 4, "partner_type": "background", "type_line": "Legendary Enchantment — Background"},
+    {"name": "Pir, Imaginative Rascal", "name_normalized": "pir, imaginative rascal",
+     "color_identity": ["G"], "image_uri": "", "art_crop": "",
+     "edhrec_rank": 5, "partner_type": "partner_with", "partner_with": "Toothy, Imaginary Friend", "type_line": "Legendary Creature"},
+    {"name": "Toothy, Imaginary Friend", "name_normalized": "toothy, imaginary friend",
+     "color_identity": ["U"], "image_uri": "", "art_crop": "",
+     "edhrec_rank": 6, "partner_type": "partner_with", "partner_with": "Pir, Imaginative Rascal", "type_line": "Legendary Creature"},
 ]
 
 
@@ -37,7 +46,9 @@ def client(monkeypatch):
     monkeypatch.setattr(scryfall, "fetch_card_types", lambda names: {})
     monkeypatch.setattr(scryfall, "fetch_card_mana", lambda names: {})
     monkeypatch.setattr(edhrec, "get_average_deck", lambda name, budget=None, theme=None: {
-        "commander": name, "num_decks": 10, "themes": [],
+        "commander": name, "num_decks": 10,
+        "themes": [{"name": "Counters", "slug": "counters", "count": 5}],
+        "tags": [{"name": "Counters", "slug": "counters", "count": 5}],
         "decklist": [{"name": "Sol Ring", "name_normalized": "sol ring", "category": "Artifact"},
                      {"name": "Swords to Plowshares", "name_normalized": "swords to plowshares", "category": "Instant"}],
         "deck_card_names": ["sol ring", "swords to plowshares"],

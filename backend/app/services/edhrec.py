@@ -111,6 +111,23 @@ def _json_dict(page: dict) -> dict:
     return page.get("container", {}).get("json_dict", {}) or {}
 
 
+def _tags(page: dict, limit: int = 12) -> list[dict]:
+    """EDHREC's archetype tags for a commander, most common first: [{name, slug, count}]."""
+    raw = page.get("tag_counts")
+    if not isinstance(raw, list):
+        raw = _json_dict(page).get("themes", []) or []
+    tags = []
+    for t in raw:
+        if not isinstance(t, dict):
+            continue
+        slug = t.get("slug", "")
+        name = t.get("value") or t.get("name") or slug
+        if slug:
+            tags.append({"name": name, "slug": slug, "count": int(t.get("count", 0) or 0)})
+    tags.sort(key=lambda t: t["count"], reverse=True)
+    return tags[:limit]
+
+
 def _num_decks(page: dict) -> int:
     """How many decks EDHREC has for this commander, from whichever field carries it."""
     for candidate in (page.get("num_decks"), _json_dict(page).get("num_decks"), _json_dict(page).get("card", {}).get("num_decks")):
@@ -209,7 +226,7 @@ def parse_decklist(avg_page: dict, commander_name: str = "") -> list[dict]:
 
 
 def _empty_deck(commander_name: str, error: str | None = None) -> dict:
-    deck = {"commander": commander_name, "num_decks": 0, "themes": [], "decklist": [], "deck_card_names": []}
+    deck = {"commander": commander_name, "num_decks": 0, "themes": [], "tags": [], "decklist": [], "deck_card_names": []}
     if error:
         deck["error"] = error
     return deck
@@ -236,16 +253,13 @@ def get_average_deck(commander_name: str, budget: str | None = None, theme: str 
         cache.commander_decks.set(key, result)
         return result
 
-    themes = []
-    for t in _json_dict(cmd_page).get("themes", []) or []:
-        if isinstance(t, dict):
-            themes.append({"name": t.get("name", ""), "slug": t.get("slug", ""), "count": t.get("count", 0)})
-
     decklist = parse_decklist(avg_page, commander_name)
+    tags = _tags(cmd_page) or _tags(avg_page)
     result = {
         "commander": commander_name,
         "num_decks": _num_decks(cmd_page) or _num_decks(avg_page),
-        "themes": themes,
+        "themes": tags,
+        "tags": tags[:6],
         "decklist": decklist,
         "deck_card_names": list({c["name_normalized"] for c in decklist}),
     }

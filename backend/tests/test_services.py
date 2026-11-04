@@ -90,6 +90,7 @@ def _page(status=200, **payload):
 
 COMMANDER_PAGE = {
     "bracket_counts": {"2": 30, "3": 12},
+    "tag_counts": [{"count": 876, "slug": "plus-1-plus-1-counters", "value": "+1/+1 Counters"}, {"count": 440, "slug": "exile", "value": "Exile"}],
     "container": {"json_dict": {
         "themes": [{"name": "Counters", "slug": "counters", "count": 3}],
         "cardlists": [
@@ -120,7 +121,8 @@ def test_get_average_deck_reads_json_host(monkeypatch):
 
     deck = edhrec.get_average_deck("Atraxa, Praetors' Voice")
     assert deck["num_decks"] == 42  # summed from bracket counts
-    assert deck["themes"] == [{"name": "Counters", "slug": "counters", "count": 3}]
+    assert deck["themes"][0] == {"name": "+1/+1 Counters", "slug": "plus-1-plus-1-counters", "count": 876}
+    assert [t["slug"] for t in deck["tags"]] == ["plus-1-plus-1-counters", "exile"]
     assert deck["decklist"][0] == {"name": "Sol Ring", "name_normalized": "sol ring", "category": ""}
     assert deck["decklist"][1]["inclusion"] == 80
     assert sorted(deck["deck_card_names"]) == ["sol ring", "swords to plowshares"]

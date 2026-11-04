@@ -5,7 +5,7 @@ import { ColorBadge } from './ColorBadge';
 import { MatchBar } from './MatchBar';
 
 /** A commander that may or may not carry collection match data. */
-export type CardCommander = Commander & Partial<Pick<ScoredCommander, 'num_decks' | 'total_cards' | 'owned_count' | 'match_percentage' | 'missing_price'>>;
+export type CardCommander = Commander & Partial<Pick<ScoredCommander, 'num_decks' | 'total_cards' | 'owned_count' | 'match_percentage' | 'missing_price' | 'tags' | 'partner'>>;
 
 interface Props {
   commander: CardCommander;
@@ -58,12 +58,22 @@ export function CommanderCard({ commander, onClick, selectable, selected, onTogg
         )}
         <div className="p-3 space-y-2">
           <h3 className="font-display font-semibold text-[15px] leading-snug text-ink">{commander.name}</h3>
+          {commander.partner && (
+            <p className="text-[11px] text-secondary leading-tight">with {commander.partner}</p>
+          )}
           <div className="flex items-center justify-between">
             <ColorBadge colors={commander.color_identity} />
             {(commander.num_decks ?? 0) > 0 && (
               <span className="text-[11px] text-ink-faint num">{commander.num_decks!.toLocaleString()} decks</span>
             )}
           </div>
+          {commander.tags && commander.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {commander.tags.slice(0, 3).map((t) => (
+                <span key={t.slug} className="text-[10px] text-ink-muted border border-line rounded-sm px-1.5 py-px leading-tight">{t.name}</span>
+              ))}
+            </div>
+          )}
           {hasMatch && price > 0 && (
             <div className="flex items-center justify-between border-t border-line pt-2">
               <span className="text-[10px] text-ink-faint uppercase tracking-[0.14em]">To complete</span>

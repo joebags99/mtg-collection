@@ -12,3 +12,4 @@ export { CommanderCard, type CardCommander } from './CommanderCard';
 export { PARTNER_BADGE, PARTNER_HEADING } from './partnerLabels';
 export { AvailDot, DeckBadges } from './DeckBadges';
 export { Button } from './Button';
+export { ColorCountSelect } from './ColorCountSelect';

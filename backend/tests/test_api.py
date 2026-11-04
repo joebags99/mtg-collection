@@ -80,7 +80,32 @@ def test_recommendations_require_collection(client):
     client.post("/api/collection/text", json={"text": "1 Sol Ring"})
     r = client.post("/api/recommendations", params={"min_owned": 1})
     assert r.status_code == 200
-    assert r.json()["results"][0]["match_percentage"] == 50.0
+    results = r.json()["results"]
+    assert results[0]["match_percentage"] == 50.0
+    names = [x["name"] for x in results]
+    assert "Raised by Giants" not in names  # a Background cannot lead a deck
+    assert results[0]["tags"][0]["slug"] == "counters"
+
+
+def test_recommendations_score_partner_with_as_a_pair(client):
+    client.post("/api/collection/text", json={"text": "1 Sol Ring"})
+    r = client.post("/api/recommendations", params={"min_owned": 1, "search": "Pir"})
+    pir = r.json()["results"][0]
+    assert pir["name"] == "Pir, Imaginative Rascal" and pir["partner"] == "Toothy, Imaginary Friend"
+
+
+def test_recommendations_min_colors_and_tag_filters(client):
+    client.post("/api/collection/text", json={"text": "1 Sol Ring"})
+    r = client.post("/api/recommendations", params={"min_owned": 1, "min_colors": 3})
+    assert [x["name"] for x in r.json()["results"]] == ["Atraxa, Praetors' Voice"]
+    assert client.post("/api/recommendations", params={"min_owned": 1, "tag": "counters"}).json()["results"]
+    assert client.post("/api/recommendations", params={"min_owned": 1, "tag": "storm"}).json()["results"] == []
+
+
+def test_commander_lists_exclude_backgrounds(client):
+    assert "Raised by Giants" not in [c["name"] for c in client.get("/api/commanders/popular").json()["commanders"]]
+    assert "Raised by Giants" not in [c["name"] for c in client.get("/api/commanders").json()["commanders"]]
+    assert [c["name"] for c in client.get("/api/commanders", params={"min_colors": 4}).json()["commanders"]] == ["Atraxa, Praetors' Voice"]
 
 
 def test_compare(client):

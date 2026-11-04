@@ -9,6 +9,7 @@ from .. import cache
 from ..domain.classify import (EDHREC_LIST_TYPES, card_type_from_edhrec_lists,
                                classify_functional_category, derive_functional_tags)
 from ..domain.names import front_face, normalize_card_name, partner_pair_slug
+from ..domain.partners import compatible_partners
 from ..state import WorkingState
 from . import edhrec, scryfall
 
@@ -219,21 +220,56 @@ def commander_detail(state: WorkingState, commander_name: str, *, budget=None, t
     }
 
 
-def recommend_commanders(state: WorkingState, *, color=None, search=None, min_owned=20,
-                         limit=50, exclude_in_decks=False) -> list[dict]:
-    """Rank popular commanders by how much of their average deck the collection covers."""
+def _solo_commanders(commanders: list[dict]) -> list[dict]:
+    """Commanders that can lead a deck by themselves. Backgrounds are enchantments that only pair."""
+    return [c for c in commanders if c.get("partner_type") != "background"]
+
+
+def _pair_for(cmd: dict, catalog: list[dict]) -> dict | None:
+    """The fixed partner of a 'Partner with' commander, when it has exactly one."""
+    if cmd.get("partner_type") != "partner_with":
+        return None
+    partners = compatible_partners(cmd, catalog)
+    return partners[0] if len(partners) == 1 else None
+
+
+def _deck_for(cmd: dict, catalog: list[dict], theme: str | None = None) -> tuple[dict, str | None]:
+    """The average deck to score a commander against, preferring the pair page for 'Partner with'.
+
+    Returns (deck, partner name or None).
+    """
+    partner = _pair_for(cmd, catalog)
+    if partner:
+        pair = edhrec.get_average_deck(partner_pair_slug(cmd["name"], partner["name"]), theme=theme)
+        if pair.get("deck_card_names"):
+            return pair, partner["name"]
+    return edhrec.get_average_deck(cmd["name"], theme=theme), None
+
+
+def recommend_commanders(state: WorkingState, *, color=None, search=None, min_owned=20, min_colors=0,
+                         tag=None, limit=50, exclude_in_decks=False) -> list[dict]:
+    """Rank popular commanders by how much of their average deck the collection covers.
+
+    `tag` narrows to commanders EDHREC tags with that archetype and scores them against
+    the archetype's own average deck when EDHREC publishes one.
+    """
     available = state.available_cards(exclude_in_decks)
-    commanders = scryfall.get_commanders()
+    catalog = scryfall.get_commanders()
+    commanders = _solo_commanders(catalog)
     if color:
         wanted = set(color.upper())
         commanders = [c for c in commanders if set(c["color_identity"]) == wanted]
+    if min_colors:
+        commanders = [c for c in commanders if len(c["color_identity"]) >= min_colors]
     if search:
         commanders = [c for c in commanders if search.lower() in c["name"].lower()]
     commanders = sorted(commanders, key=lambda c: c["edhrec_rank"])[:200]
 
     results = []
     for cmd in commanders:
-        data = edhrec.get_average_deck(cmd["name"])
+        data, partner = _deck_for(cmd, catalog, theme=tag)
+        if tag and not any(t["slug"] == tag for t in data.get("themes", [])):
+            continue
         deck_cards = set(data.get("deck_card_names", []))
         if not deck_cards:
             continue
@@ -243,10 +279,12 @@ def recommend_commanders(state: WorkingState, *, color=None, search=None, min_ow
             continue
         results.append({
             "name": cmd["name"],
+            "partner": partner,
             "color_identity": cmd["color_identity"],
             "image_uri": cmd["image_uri"],
             "edhrec_rank": cmd["edhrec_rank"],
             "num_decks": data.get("num_decks", 0),
+            "tags": data.get("tags", []),
             "total_cards": len(deck_cards),
             "owned_count": owned_count,
             "missing_count": len(deck_cards) - owned_count,

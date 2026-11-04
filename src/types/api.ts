@@ -30,6 +30,10 @@ export interface Commander {
 /** A commander scored against the collection. */
 export interface ScoredCommander extends Commander {
   num_decks: number;
+  /** EDHREC archetype tags, most common first. */
+  tags?: Theme[];
+  /** For "Partner with" commanders, the partner whose pair page was scored. */
+  partner?: string | null;
   total_cards: number;
   owned_count: number;
   missing_count: number;

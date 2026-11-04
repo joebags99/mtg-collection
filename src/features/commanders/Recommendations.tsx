@@ -5,7 +5,7 @@ import { keys } from '../../lib/queries';
 import { useDiscoverState } from '../../app/DiscoverState';
 import { ALL_COLORS, COLOR_MAP } from '../../lib/colors';
 import type { Color, ScoredCommander } from '../../types/api';
-import { CommanderCard, LoadingOverlay, PageHero, type CardCommander } from '../../components/ui';
+import { ColorCountSelect, CommanderCard, LoadingOverlay, PageHero, type CardCommander } from '../../components/ui';
 import { SORT_OPTIONS, sortResults, type SortKey } from './sorting';
 
 export interface RecommendationsProps {
@@ -20,8 +20,10 @@ export interface RecommendationsProps {
 
 export function Recommendations({ collectionCount, onSelectCommander, compareList, onToggleCompare, excludeInDecks, onToggleExclude, deckCount }: RecommendationsProps) {
   const { recs, setRecs } = useDiscoverState();
-  const { minOwned, colorFilter, search, sortBy, applied } = recs;
+  const { minOwned, minColors, colorFilter, search, tag, sortBy, applied } = recs;
   const setMinOwned = (v: number) => setRecs({ minOwned: v });
+  const setMinColors = (v: number) => setRecs({ minColors: v });
+  const setTag = (v: string) => setRecs({ tag: v });
   const setSearch = (v: string) => setRecs({ search: v });
   const setSortBy = (v: SortKey) => setRecs({ sortBy: v });
   const setColorFilter = (v: Color[] | ((prev: Color[]) => Color[])) =>
@@ -42,7 +44,13 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
   const fetchRecommendations = () => {
     if (collectionCount === 0) { setLocalError('Upload your collection first.'); return; }
     setLocalError('');
-    const next = { min_owned: minOwned, color: colorFilter.length > 0 ? colorFilter.join('') : null, search: search || null };
+    const next = {
+      min_owned: minOwned,
+      min_colors: minColors,
+      color: colorFilter.length > 0 ? colorFilter.join('') : null,
+      search: search || null,
+      tag: tag || null,
+    };
     if (applied && JSON.stringify(applied) === JSON.stringify(next)) query.refetch();
     else setRecs({ applied: next });
   };
@@ -52,6 +60,18 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
   };
 
   const sortedResults = sortResults(results, sortBy);
+
+  // Archetypes seen across the current results, most common first, so the filter offers real choices.
+  const archetypes = (() => {
+    const seen = new Map<string, { name: string; count: number }>();
+    for (const r of results) for (const t of r.tags ?? []) {
+      const e = seen.get(t.slug) ?? { name: t.name, count: 0 };
+      e.count += 1;
+      seen.set(t.slug, e);
+    }
+    if (tag && !seen.has(tag)) seen.set(tag, { name: tag, count: 0 });
+    return [...seen.entries()].sort((a, b) => b[1].count - a[1].count).map(([slug, e]) => ({ slug, ...e }));
+  })();
   const compareNames = new Set(compareList.map((c) => c.name));
 
   // Get top 3 commanders for the hero display
@@ -91,6 +111,24 @@ export function Recommendations({ collectionCount, onSelectCommander, compareLis
               onChange={(e) => setMinOwned(parseInt(e.target.value) || 0)}
               className="bg-surface-1 border border-line rounded px-3 py-1.5 text-sm w-20 focus:outline-none focus:border-accent/70"
             />
+          </div>
+          <div>
+            <label className="block text-xs text-ink-muted mb-1">Colors</label>
+            <ColorCountSelect value={minColors} onChange={setMinColors} />
+          </div>
+          <div>
+            <label className="block text-xs text-ink-muted mb-1">Archetype</label>
+            <select
+              value={tag}
+              onChange={(e) => setTag(e.target.value)}
+              className="bg-surface-1 border border-line rounded px-2 py-1.5 text-sm max-w-[200px] focus:outline-none focus:border-accent/70"
+              title={archetypes.length === 0 ? 'Run once to see the archetypes among your matches' : undefined}
+            >
+              <option value="">Any archetype</option>
+              {archetypes.map((a) => (
+                <option key={a.slug} value={a.slug}>{a.name}{a.count ? ` (${a.count})` : ''}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs text-ink-muted mb-1">Color Identity</label>

@@ -20,6 +20,8 @@ async def get_recommendations(
     color: Optional[str] = None,
     search: Optional[str] = None,
     min_owned: int = 20,
+    min_colors: int = 0,
+    tag: Optional[str] = None,
     limit: int = 50,
     exclude_in_decks: bool = False,
     owner: Owner = Depends(get_owner),
@@ -27,8 +29,8 @@ async def get_recommendations(
     state = store.load_state(owner.key)
     if not state.collection:
         raise HTTPException(status_code=400, detail="No collection uploaded. Upload your collection first.")
-    work = partial(analysis.recommend_commanders, state, color=color, search=search,
-                   min_owned=min_owned, limit=limit, exclude_in_decks=exclude_in_decks)
+    work = partial(analysis.recommend_commanders, state, color=color, search=search, min_owned=min_owned,
+                   min_colors=min_colors, tag=tag or None, limit=limit, exclude_in_decks=exclude_in_decks)
     return {"results": await asyncio.get_event_loop().run_in_executor(None, work)}
 
 

@@ -15,11 +15,13 @@ router = APIRouter(tags=["commanders"])
 
 
 @router.get("/commanders")
-async def list_commanders(color: Optional[str] = None, search: Optional[str] = None):
-    results = scryfall.get_commanders()
+async def list_commanders(color: Optional[str] = None, search: Optional[str] = None, min_colors: int = 0):
+    results = [c for c in scryfall.get_commanders() if c.get("partner_type") != "background"]
     if color:
         wanted = set(color.upper())
         results = [c for c in results if set(c["color_identity"]) == wanted]
+    if min_colors:
+        results = [c for c in results if len(c["color_identity"]) >= min_colors]
     if search:
         results = [c for c in results if search.lower() in c["name"].lower()]
     return {"count": len(results), "commanders": results[:200]}
@@ -51,7 +53,8 @@ async def lookup_commander(name: str = ""):
 
 @router.get("/commanders/popular")
 async def popular_commanders():
-    top = sorted(scryfall.get_commanders(), key=lambda c: c["edhrec_rank"])[:50]
+    solo = [c for c in scryfall.get_commanders() if c.get("partner_type") != "background"]
+    top = sorted(solo, key=lambda c: c["edhrec_rank"])[:50]
     return {"commanders": top}
 
 

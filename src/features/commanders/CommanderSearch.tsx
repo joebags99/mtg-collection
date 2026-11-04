@@ -5,7 +5,7 @@ import { useDebounced } from '../../lib/useDebounced';
 import { useDiscoverState } from '../../app/DiscoverState';
 import { ALL_COLORS, COLOR_MAP } from '../../lib/colors';
 import type { Color, Commander } from '../../types/api';
-import { CommanderCard, type CardCommander } from '../../components/ui';
+import { ColorCountSelect, CommanderCard, type CardCommander } from '../../components/ui';
 
 export interface CommanderSearchProps {
   collectionCount: number;
@@ -16,8 +16,9 @@ export interface CommanderSearchProps {
 
 export function CommanderSearch({ onSelectCommander, compareList, onToggleCompare }: CommanderSearchProps) {
   const { search: state, setSearch: setState } = useDiscoverState();
-  const { query: search, colorFilter } = state;
+  const { query: search, colorFilter, minColors } = state;
   const setSearch = (v: string) => setState({ query: v });
+  const setMinColors = (v: number) => setState({ minColors: v });
   const setColorFilter = (v: Color[] | ((prev: Color[]) => Color[])) =>
     setState({ colorFilter: typeof v === 'function' ? v(colorFilter) : v });
   const debounced = useDebounced(search, 300);
@@ -26,8 +27,8 @@ export function CommanderSearch({ onSelectCommander, compareList, onToggleCompar
   const popularList = useQuery(popularQuery);
   const popular = popularList.data ?? [];
   const searchQuery = useQuery({
-    queryKey: keys.commanderSearch(debounced, color),
-    queryFn: async () => (await apiGet<{ count: number; commanders: Commander[] }>('/api/commanders', { search: debounced, color })).commanders ?? [],
+    queryKey: [...keys.commanderSearch(debounced, color), minColors],
+    queryFn: async () => (await apiGet<{ count: number; commanders: Commander[] }>('/api/commanders', { search: debounced, color, min_colors: minColors || null })).commanders ?? [],
     enabled: debounced.length >= 2,
   });
   const commanders = debounced.length >= 2 ? (searchQuery.data ?? []) : [];
@@ -37,7 +38,7 @@ export function CommanderSearch({ onSelectCommander, compareList, onToggleCompar
     setColorFilter((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
   };
 
-  const showPopular = search.length < 2 && colorFilter.length === 0;
+  const showPopular = search.length < 2 && colorFilter.length === 0 && minColors === 0;
   const displayList = showPopular ? popular : commanders;
   const compareNames = new Set(compareList.map((c) => c.name));
 
@@ -76,6 +77,8 @@ export function CommanderSearch({ onSelectCommander, compareList, onToggleCompar
               Clear
             </button>
           )}
+          <span className="text-xs text-ink-muted ml-4 mr-2">Colors:</span>
+          <ColorCountSelect value={minColors} onChange={setMinColors} />
         </div>
       </div>
 
