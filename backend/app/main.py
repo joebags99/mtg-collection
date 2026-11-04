@@ -9,6 +9,7 @@ from . import ratelimit
 from .api import router
 from .config import CORS_ORIGINS
 from .db import init_db
+from .services import scryfall_store
 
 logging.basicConfig(level=logging.INFO)
 
@@ -16,6 +17,7 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    scryfall_store.warm_caches()
     yield
 
 

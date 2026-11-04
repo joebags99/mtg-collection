@@ -48,3 +48,9 @@ def client(monkeypatch):
     # A fresh anonymous session per test keeps the shared database from leaking state between tests.
     with TestClient(app, headers={"X-Session-Id": f"test-{uuid.uuid4().hex}"}) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _schema():
+    from backend.app.db import init_db
+    init_db()

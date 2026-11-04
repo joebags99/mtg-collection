@@ -38,6 +38,27 @@ CREATE TABLE IF NOT EXISTS favorites (
     cards_json TEXT NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Scryfall data persisted across restarts so the API is not re-crawled every time.
+CREATE TABLE IF NOT EXISTS scryfall_catalog (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    commanders_json TEXT NOT NULL,
+    fetched_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS card_facts (
+    name TEXT PRIMARY KEY,
+    card_type TEXT NOT NULL,
+    oracle TEXT NOT NULL,
+    cmc REAL NOT NULL,
+    mana_cost TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS card_prices (
+    name TEXT PRIMARY KEY,
+    usd REAL NOT NULL,
+    stored_at REAL NOT NULL
+);
 """
 
 # Earlier versions keyed these tables by user id. Copy them across once, then drop them.

@@ -4,12 +4,14 @@ All functions are synchronous and block on the network; call them from a thread
 pool when inside an async route.
 """
 import logging
+import threading
 import time
 
 import requests
 
 from .. import cache
 from ..config import COMMANDER_LIST_TTL, EXTERNAL_API_DELAY
+from . import scryfall_store as store
 from ..domain.classify import parse_type_line
 from ..domain.names import front_face, normalize_card_name
 from ..domain.partners import detect_partner_type, partner_variant_label, partner_with_name
@@ -28,6 +30,31 @@ http.headers.update({
 })
 
 
+# Scryfall asks for at most ~10 requests a second, across the whole process. One throttle
+# serializes every call so parallel request handlers cannot add up to more than that.
+_throttle_lock = threading.Lock()
+_last_request_at = 0.0
+RATE_LIMIT_RETRY_CAP = 60.0  # the longest we will wait on a 429 before giving up
+
+
+def _request(method: str, url: str, **kwargs) -> requests.Response:
+    """A throttled Scryfall request. On a 429, wait as long as Scryfall asks (once) and retry."""
+    global _last_request_at
+    for attempt in (1, 2):
+        with _throttle_lock:
+            wait = EXTERNAL_API_DELAY - (time.time() - _last_request_at)
+            if wait > 0:
+                time.sleep(wait)
+            resp = http.request(method, url, **kwargs)
+            _last_request_at = time.time()
+        if resp.status_code != 429 or attempt == 2:
+            return resp
+        retry_after = min(float(resp.headers.get("Retry-After", RATE_LIMIT_RETRY_CAP) or RATE_LIMIT_RETRY_CAP), RATE_LIMIT_RETRY_CAP)
+        logger.warning("Scryfall rate limit hit; pausing %.0fs before retrying %s", retry_after, url)
+        time.sleep(retry_after)
+    return resp  # unreachable, keeps type checkers calm
+
+
 def _describe_failure(resp: requests.Response) -> str:
     """Scryfall error bodies carry a 'details' field; fall back to the raw text."""
     try:
@@ -43,7 +70,7 @@ def _batches(items: list, size: int = BATCH_SIZE):
 
 def _collection_lookup(names: list[str], timeout: int = 30) -> list[dict]:
     """POST a batch of names to /cards/collection. Returns the found cards (missing ones are dropped)."""
-    resp = http.post(COLLECTION_URL, json={"identifiers": [{"name": n} for n in names]}, timeout=timeout)
+    resp = _request("POST", COLLECTION_URL, json={"identifiers": [{"name": n} for n in names]}, timeout=timeout)
     if resp.status_code != 200:
         logger.error("Scryfall collection error %s: %s", resp.status_code, _describe_failure(resp))
     resp.raise_for_status()
@@ -59,7 +86,7 @@ def _search_all(query: str) -> list[dict]:
     url, params = SEARCH_URL, {"q": query, "order": "edhrec", "unique": "cards"}
     found: list[dict] = []
     while url:
-        resp = http.get(url, params=params, timeout=30)
+        resp = _request("GET", url, params=params, timeout=30)
         if resp.status_code != 200:
             logger.error("Scryfall search error %s for %r: %s", resp.status_code, query, _describe_failure(resp))
             break
@@ -68,7 +95,6 @@ def _search_all(query: str) -> list[dict]:
         if not data.get("has_more"):
             break
         url, params = data.get("next_page"), {}
-        time.sleep(EXTERNAL_API_DELAY)
     return found
 
 
@@ -107,15 +133,35 @@ def fetch_all_commanders() -> list[dict]:
 
 _commanders: list[dict] = []
 _commanders_fetched_at: float = 0.0
+_catalog_lock = threading.Lock()
+
+
+def _catalog_is_fresh() -> bool:
+    return bool(_commanders) and time.time() - _commanders_fetched_at < COMMANDER_LIST_TTL
 
 
 def get_commanders() -> list[dict]:
-    """The commander catalog, refreshed once a day."""
+    """The commander catalog: from memory, else from disk, else crawled from Scryfall once a day."""
     global _commanders, _commanders_fetched_at
-    if not _commanders or time.time() - _commanders_fetched_at > COMMANDER_LIST_TTL:
+    if _catalog_is_fresh():
+        return _commanders
+    with _catalog_lock:  # concurrent first requests wait for one crawl instead of each starting their own
+        if _catalog_is_fresh():
+            return _commanders
+        stored = store.load_catalog()
+        if stored and time.time() - stored[1] < COMMANDER_LIST_TTL:
+            _commanders, _commanders_fetched_at = stored
+            logger.info("Loaded %d commanders from disk", len(_commanders))
+            return _commanders
         logger.info("Fetching all commanders from Scryfall...")
-        _commanders = fetch_all_commanders()
-        _commanders_fetched_at = time.time()
+        fetched = fetch_all_commanders()
+        if not fetched and stored:
+            # Scryfall failed (rate limit, outage): keep serving the stale copy rather than nothing.
+            _commanders, _commanders_fetched_at = stored[0], time.time() - COMMANDER_LIST_TTL + 600
+            logger.warning("Scryfall crawl returned nothing; using %d stale commanders from disk", len(_commanders))
+            return _commanders
+        _commanders, _commanders_fetched_at = fetched, time.time()
+        store.save_catalog(_commanders, _commanders_fetched_at)
         logger.info("Fetched %d commanders", len(_commanders))
     return _commanders
 
@@ -139,14 +185,16 @@ def fetch_prices(card_names: list[str]) -> dict[str, float]:
 
     for batch in _batches(uncached):
         try:
+            fetched: dict[str, float] = {}
             for card in _collection_lookup(batch, timeout=15):
                 p = card.get("prices", {})
                 usd = p.get("usd") or p.get("usd_foil")
                 if usd:
                     normalized = normalize_card_name(card["name"])
                     cache.prices.set(normalized, float(usd))
-                    result[normalized] = float(usd)
-            time.sleep(EXTERNAL_API_DELAY)
+                    fetched[normalized] = float(usd)
+            result.update(fetched)
+            store.save_prices(fetched)
         except Exception as e:  # noqa: BLE001
             logger.error("Error fetching bulk prices: %s", e)
     return result
@@ -169,9 +217,7 @@ def _fetch_facts(card_names: list[str], known: dict) -> None:
     uncached = [n for n in card_names if normalize_card_name(n) not in known]
     for batch in _batches(uncached):
         try:
-            for card in _collection_lookup(batch):
-                _remember_facts(card)
-            time.sleep(EXTERNAL_API_DELAY)
+            store.save_card_facts([_remember_facts(card) for card in _collection_lookup(batch)])
         except Exception as e:  # noqa: BLE001
             logger.error("Scryfall card fetch error: %s", e)
 
@@ -198,7 +244,6 @@ def fetch_color_identity_union(card_names: list[str]) -> set[str]:
                 cache.remember_oracle(normalize_card_name(card.get("name", "")), card)
         except Exception as e:  # noqa: BLE001
             logger.error("Color identity fetch error: %s", e)
-        time.sleep(EXTERNAL_API_DELAY)
     return colors
 
 
@@ -215,7 +260,6 @@ def validate_card_names(card_names: list[str]) -> tuple[list[str], list[str]]:
             found = {normalize_card_name(c["name"]) for c in _collection_lookup(batch, timeout=15)}
             for front in batch:
                 (valid if normalize_card_name(front) in found else invalid).extend(by_front[front])
-            time.sleep(EXTERNAL_API_DELAY)
         except Exception as e:  # noqa: BLE001
             logger.error("Card validation error: %s", e)
             for front in batch:
