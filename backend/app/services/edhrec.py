@@ -149,13 +149,17 @@ def get_synergy_lists(commander_name: str) -> dict[str, list[dict]]:
 _NAME_KEYS = ("name", "card", "cardname", "card_name", "sanitized_wo", "sanitized")
 
 
-def _decklist_entry(card) -> dict | None:
-    """One average-deck card as our shape, from a "1 Name" string or a card object."""
+def _decklist_entry(card, category: str = "") -> dict | None:
+    """One average-deck card as our shape, from a "1 Name" string, a [name, qty] pair, or a card object."""
+    if isinstance(card, (list, tuple)) and card and isinstance(card[0], str):
+        qty = card[1] if len(card) > 1 and isinstance(card[1], int) else 1
+        name = card[0]
+        return {"name": name, "name_normalized": normalize_card_name(name), "category": category, "qty": qty}
     if isinstance(card, str):
         raw = card.strip()
         match = _QTY_LINE.match(raw)
         name = match.group(1) if match else raw
-        return {"name": name, "name_normalized": normalize_card_name(name), "category": ""}
+        return {"name": name, "name_normalized": normalize_card_name(name), "category": category}
     if isinstance(card, dict):
         inner = card.get("card") if isinstance(card.get("card"), dict) else None
         source = inner or card
@@ -165,30 +169,40 @@ def _decklist_entry(card) -> dict | None:
         return {
             "name": name,
             "name_normalized": normalize_card_name(name),
-            "category": source.get("type", source.get("category", source.get("primary_type", ""))),
+            "category": source.get("type", source.get("category", source.get("primary_type", category))),
             "inclusion": source.get("inclusion", card.get("inclusion", 0)),
             "synergy": source.get("synergy", card.get("synergy", 0)),
         }
     return None
 
 
-def _deck_cards(avg_page: dict) -> list:
-    """The card entries of an average-deck page, whatever container EDHREC wraps them in."""
+def _deck_cards(avg_page: dict) -> list[tuple[object, str]]:
+    """(entry, category) pairs from an average-deck page, whatever container EDHREC wraps them in.
+
+    The current shape is {"deck": {"cards": {"Artifact": [["Sol Ring", 1], ...], "Land": [...], ...}}}.
+    """
     deck = avg_page.get("deck")
     cards = deck.get("cards") if isinstance(deck, dict) else deck
     if isinstance(cards, dict):
-        # {name: qty} or {name: {...}}: the key is the name
-        return [k if not isinstance(v, dict) else {"name": k, **v} for k, v in cards.items()]
+        out: list[tuple[object, str]] = []
+        for key, value in cards.items():
+            if isinstance(value, list):           # {type: [entries]}
+                out.extend((entry, key) for entry in value)
+            elif isinstance(value, dict):         # {name: {...}}
+                out.append(({"name": key, **value}, ""))
+            else:                                 # {name: qty}
+                out.append(([key, value], ""))
+        return out
     if isinstance(cards, list):
-        return cards
+        return [(entry, "") for entry in cards]
     return []
 
 
 def parse_decklist(avg_page: dict, commander_name: str = "") -> list[dict]:
     cards = _deck_cards(avg_page)
-    decklist = [e for e in map(_decklist_entry, cards) if e]
+    decklist = [e for e in (_decklist_entry(entry, category) for entry, category in cards) if e]
     if cards and not decklist:
-        sample = repr(cards[0])[:300]
+        sample = repr(cards[0][0])[:300]
         logger.warning("EDHREC average deck for %s has %d entries but none parsed; first entry: %s",
                        commander_name, len(cards), sample)
     return decklist

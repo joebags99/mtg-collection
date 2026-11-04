@@ -252,6 +252,23 @@ def test_card_facts_and_prices_warm_from_disk(monkeypatch):
     assert cache.prices.get("sol ring") == 1.5
 
 
+def test_parse_decklist_reads_the_current_edhrec_shape():
+    page = {"deck": {
+        "commander": ["Fire Lord Zuko"],
+        "cards": {
+            "Artifact": [["Arcane Signet", 1], ["Sol Ring", 1]],
+            "Land": [["Command Tower", 1], ["Mountain", 7]],
+            "Creature": [["Zuko, Exiled Prince", 1]],
+        },
+    }}
+    deck = edhrec.parse_decklist(page)
+    assert [(c["name"], c["category"], c["qty"]) for c in deck] == [
+        ("Arcane Signet", "Artifact", 1), ("Sol Ring", "Artifact", 1),
+        ("Command Tower", "Land", 1), ("Mountain", "Land", 7), ("Zuko, Exiled Prince", "Creature", 1),
+    ]
+    assert edhrec._num_decks({"container": {"json_dict": {"card": {"num_decks": 14184}}}, "bracket_counts": {"2": 1}}) == 14184
+
+
 def test_parse_decklist_accepts_edhrec_card_object_shapes():
     strings = {"deck": {"cards": ["1 Sol Ring", "Swamp"]}}
     assert [c["name"] for c in edhrec.parse_decklist(strings)] == ["Sol Ring", "Swamp"]
@@ -260,6 +277,8 @@ def test_parse_decklist_accepts_edhrec_card_object_shapes():
     assert entry["name"] == "Sol Ring" and entry["category"] == "Artifact" and entry["inclusion"] == 95
     keyed = {"deck": {"cards": {"Sol Ring": 1, "Swamp": {"inclusion": 50}}}}
     assert sorted(c["name"] for c in edhrec.parse_decklist(keyed)) == ["Sol Ring", "Swamp"]
+    wrapped_in_card = {"deck": {"cards": [{"card": {"name": "Sol Ring", "primary_type": "Artifact"}, "inclusion": 95}]}}
+    assert edhrec.parse_decklist(wrapped_in_card)[0]["category"] == "Artifact"
     bare_list = {"deck": ["1 Sol Ring"]}
     assert edhrec.parse_decklist(bare_list)[0]["name"] == "Sol Ring"
     assert edhrec.parse_decklist({"deck": {"cards": [{"mystery": 1}]}}) == []
